@@ -184,10 +184,19 @@ fn generate_function_body(
                 .map(|i| format!("&param_{}", i))
                 .collect()
         } else {
-            // Use the meaningful parameter names
+            // Use the meaningful parameter names, mapping each SQL parameter to its function parameter
+            // Don't deduplicate here - each SQL positional parameter needs its value
             param_names
                 .iter()
-                .map(|name| format!("&{}", name))
+                .map(|name| {
+                    // Strip the ? suffix for optional parameters to get the function parameter name
+                    let clean_name = if name.ends_with('?') {
+                        name.trim_end_matches('?').to_string()
+                    } else {
+                        name.clone()
+                    };
+                    format!("&{}", clean_name)
+                })
                 .collect()
         };
         format!("&[{}]", params.join(", "))

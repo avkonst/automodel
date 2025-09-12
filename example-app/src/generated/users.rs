@@ -116,6 +116,30 @@ pub async fn update_user_profile(client: &tokio_postgres::Client, profile: serde
 }
 
 #[derive(Debug, Clone)]
+pub struct FindUsersByNameAndAgeResult {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub age: Option<i32>,
+}
+
+/// Find users by name pattern with optional minimum age filter
+/// Generated from SQL: SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})
+pub async fn find_users_by_name_and_age(client: &tokio_postgres::Client, name_pattern: String, min_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT id, name, email, age FROM users WHERE name ILIKE $1 AND ($2::integer IS NULL OR age >= $3)").await?;
+    let rows = client.query(&stmt, &[&name_pattern, &min_age, &min_age]).await?;
+    let result = rows.into_iter().map(|row| {
+        FindUsersByNameAndAgeResult {
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
+        age: row.get::<_, Option<i32>>(3),
+    }
+    }).collect();
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
 pub struct GetRecentUsersResult {
     pub id: i32,
     pub name: String,

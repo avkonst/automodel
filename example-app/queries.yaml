@@ -48,6 +48,12 @@ queries:
     module: "users"
     expect: "exactly_one"
 
+  - name: find_users_by_name_and_age
+    sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})"
+    description: "Find users by name pattern with optional minimum age filter"
+    module: "users"
+    expect: "multiple"
+
   - name: get_recent_users
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > ${since} ORDER BY created_at DESC"
     description: "Get users created after a specific timestamp - expects at least one user"

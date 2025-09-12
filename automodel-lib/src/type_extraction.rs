@@ -53,7 +53,7 @@ pub async fn extract_query_types(
     });
 
     // Convert named parameters to positional parameters for PostgreSQL
-    let (converted_sql, _param_names) = convert_named_params_to_positional(sql);
+    let (converted_sql, param_names) = convert_named_params_to_positional(sql);
 
     let statement = client.prepare(&converted_sql).await.with_context(|| {
         format!(
@@ -63,7 +63,7 @@ pub async fn extract_query_types(
     })?;
 
     // Extract types
-    let input_types = extract_input_types(&statement)?;
+    let input_types = extract_input_types(&statement, &param_names)?;
     let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
 
     Ok(QueryTypeInfo {
@@ -73,12 +73,23 @@ pub async fn extract_query_types(
 }
 
 /// Extract input parameter types from a prepared statement
-fn extract_input_types(statement: &Statement) -> Result<Vec<RustType>> {
+fn extract_input_types(statement: &Statement, param_names: &[String]) -> Result<Vec<RustType>> {
     let params = statement.params();
     let mut input_types = Vec::new();
 
-    for param_type in params {
-        let rust_type = pg_type_to_rust_type(param_type, false)?;
+    for (i, param_type) in params.iter().enumerate() {
+        // Check if this parameter has the optional suffix ?
+        let param_name = param_names.get(i).map(|s| s.as_str()).unwrap_or("");
+        let is_optional_param = param_name.ends_with('?');
+
+        let mut rust_type = pg_type_to_rust_type(param_type, is_optional_param)?;
+
+        // If it's an optional parameter, wrap the type in Option if not already nullable
+        if is_optional_param && !rust_type.is_nullable {
+            rust_type.rust_type = format!("Option<{}>", rust_type.rust_type);
+            rust_type.is_nullable = true; // Mark as nullable since it's wrapped in Option
+        }
+
         input_types.push(rust_type);
     }
 
@@ -247,13 +258,35 @@ pub fn generate_input_params_with_names(
         return String::new();
     }
 
-    input_types
+    // Build a map of unique parameter names to their types
+    let mut unique_params: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut param_order: Vec<String> = Vec::new();
+
+    for (i, rust_type) in input_types.iter().enumerate() {
+        let default_name = format!("param_{}", i + 1);
+        let raw_param_name = param_names.get(i).unwrap_or(&default_name);
+
+        // Strip the ? suffix for optional parameters when generating function parameter names
+        let clean_param_name = if raw_param_name.ends_with('?') {
+            raw_param_name.trim_end_matches('?').to_string()
+        } else {
+            raw_param_name.clone()
+        };
+
+        // Only add if we haven't seen this parameter name before
+        if !unique_params.contains_key(&clean_param_name) {
+            unique_params.insert(clean_param_name.clone(), rust_type.rust_type.clone());
+            param_order.push(clean_param_name);
+        }
+    }
+
+    // Generate the parameter list in the order we first encountered each parameter
+    param_order
         .iter()
-        .enumerate()
-        .map(|(i, rust_type)| {
-            let default_name = format!("param_{}", i + 1);
-            let param_name = param_names.get(i).unwrap_or(&default_name);
-            format!("{}: {}", param_name, rust_type.rust_type)
+        .map(|param_name| {
+            let param_type = unique_params.get(param_name).unwrap();
+            format!("{}: {}", param_name, param_type)
         })
         .collect::<Vec<_>>()
         .join(", ")
