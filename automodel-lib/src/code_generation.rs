@@ -1,14 +1,14 @@
 use crate::query_config::QueryDefinition;
-use crate::type_extraction::{QueryTypeInfo, generate_input_params, generate_return_type, generate_result_struct};
+use crate::type_extraction::{
+    convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
+    generate_return_type, parse_parameter_names_from_sql, QueryTypeInfo,
+};
 use anyhow::Result;
 
 /// Generate a JSON wrapper helper for custom types
 pub fn generate_json_wrapper_helper() -> String {
-    r#"// JSON wrapper for custom types that implement Serialize/Deserialize
-use serde::{Serialize, Deserialize};
-use tokio_postgres::types::{FromSql, ToSql, Type};
-use std::error::Error;
-
+    r#"
+// JSON wrapper for custom types that implement Serialize/Deserialize
 struct JsonWrapper<T>(T);
 
 impl<T> JsonWrapper<T>
@@ -67,7 +67,10 @@ where
 }
 
 /// Generate Rust function code for a SQL query
-pub fn generate_function_code(query: &QueryDefinition, type_info: &QueryTypeInfo) -> Result<String> {
+pub fn generate_function_code(
+    query: &QueryDefinition,
+    type_info: &QueryTypeInfo,
+) -> Result<String> {
     let mut code = String::new();
 
     // Generate result struct if needed
@@ -81,9 +84,10 @@ pub fn generate_function_code(query: &QueryDefinition, type_info: &QueryTypeInfo
         code.push_str(&format!("/// {}\n", description));
     }
     code.push_str(&format!("/// Generated from SQL: {}\n", query.sql.trim()));
-    
+
     // Generate function signature
-    let input_params = generate_input_params(&type_info.input_types);
+    let param_names = parse_parameter_names_from_sql(&query.sql);
+    let input_params = generate_input_params_with_names(&type_info.input_types, &param_names);
     let return_type = if type_info.output_types.len() > 1 {
         format!("{}Result", to_pascal_case(&query.name))
     } else {
@@ -105,14 +109,12 @@ pub fn generate_function_code(query: &QueryDefinition, type_info: &QueryTypeInfo
 
     code.push_str(&format!(
         "pub async fn {}({}) -> Result<{}, tokio_postgres::Error> {{\n",
-        query.name,
-        params_str,
-        final_return_type
+        query.name, params_str, final_return_type
     ));
 
     // Generate function body
     code.push_str(&generate_function_body(query, type_info, &return_type)?);
-    
+
     code.push_str("}\n");
 
     Ok(code)
@@ -125,20 +127,32 @@ fn generate_function_body(
     return_type: &str,
 ) -> Result<String> {
     let mut body = String::new();
-    
+
+    // Convert named parameters to positional parameters for the generated SQL
+    let (converted_sql, param_names) = convert_named_params_to_positional(&query.sql);
+
     // Prepare the statement
     body.push_str(&format!(
         "    let stmt = client.prepare(\"{}\").await?;\n",
-        escape_sql_string(&query.sql)
+        escape_sql_string(&converted_sql)
     ));
 
-    // Prepare parameters
+    // Prepare parameters - use meaningful names if available
     let param_refs = if type_info.input_types.is_empty() {
         "&[]".to_string()
     } else {
-        let params: Vec<String> = (1..=type_info.input_types.len())
-            .map(|i| format!("&param_{}", i))
-            .collect();
+        let params: Vec<String> = if param_names.is_empty() {
+            // Fallback to generic param names
+            (1..=type_info.input_types.len())
+                .map(|i| format!("&param_{}", i))
+                .collect()
+        } else {
+            // Use the meaningful parameter names
+            param_names
+                .iter()
+                .map(|name| format!("&{}", name))
+                .collect()
+        };
         format!("&[{}]", params.join(", "))
     };
 
@@ -155,7 +169,7 @@ fn generate_function_body(
             "    let row = client.query_one(&stmt, {}).await?;\n",
             param_refs
         ));
-        
+
         let output_col = &type_info.output_types[0];
         if output_col.rust_type.needs_json_wrapper {
             // Use JSON wrapper for custom types
@@ -163,14 +177,14 @@ fn generate_function_body(
                 // Extract the inner type from Option<CustomType>
                 let rust_type = &output_col.rust_type.rust_type;
                 if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                    &rust_type[7..rust_type.len()-1]
+                    &rust_type[7..rust_type.len() - 1]
                 } else {
                     rust_type
                 }
             } else {
                 &output_col.rust_type.rust_type
             };
-            
+
             if output_col.rust_type.is_nullable {
                 body.push_str(&format!(
                     "    Ok(row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner()))\n",
@@ -195,7 +209,7 @@ fn generate_function_body(
             param_refs
         ));
         body.push_str(&format!("    Ok({} {{\n", return_type));
-        
+
         for (i, col) in type_info.output_types.iter().enumerate() {
             if col.rust_type.needs_json_wrapper {
                 // Use JSON wrapper for custom types
@@ -203,14 +217,14 @@ fn generate_function_body(
                     // Extract the inner type from Option<CustomType>
                     let rust_type = &col.rust_type.rust_type;
                     if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                        &rust_type[7..rust_type.len()-1]
+                        &rust_type[7..rust_type.len() - 1]
                     } else {
                         rust_type
                     }
                 } else {
                     &col.rust_type.rust_type
                 };
-                
+
                 if col.rust_type.is_nullable {
                     body.push_str(&format!(
                         "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|wrapper| wrapper.into_inner()),\n",
@@ -235,7 +249,7 @@ fn generate_function_body(
                 ));
             }
         }
-        
+
         body.push_str("    })\n");
     }
 
@@ -245,10 +259,10 @@ fn generate_function_body(
 /// Escape SQL string for inclusion in Rust code
 fn escape_sql_string(sql: &str) -> String {
     sql.replace('\\', "\\\\")
-       .replace('"', "\\\"")
-       .replace('\n', "\\n")
-       .replace('\r', "\\r")
-       .replace('\t', "\\t")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 /// Convert string to PascalCase
@@ -258,7 +272,9 @@ fn to_pascal_case(s: &str) -> String {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
             }
         })
         .collect()
@@ -284,9 +300,12 @@ fn to_snake_case(s: &str) -> String {
 }
 
 /// Generate a complete module with all functions
-pub fn generate_module_code(queries: &[QueryDefinition], type_infos: &[QueryTypeInfo]) -> Result<String> {
+pub fn generate_module_code(
+    queries: &[QueryDefinition],
+    type_infos: &[QueryTypeInfo],
+) -> Result<String> {
     let mut module_code = String::new();
-    
+
     // Add module header
     module_code.push_str("// This file was auto-generated by automodel\n");
     module_code.push_str("// Do not edit manually\n\n");
@@ -306,13 +325,22 @@ pub fn generate_module_code(queries: &[QueryDefinition], type_infos: &[QueryType
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::type_extraction::{RustType, OutputColumn};
+    use crate::type_extraction::{OutputColumn, RustType};
 
     #[test]
     fn test_escape_sql_string() {
-        assert_eq!(escape_sql_string(r#"SELECT "name" FROM users"#), r#"SELECT \"name\" FROM users"#);
-        assert_eq!(escape_sql_string("SELECT *\nFROM users"), "SELECT *\\nFROM users");
-        assert_eq!(escape_sql_string("SELECT * FROM users\r\n"), "SELECT * FROM users\\r\\n");
+        assert_eq!(
+            escape_sql_string(r#"SELECT "name" FROM users"#),
+            r#"SELECT \"name\" FROM users"#
+        );
+        assert_eq!(
+            escape_sql_string("SELECT *\nFROM users"),
+            "SELECT *\\nFROM users"
+        );
+        assert_eq!(
+            escape_sql_string("SELECT * FROM users\r\n"),
+            "SELECT * FROM users\\r\\n"
+        );
     }
 
     #[test]

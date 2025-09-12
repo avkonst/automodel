@@ -37,12 +37,19 @@ pub struct OutputColumn {
 
 /// Extract type information from a prepared SQL statement
 pub async fn extract_query_types(
-    db: &mut DatabaseConnection, 
+    db: &mut DatabaseConnection,
     sql: &str,
-    field_type_mappings: Option<&HashMap<String, String>>
+    field_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<QueryTypeInfo> {
-    let statement = db.prepare(sql).await
-        .with_context(|| format!("Failed to prepare statement for type extraction: {}", sql))?;
+    // Convert named parameters to positional parameters for PostgreSQL
+    let (converted_sql, _param_names) = convert_named_params_to_positional(sql);
+
+    let statement = db.prepare(&converted_sql).await.with_context(|| {
+        format!(
+            "Failed to prepare statement for type extraction: {}",
+            converted_sql
+        )
+    })?;
 
     let input_types = extract_input_types(&statement)?;
     let output_types = extract_output_types(&statement, field_type_mappings)?;
@@ -69,7 +76,7 @@ fn extract_input_types(statement: &Statement) -> Result<Vec<RustType>> {
 /// Extract output column types from a prepared statement
 fn extract_output_types(
     statement: &Statement,
-    field_type_mappings: Option<&HashMap<String, String>>
+    field_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<Vec<OutputColumn>> {
     let columns = statement.columns();
     let mut output_types = Vec::new();
@@ -77,16 +84,17 @@ fn extract_output_types(
     for column in columns {
         let column_name = column.name();
         let base_rust_type = pg_type_to_rust_type(column.type_(), true)?;
-        
+
         // Check if there's a custom type mapping for this field
         // Note: Since we only have the column name here, we can't determine the exact table
         // For now, we'll check for exact column name matches in the mappings
         let rust_type = if let Some(mappings) = field_type_mappings {
             // Look for any mapping that ends with the column name
-            let custom_type = mappings.iter()
+            let custom_type = mappings
+                .iter()
                 .find(|(key, _)| key.ends_with(&format!(".{}", column_name)))
                 .map(|(_, rust_type)| rust_type.clone());
-                
+
             if let Some(custom_type) = custom_type {
                 RustType {
                     rust_type: if base_rust_type.is_nullable {
@@ -104,7 +112,7 @@ fn extract_output_types(
         } else {
             base_rust_type
         };
-        
+
         output_types.push(OutputColumn {
             name: column_name.to_string(),
             rust_type,
@@ -174,6 +182,106 @@ pub fn generate_input_params(input_types: &[RustType]) -> String {
         .join(", ")
 }
 
+/// Generate function parameter list with custom parameter names
+pub fn generate_input_params_with_names(
+    input_types: &[RustType],
+    param_names: &[String],
+) -> String {
+    if input_types.is_empty() {
+        return String::new();
+    }
+
+    input_types
+        .iter()
+        .enumerate()
+        .map(|(i, rust_type)| {
+            let default_name = format!("param_{}", i + 1);
+            let param_name = param_names.get(i).unwrap_or(&default_name);
+            format!("{}: {}", param_name, rust_type.rust_type)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Parse SQL to extract meaningful parameter names from named parameters
+pub fn parse_parameter_names_from_sql(sql: &str) -> Vec<String> {
+    // Look for named parameters in the format ${param_name}
+    let mut param_names = Vec::new();
+    let mut chars = sql.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            if let Some(&'{') = chars.peek() {
+                chars.next(); // consume the '{'
+                let mut param_name = String::new();
+
+                // Read until we find the closing brace
+                while let Some(inner_ch) = chars.next() {
+                    if inner_ch == '}' {
+                        if !param_name.is_empty() {
+                            param_names.push(param_name);
+                        }
+                        break;
+                    } else {
+                        param_name.push(inner_ch);
+                    }
+                }
+            }
+        }
+    }
+
+    // If no named parameters found, fall back to counting positional parameters
+    if param_names.is_empty() {
+        let param_count = sql.matches('$').count();
+        param_names = (1..=param_count).map(|i| format!("param_{}", i)).collect();
+    }
+
+    param_names
+}
+
+/// Convert SQL with named parameters ${param} to positional parameters $1, $2, etc.
+pub fn convert_named_params_to_positional(sql: &str) -> (String, Vec<String>) {
+    let mut param_names = Vec::new();
+    let mut result_sql = String::new();
+    let mut chars = sql.chars().peekable();
+    let mut param_counter = 1;
+
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            if let Some(&'{') = chars.peek() {
+                chars.next(); // consume the '{'
+                let mut param_name = String::new();
+
+                // Read until we find the closing brace
+                while let Some(inner_ch) = chars.next() {
+                    if inner_ch == '}' {
+                        if !param_name.is_empty() {
+                            param_names.push(param_name);
+                            result_sql.push_str(&format!("${}", param_counter));
+                            param_counter += 1;
+                        }
+                        break;
+                    } else {
+                        param_name.push(inner_ch);
+                    }
+                }
+            } else {
+                // Regular $ character, just pass it through
+                result_sql.push(ch);
+            }
+        } else {
+            result_sql.push(ch);
+        }
+    }
+
+    // If no named parameters were found, return original SQL
+    if param_names.is_empty() {
+        (sql.to_string(), Vec::new())
+    } else {
+        (result_sql, param_names)
+    }
+}
+
 /// Generate return type from output types
 pub fn generate_return_type(output_types: &[OutputColumn]) -> String {
     if output_types.is_empty() {
@@ -221,7 +329,9 @@ fn to_pascal_case(s: &str) -> String {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
             }
         })
         .collect()
@@ -268,7 +378,7 @@ mod tests {
     fn test_to_snake_case() {
         assert_eq!(to_snake_case("userId"), "user_id");
         assert_eq!(to_snake_case("firstName"), "first_name");
-        assert_eq!(to_snake_case("ID"), "id");  // Fixed expectation
+        assert_eq!(to_snake_case("ID"), "id"); // Fixed expectation
         assert_eq!(to_snake_case("simple"), "simple");
     }
 

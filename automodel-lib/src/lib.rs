@@ -37,10 +37,11 @@ impl AutoModel {
         let mut db = DatabaseConnection::new(database_url).await?;
         let mut generated_code = String::new();
 
-        // Add JSON wrapper helper if we have custom field type mappings
+        // Add imports first
         if self.field_type_mappings.is_some() {
-            generated_code.push_str(&generate_json_wrapper_helper());
-            generated_code.push('\n');
+            generated_code.push_str("use serde::{Serialize, Deserialize};\n");
+            generated_code.push_str("use tokio_postgres::types::{FromSql, ToSql, Type};\n");
+            generated_code.push_str("use std::error::Error;\n\n");
         }
 
         for query in &self.queries {
@@ -49,6 +50,11 @@ impl AutoModel {
             let function_code = generate_function_code(query, &type_info)?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
+        }
+
+        // Add JSON wrapper helper at the end if we have custom field type mappings
+        if self.field_type_mappings.is_some() {
+            generated_code.push_str(&generate_json_wrapper_helper());
         }
 
         Ok(generated_code)
