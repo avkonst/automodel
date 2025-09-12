@@ -1,4 +1,5 @@
 mod generated;
+mod models;
 
 use std::env;
 use tokio_postgres::{Client, NoTls};

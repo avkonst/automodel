@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Represents a single SQL query definition from the YAML file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +21,10 @@ pub struct QueryConfig {
     pub queries: Vec<QueryDefinition>,
     /// Optional metadata about the query collection
     pub metadata: Option<QueryMetadata>,
+    /// Optional field-specific type mappings
+    /// Key format: "schema.table.field" or "table.field" (e.g., "public.users.profile" or "users.profile")
+    /// Value: Rust type to use (e.g., "crate::models::UserProfile", "MyStruct")
+    pub field_type_mappings: Option<HashMap<String, String>>,
 }
 
 /// Optional metadata for the query collection
@@ -39,6 +44,7 @@ impl QueryConfig {
         Self {
             queries: Vec::new(),
             metadata: None,
+            field_type_mappings: None,
         }
     }
 
@@ -50,6 +56,29 @@ impl QueryConfig {
     /// Get all queries
     pub fn queries(&self) -> &[QueryDefinition] {
         &self.queries
+    }
+
+    /// Get custom type mapping for a specific field
+    /// Supports both "schema.table.field" and "table.field" formats
+    pub fn get_field_type_mapping(&self, table_name: &str, field_name: &str) -> Option<&String> {
+        if let Some(mappings) = &self.field_type_mappings {
+            // Try "table.field" format first
+            let table_field_key = format!("{}.{}", table_name, field_name);
+            if let Some(rust_type) = mappings.get(&table_field_key) {
+                return Some(rust_type);
+            }
+
+            // Try "schema.table.field" format (assume "public" schema if not specified)
+            let schema_table_field_key = format!("public.{}.{}", table_name, field_name);
+            mappings.get(&schema_table_field_key)
+        } else {
+            None
+        }
+    }
+
+    /// Get all field type mappings
+    pub fn field_type_mappings(&self) -> Option<&HashMap<String, String>> {
+        self.field_type_mappings.as_ref()
     }
 }
 

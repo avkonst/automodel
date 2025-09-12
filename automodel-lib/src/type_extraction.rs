@@ -1,5 +1,6 @@
 use crate::db_connection::DatabaseConnection;
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use tokio_postgres::types::Type as PgType;
 use tokio_postgres::Statement;
 
@@ -21,6 +22,8 @@ pub struct RustType {
     pub is_nullable: bool,
     /// The original PostgreSQL type
     pub pg_type: String,
+    /// Whether this is a custom type that needs JSON wrapper
+    pub needs_json_wrapper: bool,
 }
 
 /// Represents an output column with its name and type
@@ -33,12 +36,16 @@ pub struct OutputColumn {
 }
 
 /// Extract type information from a prepared SQL statement
-pub async fn extract_query_types(db: &mut DatabaseConnection, sql: &str) -> Result<QueryTypeInfo> {
+pub async fn extract_query_types(
+    db: &mut DatabaseConnection, 
+    sql: &str,
+    field_type_mappings: Option<&HashMap<String, String>>
+) -> Result<QueryTypeInfo> {
     let statement = db.prepare(sql).await
         .with_context(|| format!("Failed to prepare statement for type extraction: {}", sql))?;
 
     let input_types = extract_input_types(&statement)?;
-    let output_types = extract_output_types(&statement)?;
+    let output_types = extract_output_types(&statement, field_type_mappings)?;
 
     Ok(QueryTypeInfo {
         input_types,
@@ -60,14 +67,46 @@ fn extract_input_types(statement: &Statement) -> Result<Vec<RustType>> {
 }
 
 /// Extract output column types from a prepared statement
-fn extract_output_types(statement: &Statement) -> Result<Vec<OutputColumn>> {
+fn extract_output_types(
+    statement: &Statement,
+    field_type_mappings: Option<&HashMap<String, String>>
+) -> Result<Vec<OutputColumn>> {
     let columns = statement.columns();
     let mut output_types = Vec::new();
 
     for column in columns {
-        let rust_type = pg_type_to_rust_type(column.type_(), true)?;
+        let column_name = column.name();
+        let base_rust_type = pg_type_to_rust_type(column.type_(), true)?;
+        
+        // Check if there's a custom type mapping for this field
+        // Note: Since we only have the column name here, we can't determine the exact table
+        // For now, we'll check for exact column name matches in the mappings
+        let rust_type = if let Some(mappings) = field_type_mappings {
+            // Look for any mapping that ends with the column name
+            let custom_type = mappings.iter()
+                .find(|(key, _)| key.ends_with(&format!(".{}", column_name)))
+                .map(|(_, rust_type)| rust_type.clone());
+                
+            if let Some(custom_type) = custom_type {
+                RustType {
+                    rust_type: if base_rust_type.is_nullable {
+                        format!("Option<{}>", custom_type)
+                    } else {
+                        custom_type
+                    },
+                    is_nullable: base_rust_type.is_nullable,
+                    pg_type: base_rust_type.pg_type,
+                    needs_json_wrapper: true, // Custom types need JSON wrapper
+                }
+            } else {
+                base_rust_type
+            }
+        } else {
+            base_rust_type
+        };
+        
         output_types.push(OutputColumn {
-            name: column.name().to_string(),
+            name: column_name.to_string(),
             rust_type,
         });
     }
@@ -102,6 +141,7 @@ fn pg_type_to_rust_type(pg_type: &PgType, is_nullable: bool) -> Result<RustType>
                 rust_type: format!("/* Unknown type: {} */ String", pg_type.name()),
                 is_nullable,
                 pg_type: pg_type.name().to_string(),
+                needs_json_wrapper: false,
             });
         }
     };
@@ -116,6 +156,7 @@ fn pg_type_to_rust_type(pg_type: &PgType, is_nullable: bool) -> Result<RustType>
         rust_type,
         is_nullable,
         pg_type: pg_type.name().to_string(),
+        needs_json_wrapper: false, // Standard types don't need JSON wrapper
     })
 }
 
@@ -238,11 +279,13 @@ mod tests {
                 rust_type: "i32".to_string(),
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
+                needs_json_wrapper: false,
             },
             RustType {
                 rust_type: "String".to_string(),
                 is_nullable: false,
                 pg_type: "TEXT".to_string(),
+                needs_json_wrapper: false,
             },
         ];
 
@@ -258,6 +301,7 @@ mod tests {
                 rust_type: "i32".to_string(),
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
+                needs_json_wrapper: false,
             },
         }];
 
@@ -270,6 +314,7 @@ mod tests {
                     rust_type: "i32".to_string(),
                     is_nullable: false,
                     pg_type: "INT4".to_string(),
+                    needs_json_wrapper: false,
                 },
             },
             OutputColumn {
@@ -278,6 +323,7 @@ mod tests {
                     rust_type: "String".to_string(),
                     is_nullable: false,
                     pg_type: "TEXT".to_string(),
+                    needs_json_wrapper: false,
                 },
             },
         ];

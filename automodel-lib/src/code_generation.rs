@@ -2,6 +2,70 @@ use crate::query_config::QueryDefinition;
 use crate::type_extraction::{QueryTypeInfo, generate_input_params, generate_return_type, generate_result_struct};
 use anyhow::Result;
 
+/// Generate a JSON wrapper helper for custom types
+pub fn generate_json_wrapper_helper() -> String {
+    r#"// JSON wrapper for custom types that implement Serialize/Deserialize
+use serde::{Serialize, Deserialize};
+use tokio_postgres::types::{FromSql, ToSql, Type};
+use std::error::Error;
+
+struct JsonWrapper<T>(T);
+
+impl<T> JsonWrapper<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    fn new(value: T) -> Self {
+        Self(value)
+    }
+    
+    fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> FromSql<'_> for JsonWrapper<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    fn from_sql(ty: &Type, raw: &[u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
+        let json_value = serde_json::Value::from_sql(ty, raw)?;
+        let value = T::deserialize(json_value)?;
+        Ok(JsonWrapper(value))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::JSON | Type::JSONB)
+    }
+}
+
+impl<T> ToSql for JsonWrapper<T>
+where
+    T: Serialize + std::fmt::Debug,
+{
+    fn to_sql(&self, ty: &Type, out: &mut bytes::BytesMut) -> Result<tokio_postgres::types::IsNull, Box<dyn Error + Sync + Send>> {
+        let json_value = serde_json::to_value(&self.0)?;
+        json_value.to_sql(ty, out)
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::JSON | Type::JSONB)
+    }
+
+    tokio_postgres::types::to_sql_checked!();
+}
+
+impl<T> std::fmt::Debug for JsonWrapper<T>
+where
+    T: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("JsonWrapper").field(&self.0).finish()
+    }
+}
+"#.to_string()
+}
+
 /// Generate Rust function code for a SQL query
 pub fn generate_function_code(query: &QueryDefinition, type_info: &QueryTypeInfo) -> Result<String> {
     let mut code = String::new();
@@ -91,10 +155,39 @@ fn generate_function_body(
             "    let row = client.query_one(&stmt, {}).await?;\n",
             param_refs
         ));
-        body.push_str(&format!(
-            "    Ok(row.get::<_, {}>(0))\n",
-            type_info.output_types[0].rust_type.rust_type
-        ));
+        
+        let output_col = &type_info.output_types[0];
+        if output_col.rust_type.needs_json_wrapper {
+            // Use JSON wrapper for custom types
+            let inner_type = if output_col.rust_type.is_nullable {
+                // Extract the inner type from Option<CustomType>
+                let rust_type = &output_col.rust_type.rust_type;
+                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                    &rust_type[7..rust_type.len()-1]
+                } else {
+                    rust_type
+                }
+            } else {
+                &output_col.rust_type.rust_type
+            };
+            
+            if output_col.rust_type.is_nullable {
+                body.push_str(&format!(
+                    "    Ok(row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner()))\n",
+                    inner_type
+                ));
+            } else {
+                body.push_str(&format!(
+                    "    Ok(row.get::<_, JsonWrapper<{}>>(0).into_inner())\n",
+                    inner_type
+                ));
+            }
+        } else {
+            body.push_str(&format!(
+                "    Ok(row.get::<_, {}>(0))\n",
+                output_col.rust_type.rust_type
+            ));
+        }
     } else {
         // For queries that return multiple columns
         body.push_str(&format!(
@@ -104,12 +197,43 @@ fn generate_function_body(
         body.push_str(&format!("    Ok({} {{\n", return_type));
         
         for (i, col) in type_info.output_types.iter().enumerate() {
-            body.push_str(&format!(
-                "        {}: row.get::<_, {}>({}),\n",
-                to_snake_case(&col.name),
-                col.rust_type.rust_type,
-                i
-            ));
+            if col.rust_type.needs_json_wrapper {
+                // Use JSON wrapper for custom types
+                let inner_type = if col.rust_type.is_nullable {
+                    // Extract the inner type from Option<CustomType>
+                    let rust_type = &col.rust_type.rust_type;
+                    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                        &rust_type[7..rust_type.len()-1]
+                    } else {
+                        rust_type
+                    }
+                } else {
+                    &col.rust_type.rust_type
+                };
+                
+                if col.rust_type.is_nullable {
+                    body.push_str(&format!(
+                        "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|wrapper| wrapper.into_inner()),\n",
+                        to_snake_case(&col.name),
+                        inner_type,
+                        i
+                    ));
+                } else {
+                    body.push_str(&format!(
+                        "        {}: row.get::<_, JsonWrapper<{}>>>({}).into_inner(),\n",
+                        to_snake_case(&col.name),
+                        inner_type,
+                        i
+                    ));
+                }
+            } else {
+                body.push_str(&format!(
+                    "        {}: row.get::<_, {}>({}),\n",
+                    to_snake_case(&col.name),
+                    col.rust_type.rust_type,
+                    i
+                ));
+            }
         }
         
         body.push_str("    })\n");
@@ -219,6 +343,7 @@ mod tests {
                 rust_type: "i32".to_string(),
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
+                needs_json_wrapper: false,
             }],
             output_types: vec![
                 OutputColumn {
@@ -227,6 +352,7 @@ mod tests {
                         rust_type: "i32".to_string(),
                         is_nullable: false,
                         pg_type: "INT4".to_string(),
+                        needs_json_wrapper: false,
                     },
                 },
                 OutputColumn {
@@ -235,6 +361,7 @@ mod tests {
                         rust_type: "String".to_string(),
                         is_nullable: false,
                         pg_type: "TEXT".to_string(),
+                        needs_json_wrapper: false,
                     },
                 },
             ],

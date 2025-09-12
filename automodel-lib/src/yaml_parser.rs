@@ -12,12 +12,29 @@ pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Vec<QueryDefinit
     parse_yaml_string(&content)
 }
 
+/// Parse a YAML file and return the full configuration including type mappings
+pub async fn parse_yaml_file_full<P: AsRef<Path>>(path: P) -> Result<QueryConfig> {
+    let content = fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("Failed to read YAML file: {}", path.as_ref().display()))?;
+
+    parse_yaml_string_full(&content)
+}
+
 /// Parse a YAML string containing SQL query definitions
 pub fn parse_yaml_string(content: &str) -> Result<Vec<QueryDefinition>> {
     let config: QueryConfig = serde_yaml::from_str(content)
         .with_context(|| "Failed to parse YAML content")?;
 
     Ok(config.queries)
+}
+
+/// Parse a YAML string and return the full configuration
+pub fn parse_yaml_string_full(content: &str) -> Result<QueryConfig> {
+    let config: QueryConfig = serde_yaml::from_str(content)
+        .with_context(|| "Failed to parse YAML content")?;
+
+    Ok(config)
 }
 
 /// Validate that query names are valid Rust function names
