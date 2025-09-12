@@ -3,8 +3,8 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 
-/// Parse a YAML file containing SQL query definitions
-pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Vec<QueryDefinition>> {
+/// Parse a YAML file and return the full configuration including queries and type mappings
+pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<QueryConfig> {
     let content = fs::read_to_string(&path)
         .await
         .with_context(|| format!("Failed to read YAML file: {}", path.as_ref().display()))?;
@@ -12,25 +12,8 @@ pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Vec<QueryDefinit
     parse_yaml_string(&content)
 }
 
-/// Parse a YAML file and return the full configuration including type mappings
-pub async fn parse_yaml_file_full<P: AsRef<Path>>(path: P) -> Result<QueryConfig> {
-    let content = fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("Failed to read YAML file: {}", path.as_ref().display()))?;
-
-    parse_yaml_string_full(&content)
-}
-
-/// Parse a YAML string containing SQL query definitions
-pub fn parse_yaml_string(content: &str) -> Result<Vec<QueryDefinition>> {
-    let config: QueryConfig = serde_yaml::from_str(content)
-        .with_context(|| "Failed to parse YAML content")?;
-
-    Ok(config.queries)
-}
-
-/// Parse a YAML string and return the full configuration
-pub fn parse_yaml_string_full(content: &str) -> Result<QueryConfig> {
+/// Parse a YAML string and return the full configuration including queries and type mappings
+pub fn parse_yaml_string(content: &str) -> Result<QueryConfig> {
     let config: QueryConfig = serde_yaml::from_str(content)
         .with_context(|| "Failed to parse YAML content")?;
 
@@ -123,9 +106,9 @@ metadata:
   description: "User management queries"
 "#;
 
-        let queries = parse_yaml_string(yaml_content).unwrap();
-        assert_eq!(queries.len(), 2);
-        assert_eq!(queries[0].name, "get_user");
-        assert_eq!(queries[1].name, "list_users");
+        let config = parse_yaml_string(yaml_content).unwrap();
+        assert_eq!(config.queries.len(), 2);
+        assert_eq!(config.queries[0].name, "get_user");
+        assert_eq!(config.queries[1].name, "list_users");
     }
 }

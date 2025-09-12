@@ -144,12 +144,9 @@ async fn generate_with_args(
     }
     println!();
 
-    // Create AutoModel instance
-    let mut automodel = AutoModel::new(database_url.to_string());
-
-    // Load queries from YAML file
+    // Create AutoModel instance and load queries from YAML file
     println!("Loading queries from YAML file...");
-    automodel.load_queries_from_file(&yaml_path).await?;
+    let automodel = AutoModel::new(&yaml_path).await?;
 
     println!(
         "✓ Successfully loaded {} queries",
@@ -167,7 +164,7 @@ async fn generate_with_args(
 
     // Generate Rust code
     println!("Connecting to database and generating code...");
-    let code = automodel.generate_code().await?;
+    let code = automodel.generate_code(database_url).await?;
 
     println!("✓ Successfully generated Rust code");
 
@@ -212,17 +209,17 @@ async fn validate_command(matches: &ArgMatches) -> Result<()> {
     println!();
 
     // Parse YAML file
-    let queries = parse_yaml_file(&yaml_path).await?;
+    let config = parse_yaml_file(&yaml_path).await?;
 
     println!("✓ YAML file parsed successfully");
-    println!("✓ Found {} queries", queries.len());
+    println!("✓ Found {} queries", config.queries.len());
 
     // Validate query names
-    validate_query_names(&queries)?;
+    validate_query_names(&config.queries)?;
     println!("✓ All query names are valid Rust identifiers");
 
     // List queries
-    for (i, query) in queries.iter().enumerate() {
+    for (i, query) in config.queries.iter().enumerate() {
         println!(
             "  {}. {}: {}",
             i + 1,
@@ -234,13 +231,12 @@ async fn validate_command(matches: &ArgMatches) -> Result<()> {
     // If database URL is provided, validate SQL queries
     if let Some(database_url) = matches.get_one::<String>("database-url") {
         println!("\nConnecting to database for SQL validation...");
-        let mut automodel = AutoModel::new(database_url.to_string());
-        automodel.load_queries_from_file(&yaml_path).await?;
+        let automodel = AutoModel::new(&yaml_path).await?;
 
         // Try to prepare each query
         let mut db = DatabaseConnection::new(database_url).await?;
 
-        for query in &queries {
+        for query in automodel.queries() {
             match db.prepare(&query.sql).await {
                 Ok(_) => println!("  ✓ {}: SQL is valid", query.name),
                 Err(e) => println!("  ✗ {}: SQL error - {}", query.name, e),

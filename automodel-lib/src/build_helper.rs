@@ -59,14 +59,11 @@ async fn generate_code(
     yaml_file: &str,
     output_file: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Create AutoModel instance
-    let mut automodel = AutoModel::new(database_url.to_string());
-
-    // Load queries from YAML file
-    automodel.load_queries_from_file(yaml_file).await?;
+    // Create AutoModel instance and load queries from YAML file
+    let automodel = AutoModel::new(yaml_file).await?;
 
     // Generate Rust code
-    let generated_code = automodel.generate_code().await?;
+    let generated_code = automodel.generate_code(database_url).await?;
 
     // Write the generated code to the specified output file
     fs::write(output_file, &generated_code)?;

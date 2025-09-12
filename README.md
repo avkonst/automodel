@@ -98,7 +98,7 @@ anyhow = "1.0"
 ### Create a build.rs for automatic code generation
 
 ```rust
-use automodel_lib::AutoModel;
+use automodel::AutoModel;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

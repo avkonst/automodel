@@ -1,4 +1,4 @@
-use automodel_lib::*;
+use automodel::*;
 
 #[tokio::test]
 async fn test_yaml_parsing() {
@@ -14,10 +14,10 @@ metadata:
   version: "1.0"
 "#;
 
-    let queries = parse_yaml_string(yaml_content).unwrap();
-    assert_eq!(queries.len(), 2);
-    assert_eq!(queries[0].name, "get_user");
-    assert_eq!(queries[1].name, "list_users");
+    let config = parse_yaml_string(yaml_content).unwrap();
+    assert_eq!(config.queries.len(), 2);
+    assert_eq!(config.queries[0].name, "get_user");
+    assert_eq!(config.queries[1].name, "list_users");
 }
 
 #[tokio::test]
@@ -53,18 +53,20 @@ async fn test_query_validation() {
 
 #[test]
 fn test_type_conversions() {
-    use automodel_lib::type_extraction::{generate_input_params, generate_return_type, RustType, OutputColumn};
+    use automodel::type_extraction::{generate_input_params, generate_return_type, RustType, OutputColumn};
 
     let input_types = vec![
         RustType {
             rust_type: "i32".to_string(),
             is_nullable: false,
             pg_type: "INT4".to_string(),
+            needs_json_wrapper: false,
         },
         RustType {
             rust_type: "String".to_string(),
             is_nullable: false,
             pg_type: "TEXT".to_string(),
+            needs_json_wrapper: false,
         },
     ];
 
@@ -78,6 +80,7 @@ fn test_type_conversions() {
                 rust_type: "i32".to_string(),
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
+                needs_json_wrapper: false,
             },
         },
     ];
@@ -88,8 +91,8 @@ fn test_type_conversions() {
 
 #[test]
 fn test_code_generation() {
-    use automodel_lib::code_generation::generate_function_code;
-    use automodel_lib::type_extraction::{QueryTypeInfo, RustType, OutputColumn};
+    use automodel::code_generation::generate_function_code;
+    use automodel::type_extraction::{QueryTypeInfo, RustType, OutputColumn};
 
     let query = QueryDefinition {
         name: "get_count".to_string(),
@@ -107,6 +110,7 @@ fn test_code_generation() {
                     rust_type: "i64".to_string(),
                     is_nullable: false,
                     pg_type: "INT8".to_string(),
+                    needs_json_wrapper: false,
                 },
             },
         ],
