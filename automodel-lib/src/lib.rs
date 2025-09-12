@@ -72,7 +72,7 @@ impl AutoModel {
     /// # Arguments
     ///
     /// * `yaml_file` - Path to the YAML file containing query definitions (relative to build.rs)
-    /// * `output_file` - Path to write the generated Rust code (relative to build.rs, typically "src/generated.rs")
+    /// * `output_dir` - Path to the directory where mod.rs will be written (relative to build.rs, typically "src/generated")
     ///
     /// # Example
     ///
@@ -82,22 +82,26 @@ impl AutoModel {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     AutoModel::generate_at_build_time("queries.yaml", "src/generated.rs").await?;
+    ///     AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
     ///     
     ///     Ok(())
     /// }
     /// ```
     pub async fn generate_at_build_time(
         yaml_file: &str,
-        output_file: &str,
+        output_dir: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use std::env;
         use std::fs;
+        use std::path::Path;
+
+        let output_path = Path::new(output_dir);
+        let mod_file = output_path.join("mod.rs");
 
         // Tell cargo to rerun if the input YAML file changes
         println!("cargo:rerun-if-changed={}", yaml_file);
-        // Tell cargo to rerun if the output file is manually modified
-        println!("cargo:rerun-if-changed={}", output_file);
+        // Tell cargo to rerun if the mod.rs file is manually modified
+        println!("cargo:rerun-if-changed={}", mod_file.display());
 
         // Check if DATABASE_URL environment variable is set
         match env::var("DATABASE_URL") {
@@ -111,10 +115,16 @@ impl AutoModel {
                 // Generate Rust code
                 let generated_code = automodel.generate_code(&database_url).await?;
 
-                // Write the generated code to the specified output file
-                fs::write(output_file, &generated_code)?;
+                // Create output directory if it doesn't exist
+                fs::create_dir_all(output_path)?;
 
-                println!("cargo:info=Successfully generated database functions");
+                // Write the generated code to mod.rs in the output directory
+                fs::write(&mod_file, &generated_code)?;
+
+                println!(
+                    "cargo:info=Successfully generated database functions at {}",
+                    mod_file.display()
+                );
             }
             Err(_) => {
                 // DATABASE_URL is not set - skip codegen silently

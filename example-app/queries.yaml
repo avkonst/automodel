@@ -16,7 +16,10 @@ queries:
     description: "Create the users table with all necessary fields"
 
   - name: insert_user
-    sql: "INSERT INTO users (name, email, age, profile) VALUES (${name}, ${email}, ${age}, ${profile}) RETURNING id, name, email, age, created_at"
+    sql: |
+      INSERT INTO users (name, email, age, profile)
+      VALUES (${name}, ${email}, ${age}, ${profile})
+      RETURNING id, name, email, age, created_at
     description: "Insert a new user with all fields and return the created user"
 
   - name: get_all_users

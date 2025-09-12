@@ -44,9 +44,12 @@ pub struct InsertUserResult {
 }
 
 /// Insert a new user with all fields and return the created user
-/// Generated from SQL: INSERT INTO users (name, email, age, profile) VALUES (${name}, ${email}, ${age}, ${profile}) RETURNING id, name, email, age, created_at
+/// Generated from SQL:
+/// INSERT INTO users (name, email, age, profile)
+/// VALUES (${name}, ${email}, ${age}, ${profile})
+/// RETURNING id, name, email, age, created_at
 pub async fn insert_user(client: &tokio_postgres::Client, name: String, email: String, age: i32, profile: serde_json::Value) -> Result<InsertUserResult, tokio_postgres::Error> {
-    let stmt = client.prepare("INSERT INTO users (name, email, age, profile) VALUES ($1, $2, $3, $4) RETURNING id, name, email, age, created_at").await?;
+    let stmt = client.prepare("INSERT INTO users (name, email, age, profile)\nVALUES ($1, $2, $3, $4)\nRETURNING id, name, email, age, created_at\n").await?;
     let row = client.query_one(&stmt, &[&name, &email, &age, &profile]).await?;
     Ok(InsertUserResult {
         id: row.get::<_, Option<i32>>(0),

@@ -83,7 +83,17 @@ pub fn generate_function_code(
     if let Some(description) = &query.description {
         code.push_str(&format!("/// {}\n", description));
     }
-    code.push_str(&format!("/// Generated from SQL: {}\n", query.sql.trim()));
+
+    // Handle multiline SQL comments properly
+    let sql_lines: Vec<&str> = query.sql.trim().lines().collect();
+    if sql_lines.len() == 1 {
+        code.push_str(&format!("/// Generated from SQL: {}\n", sql_lines[0]));
+    } else {
+        code.push_str("/// Generated from SQL:\n");
+        for line in sql_lines {
+            code.push_str(&format!("/// {}\n", line.trim()));
+        }
+    }
 
     // Generate function signature
     let param_names = parse_parameter_names_from_sql(&query.sql);
