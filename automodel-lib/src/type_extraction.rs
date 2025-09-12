@@ -49,7 +49,7 @@ pub struct OutputColumn {
 pub async fn extract_query_types(
     database_url: &str,
     sql: &str,
-    field_type_mappings: Option<&HashMap<String, String>>,
+    query_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<QueryTypeInfo> {
     // Create database connection
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)
@@ -75,7 +75,7 @@ pub async fn extract_query_types(
 
     // Extract types
     let input_types = extract_input_types(&client, &statement, &param_names).await?;
-    let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
+    let output_types = extract_output_types(&client, &statement, query_type_mappings).await?;
 
     Ok(QueryTypeInfo {
         input_types,
@@ -186,7 +186,7 @@ async fn get_enum_type_info(
 async fn extract_output_types(
     client: &tokio_postgres::Client,
     statement: &Statement,
-    field_type_mappings: Option<&HashMap<String, String>>,
+    query_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<Vec<OutputColumn>> {
     let columns = statement.columns();
     let mut output_types = Vec::new();
@@ -200,21 +200,14 @@ async fn extract_output_types(
         let base_rust_type = pg_type_to_rust_type(client, column.type_(), is_nullable).await?;
 
         // Check if there's a custom type mapping for this field
-        // Note: Since we only have the column name here, we can't determine the exact table
-        // For now, we'll check for exact column name matches in the mappings
-        let rust_type = if let Some(mappings) = field_type_mappings {
-            // Look for any mapping that ends with the column name
-            let custom_type = mappings
-                .iter()
-                .find(|(key, _)| key.ends_with(&format!(".{}", column_name)))
-                .map(|(_, rust_type)| rust_type.clone());
-
-            if let Some(custom_type) = custom_type {
+        let rust_type = if let Some(mappings) = query_type_mappings {
+            // Simple field name lookup
+            if let Some(custom_type) = mappings.get(column_name) {
                 RustType {
                     rust_type: if base_rust_type.is_nullable {
                         format!("Option<{}>", custom_type)
                     } else {
-                        custom_type
+                        custom_type.clone()
                     },
                     is_nullable: base_rust_type.is_nullable,
                     pg_type: base_rust_type.pg_type,

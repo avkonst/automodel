@@ -9,13 +9,11 @@ use type_extraction::*;
 use yaml_parser::*;
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::Path;
 
 /// Main entry point for the automodel library
 pub struct AutoModel {
     queries: Vec<QueryDefinition>,
-    field_type_mappings: Option<HashMap<String, String>>,
 }
 
 impl AutoModel {
@@ -25,7 +23,6 @@ impl AutoModel {
 
         Ok(Self {
             queries: config.queries,
-            field_type_mappings: config.types,
         })
     }
 
@@ -54,8 +51,11 @@ impl AutoModel {
             return Ok(generated_code);
         }
 
+        // Check if any query in this module has custom type mappings
+        let has_custom_types = module_queries.iter().any(|q| q.types.is_some());
+
         // Add imports first
-        if self.field_type_mappings.is_some() {
+        if has_custom_types {
             generated_code.push_str("use serde::{Serialize, Deserialize};\n");
             generated_code.push_str("use tokio_postgres::types::{FromSql, ToSql, Type};\n");
             generated_code.push_str("use std::error::Error;\n\n");
@@ -65,8 +65,7 @@ impl AutoModel {
         let mut type_infos = Vec::new();
         for query in &module_queries {
             let type_info =
-                extract_query_types(database_url, &query.sql, self.field_type_mappings.as_ref())
-                    .await?;
+                extract_query_types(database_url, &query.sql, query.types.as_ref()).await?;
             type_infos.push(type_info);
         }
 
@@ -93,7 +92,7 @@ impl AutoModel {
         }
 
         // Add JSON wrapper helper at the end if we have custom field type mappings
-        if self.field_type_mappings.is_some() {
+        if has_custom_types {
             generated_code.push_str(&generate_json_wrapper_helper());
         }
 

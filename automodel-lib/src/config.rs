@@ -38,6 +38,10 @@ pub struct QueryDefinition {
     /// Defaults to "exactly_one" if not specified
     #[serde(default)]
     pub expect: ExpectedResult,
+    /// Optional per-query field type mappings
+    /// Key: field name (e.g., "profile", "metadata", "status")
+    /// Value: Rust type to use (e.g., "crate::models::UserProfile", "MyStruct")
+    pub types: Option<HashMap<String, String>>,
 }
 
 /// Root structure for the YAML file containing multiple queries
@@ -45,11 +49,6 @@ pub struct QueryDefinition {
 pub struct Config {
     /// List of SQL queries
     pub queries: Vec<QueryDefinition>,
-    /// Optional field-specific type mappings
-    /// Key format: "schema.table.field" or "table.field" (e.g., "public.users.profile" or "users.profile")
-    /// Value: Rust type to use (e.g., "crate::models::UserProfile", "MyStruct")
-    #[serde(alias = "field_type_mappings")]
-    pub types: Option<HashMap<String, String>>,
 }
 
 impl Config {
@@ -57,7 +56,6 @@ impl Config {
     pub fn new() -> Self {
         Self {
             queries: Vec::new(),
-            types: None,
         }
     }
 }
