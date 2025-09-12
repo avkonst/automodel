@@ -1,0 +1,15 @@
+[package]
+name = "example-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+automodel-lib = { path = "../automodel-lib" }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+automodel-lib = { path = "../automodel-lib" }
+tokio = { workspace = true, features = ["rt"] }
+anyhow = { workspace = true }

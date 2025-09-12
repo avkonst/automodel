@@ -1,0 +1,19 @@
+[workspace]
+members = ["automodel-lib", "automodel-cli", "example-app"]
+
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1.0", features = ["full"] }
+tokio-postgres = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+sea-query = "0.30"
+sea-query-postgres = "0.4"
+anyhow = "1.0"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["serde"] }
+serde_json = "1.0"
+rust_decimal = "1.0"
+clap = { version = "4.0", features = ["derive"] }

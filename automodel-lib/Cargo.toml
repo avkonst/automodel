@@ -1,0 +1,23 @@
+[package]
+name = "automodel-lib"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust library for generating typed functions from YAML-defined SQL queries"
+license = "MIT"
+repository = "https://github.com/yourusername/automodel"
+keywords = ["sql", "postgresql", "codegen", "database", "yaml"]
+categories = ["database", "development-tools"]
+
+[dependencies]
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+sea-query = { workspace = true }
+sea-query-postgres = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
