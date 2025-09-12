@@ -3,15 +3,18 @@ queries:
     sql: "SELECT NOW() as current_time"
     description: "Get the current timestamp"
     module: "admin"
+    expect: "exactly_one"
 
   - name: get_version
     sql: "SELECT version() as pg_version"
     description: "Get PostgreSQL version"
     module: "admin"
+    expect: "exactly_one"
 
   - name: test_json_query
     sql: "SELECT ${test_data}::jsonb as test_data"
     description: "Test query with JSON parameter"
+    expect: "possible_one"
 
   - name: create_users_table
     sql: "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())"
@@ -25,21 +28,43 @@ queries:
       RETURNING id, name, email, age, created_at
     description: "Insert a new user with all fields and return the created user"
     module: "users"
+    expect: "exactly_one"
 
   - name: get_all_users
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"
     description: "Get all users with all their fields"
     module: "users"
+    expect: "multiple"
 
   - name: find_user_by_email
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = ${email}"
     description: "Find a user by their email address"
     module: "users"
+    expect: "possible_one"
 
   - name: update_user_profile
     sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at"
     description: "Update a user's profile by their ID"
     module: "users"
+    expect: "exactly_one"
+
+  - name: get_recent_users
+    sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > ${since} ORDER BY created_at DESC"
+    description: "Get users created after a specific timestamp - expects at least one user"
+    module: "users"
+    expect: "at_least_one"
+
+  - name: get_active_users_by_age_range
+    sql: "SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN ${min_age} AND ${max_age} AND updated_at > NOW() - INTERVAL '30 days'"
+    description: "Get active users within an age range - must return at least one user or fails"
+    module: "users"
+    expect: "at_least_one"
+
+  - name: search_users_by_name_pattern
+    sql: "SELECT id, name, email FROM users WHERE name ILIKE ${pattern} ORDER BY name"
+    description: "Search users by name pattern - expects at least one match"
+    module: "users"
+    expect: "at_least_one"
 
 # Field-specific type mappings for JSON/JSONB fields
 # This demonstrates how you would map specific fields to custom Rust types

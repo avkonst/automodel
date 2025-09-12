@@ -10,8 +10,13 @@ use std::error::Error;
 /// Generated from SQL: SELECT ${test_data}::jsonb as test_data
 pub async fn test_json_query(client: &tokio_postgres::Client, test_data: serde_json::Value) -> Result<Option<crate::models::TestData>, tokio_postgres::Error> {
     let stmt = client.prepare("SELECT $1::jsonb as test_data").await?;
-    let row = client.query_one(&stmt, &[&test_data]).await?;
-    Ok(row.get::<_, Option<JsonWrapper<crate::models::TestData>>>(0).map(|wrapper| wrapper.into_inner()))
+    let rows = client.query(&stmt, &[&test_data]).await?;
+    let extracted_value = if let Some(row) = rows.into_iter().next() {
+        row.get::<_, Option<JsonWrapper<crate::models::TestData>>>(0).map(|wrapper| wrapper.into_inner())
+    } else {
+        None
+    };
+    Ok(extracted_value)
 }
 
 

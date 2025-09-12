@@ -1,6 +1,26 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Expected result type for a query
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpectedResult {
+    /// Exactly one row must be returned (uses query_one, fails if 0 or >1 rows)
+    ExactlyOne,
+    /// Zero or one row expected (uses query_opt, returns Option)
+    PossibleOne,
+    /// At least one row expected (uses query, fails if 0 rows, returns Vec with first element guaranteed)
+    AtLeastOne,
+    /// Multiple rows expected (uses query, returns Vec which may be empty)
+    Multiple,
+}
+
+impl Default for ExpectedResult {
+    fn default() -> Self {
+        ExpectedResult::ExactlyOne
+    }
+}
+
 /// Represents a single SQL query definition from the YAML file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryDefinition {
@@ -14,6 +34,10 @@ pub struct QueryDefinition {
     /// If not specified, the function will be generated in mod.rs
     /// Must be a valid Rust module name (alphanumeric + underscore, starting with letter/underscore)
     pub module: Option<String>,
+    /// Expected result type - controls fetch method and error handling
+    /// Defaults to "exactly_one" if not specified
+    #[serde(default)]
+    pub expect: ExpectedResult,
 }
 
 /// Root structure for the YAML file containing multiple queries

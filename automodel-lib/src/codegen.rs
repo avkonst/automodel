@@ -1,7 +1,7 @@
-use crate::config::QueryDefinition;
+use crate::config::{ExpectedResult, QueryDefinition};
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
-    generate_return_type, parse_parameter_names_from_sql, QueryTypeInfo,
+    generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use anyhow::Result;
 
@@ -98,7 +98,7 @@ pub fn generate_function_code(
     // Generate function signature
     let param_names = parse_parameter_names_from_sql(&query.sql);
     let input_params = generate_input_params_with_names(&type_info.input_types, &param_names);
-    let return_type = if type_info.output_types.len() > 1 {
+    let base_return_type = if type_info.output_types.len() > 1 {
         format!("{}Result", to_pascal_case(&query.name))
     } else {
         generate_return_type(&type_info.output_types)
@@ -114,7 +114,30 @@ pub fn generate_function_code(
     let final_return_type = if type_info.output_types.is_empty() {
         "()".to_string()
     } else {
-        return_type.clone()
+        // Adjust return type based on expect field
+        match query.expect {
+            ExpectedResult::ExactlyOne => base_return_type.clone(),
+            ExpectedResult::PossibleOne => {
+                // For PossibleOne, we need to wrap the non-nullable version in Option<>
+                let non_nullable_type = if type_info.output_types.len() == 1 {
+                    // For single column, get the inner type without Option<>
+                    let rust_type = &type_info.output_types[0].rust_type.rust_type;
+                    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                        // If it's already Option<T>, for PossibleOne we just use Option<T>
+                        rust_type.clone()
+                    } else {
+                        // If it's T, for PossibleOne we use Option<T>
+                        format!("Option<{}>", rust_type)
+                    }
+                } else {
+                    // For multi-column, use Option<StructName>
+                    format!("Option<{}>", base_return_type)
+                };
+                non_nullable_type
+            }
+            ExpectedResult::AtLeastOne => format!("Vec<{}>", base_return_type),
+            ExpectedResult::Multiple => format!("Vec<{}>", base_return_type),
+        }
     };
 
     code.push_str(&format!(
@@ -123,7 +146,11 @@ pub fn generate_function_code(
     ));
 
     // Generate function body
-    code.push_str(&generate_function_body(query, type_info, &return_type)?);
+    code.push_str(&generate_function_body(
+        query,
+        type_info,
+        &base_return_type,
+    )?);
 
     code.push_str("}\n");
 
@@ -175,13 +202,46 @@ fn generate_function_body(
         body.push_str("    Ok(())\n");
     } else if type_info.output_types.len() == 1 {
         // For queries that return a single column
-        body.push_str(&format!(
-            "    let row = client.query_one(&stmt, {}).await?;\n",
-            param_refs
-        ));
+        match query.expect {
+            ExpectedResult::ExactlyOne => {
+                body.push_str(&format!(
+                    "    let row = client.query_one(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+            }
+            ExpectedResult::PossibleOne => {
+                body.push_str(&format!(
+                    "    let rows = client.query(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+                body.push_str(
+                    "    let extracted_value = if let Some(row) = rows.into_iter().next() {\n",
+                );
+            }
+            ExpectedResult::AtLeastOne => {
+                body.push_str(&format!(
+                    "    let rows = client.query(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+                body.push_str("    if rows.is_empty() {\n");
+                body.push_str("        // Simulate the same error that query_one would produce\n");
+                body.push_str(
+                    "        let _ = client.query_one(\"SELECT 1 WHERE FALSE\", &[]).await?;\n",
+                );
+                body.push_str("    }\n");
+                body.push_str("    let result = rows.into_iter().map(|row| {\n");
+            }
+            ExpectedResult::Multiple => {
+                body.push_str(&format!(
+                    "    let rows = client.query(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+                body.push_str("    let result = rows.into_iter().map(|row| {\n");
+            }
+        }
 
         let output_col = &type_info.output_types[0];
-        if output_col.rust_type.needs_json_wrapper {
+        let value_extraction = if output_col.rust_type.needs_json_wrapper {
             // Use JSON wrapper for custom types
             let inner_type = if output_col.rust_type.is_nullable {
                 // Extract the inner type from Option<CustomType>
@@ -196,74 +256,152 @@ fn generate_function_body(
             };
 
             if output_col.rust_type.is_nullable {
-                body.push_str(&format!(
-                    "    Ok(row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner()))\n",
+                // For nullable types, just extract normally
+                format!(
+                    "row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner())",
                     inner_type
-                ));
+                )
             } else {
-                body.push_str(&format!(
-                    "    Ok(row.get::<_, JsonWrapper<{}>>(0).into_inner())\n",
-                    inner_type
-                ));
+                format!("row.get::<_, JsonWrapper<{}>>(0).into_inner()", inner_type)
             }
         } else {
-            body.push_str(&format!(
-                "    Ok(row.get::<_, {}>(0))\n",
-                output_col.rust_type.rust_type
-            ));
+            // For non-JSON wrapper types, just extract normally
+            format!("row.get::<_, {}>(0)", output_col.rust_type.rust_type)
+        };
+
+        match query.expect {
+            ExpectedResult::ExactlyOne => {
+                body.push_str(&format!("    Ok({})\n", value_extraction));
+            }
+            ExpectedResult::PossibleOne => {
+                if output_col.rust_type.is_nullable {
+                    // For nullable columns, return the value directly (it's already Option<T>)
+                    body.push_str(&format!("        {}\n", value_extraction));
+                } else {
+                    // For non-nullable columns, wrap in Some()
+                    body.push_str(&format!("        Some({})\n", value_extraction));
+                }
+                body.push_str("    } else {\n");
+                body.push_str("        None\n");
+                body.push_str("    };\n");
+                body.push_str("    Ok(extracted_value)\n");
+            }
+            ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
+                body.push_str(&format!("        {}\n", value_extraction));
+                body.push_str("    }).collect();\n");
+                body.push_str("    Ok(result)\n");
+            }
         }
     } else {
         // For queries that return multiple columns
-        body.push_str(&format!(
-            "    let row = client.query_one(&stmt, {}).await?;\n",
-            param_refs
-        ));
-        body.push_str(&format!("    Ok({} {{\n", return_type));
-
-        for (i, col) in type_info.output_types.iter().enumerate() {
-            if col.rust_type.needs_json_wrapper {
-                // Use JSON wrapper for custom types
-                let inner_type = if col.rust_type.is_nullable {
-                    // Extract the inner type from Option<CustomType>
-                    let rust_type = &col.rust_type.rust_type;
-                    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                        &rust_type[7..rust_type.len() - 1]
-                    } else {
-                        rust_type
-                    }
-                } else {
-                    &col.rust_type.rust_type
-                };
-
-                if col.rust_type.is_nullable {
-                    body.push_str(&format!(
-                        "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|wrapper| wrapper.into_inner()),\n",
-                        to_snake_case(&col.name),
-                        inner_type,
-                        i
-                    ));
-                } else {
-                    body.push_str(&format!(
-                        "        {}: row.get::<_, JsonWrapper<{}>>>({}).into_inner(),\n",
-                        to_snake_case(&col.name),
-                        inner_type,
-                        i
-                    ));
-                }
-            } else {
+        match query.expect {
+            ExpectedResult::ExactlyOne => {
                 body.push_str(&format!(
-                    "        {}: row.get::<_, {}>({}),\n",
-                    to_snake_case(&col.name),
-                    col.rust_type.rust_type,
-                    i
+                    "    let row = client.query_one(&stmt, {}).await?;\n",
+                    param_refs
                 ));
+            }
+            ExpectedResult::PossibleOne => {
+                body.push_str(&format!(
+                    "    let rows = client.query(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+                body.push_str(
+                    "    let extracted_value = if let Some(row) = rows.into_iter().next() {\n",
+                );
+            }
+            ExpectedResult::AtLeastOne => {
+                body.push_str(&format!(
+                    "    let rows = client.query(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+                body.push_str("    if rows.is_empty() {\n");
+                body.push_str("        // Simulate the same error that query_one would produce\n");
+                body.push_str(
+                    "        let _ = client.query_one(\"SELECT 1 WHERE FALSE\", &[]).await?;\n",
+                );
+                body.push_str("    }\n");
+                body.push_str("    let result = rows.into_iter().map(|row| {\n");
+            }
+            ExpectedResult::Multiple => {
+                body.push_str(&format!(
+                    "    let rows = client.query(&stmt, {}).await?;\n",
+                    param_refs
+                ));
+                body.push_str("    let result = rows.into_iter().map(|row| {\n");
             }
         }
 
-        body.push_str("    })\n");
+        let struct_creation = generate_struct_creation(return_type, &type_info.output_types);
+
+        match query.expect {
+            ExpectedResult::ExactlyOne => {
+                body.push_str(&format!("    Ok({})\n", struct_creation));
+            }
+            ExpectedResult::PossibleOne => {
+                body.push_str(&format!("        Some({})\n", struct_creation));
+                body.push_str("    } else {\n");
+                body.push_str("        None\n");
+                body.push_str("    };\n");
+                body.push_str("    Ok(extracted_value)\n");
+            }
+            ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
+                body.push_str(&format!("        {}\n", struct_creation));
+                body.push_str("    }).collect();\n");
+                body.push_str("    Ok(result)\n");
+            }
+        }
     }
 
     Ok(body)
+}
+
+/// Generate struct creation code for multi-column results
+fn generate_struct_creation(struct_name: &str, output_types: &[OutputColumn]) -> String {
+    let mut creation = format!("{} {{\n", struct_name);
+
+    for (i, col) in output_types.iter().enumerate() {
+        if col.rust_type.needs_json_wrapper {
+            // Use JSON wrapper for custom types
+            let inner_type = if col.rust_type.is_nullable {
+                // Extract the inner type from Option<CustomType>
+                let rust_type = &col.rust_type.rust_type;
+                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                    &rust_type[7..rust_type.len() - 1]
+                } else {
+                    rust_type
+                }
+            } else {
+                &col.rust_type.rust_type
+            };
+
+            if col.rust_type.is_nullable {
+                creation.push_str(&format!(
+                    "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|wrapper| wrapper.into_inner()),\n",
+                    to_snake_case(&col.name),
+                    inner_type,
+                    i
+                ));
+            } else {
+                creation.push_str(&format!(
+                    "        {}: row.get::<_, JsonWrapper<{}>>({})).into_inner(),\n",
+                    to_snake_case(&col.name),
+                    inner_type,
+                    i
+                ));
+            }
+        } else {
+            creation.push_str(&format!(
+                "        {}: row.get::<_, {}>({}),\n",
+                to_snake_case(&col.name),
+                col.rust_type.rust_type,
+                i
+            ));
+        }
+    }
+
+    creation.push_str("    }");
+    creation
 }
 
 /// Escape SQL string for inclusion in Rust code
@@ -374,6 +512,7 @@ mod tests {
             sql: "SELECT id, name FROM users WHERE id = $1".to_string(),
             description: Some("Get user by ID".to_string()),
             module: None,
+            expect: ExpectedResult::ExactlyOne,
         };
 
         let type_info = QueryTypeInfo {

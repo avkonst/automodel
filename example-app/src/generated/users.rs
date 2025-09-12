@@ -41,10 +41,11 @@ pub struct GetAllUsersResult {
 
 /// Get all users with all their fields
 /// Generated from SQL: SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC
-pub async fn get_all_users(client: &tokio_postgres::Client) -> Result<GetAllUsersResult, tokio_postgres::Error> {
+pub async fn get_all_users(client: &tokio_postgres::Client) -> Result<Vec<GetAllUsersResult>, tokio_postgres::Error> {
     let stmt = client.prepare("SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC").await?;
-    let row = client.query_one(&stmt, &[]).await?;
-    Ok(GetAllUsersResult {
+    let rows = client.query(&stmt, &[]).await?;
+    let result = rows.into_iter().map(|row| {
+        GetAllUsersResult {
         id: row.get::<_, Option<i32>>(0),
         name: row.get::<_, Option<String>>(1),
         email: row.get::<_, Option<String>>(2),
@@ -52,7 +53,9 @@ pub async fn get_all_users(client: &tokio_postgres::Client) -> Result<GetAllUser
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
-    })
+    }
+    }).collect();
+    Ok(result)
 }
 
 #[derive(Debug, Clone)]
@@ -68,10 +71,11 @@ pub struct FindUserByEmailResult {
 
 /// Find a user by their email address
 /// Generated from SQL: SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = ${email}
-pub async fn find_user_by_email(client: &tokio_postgres::Client, email: String) -> Result<FindUserByEmailResult, tokio_postgres::Error> {
+pub async fn find_user_by_email(client: &tokio_postgres::Client, email: String) -> Result<Option<FindUserByEmailResult>, tokio_postgres::Error> {
     let stmt = client.prepare("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = $1").await?;
-    let row = client.query_one(&stmt, &[&email]).await?;
-    Ok(FindUserByEmailResult {
+    let rows = client.query(&stmt, &[&email]).await?;
+    let extracted_value = if let Some(row) = rows.into_iter().next() {
+        Some(FindUserByEmailResult {
         id: row.get::<_, Option<i32>>(0),
         name: row.get::<_, Option<String>>(1),
         email: row.get::<_, Option<String>>(2),
@@ -80,6 +84,10 @@ pub async fn find_user_by_email(client: &tokio_postgres::Client, email: String) 
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
     })
+    } else {
+        None
+    };
+    Ok(extracted_value)
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +113,98 @@ pub async fn update_user_profile(client: &tokio_postgres::Client, profile: serde
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct GetRecentUsersResult {
+    pub id: Option<i32>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub age: Option<i32>,
+    pub profile: Option<crate::models::UserProfile>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Get users created after a specific timestamp - expects at least one user
+/// Generated from SQL: SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > ${since} ORDER BY created_at DESC
+pub async fn get_recent_users(client: &tokio_postgres::Client, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > $1 ORDER BY created_at DESC").await?;
+    let rows = client.query(&stmt, &[&since]).await?;
+    if rows.is_empty() {
+        // Simulate the same error that query_one would produce
+        let _ = client.query_one("SELECT 1 WHERE FALSE", &[]).await?;
+    }
+    let result = rows.into_iter().map(|row| {
+        GetRecentUsersResult {
+        id: row.get::<_, Option<i32>>(0),
+        name: row.get::<_, Option<String>>(1),
+        email: row.get::<_, Option<String>>(2),
+        age: row.get::<_, Option<i32>>(3),
+        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
+        updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
+    }
+    }).collect();
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
+pub struct GetActiveUsersByAgeRangeResult {
+    pub id: Option<i32>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub age: Option<i32>,
+    pub profile: Option<crate::models::UserProfile>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Get active users within an age range - must return at least one user or fails
+/// Generated from SQL: SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN ${min_age} AND ${max_age} AND updated_at > NOW() - INTERVAL '30 days'
+pub async fn get_active_users_by_age_range(client: &tokio_postgres::Client, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN $1 AND $2 AND updated_at > NOW() - INTERVAL '30 days'").await?;
+    let rows = client.query(&stmt, &[&min_age, &max_age]).await?;
+    if rows.is_empty() {
+        // Simulate the same error that query_one would produce
+        let _ = client.query_one("SELECT 1 WHERE FALSE", &[]).await?;
+    }
+    let result = rows.into_iter().map(|row| {
+        GetActiveUsersByAgeRangeResult {
+        id: row.get::<_, Option<i32>>(0),
+        name: row.get::<_, Option<String>>(1),
+        email: row.get::<_, Option<String>>(2),
+        age: row.get::<_, Option<i32>>(3),
+        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
+    }
+    }).collect();
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchUsersByNamePatternResult {
+    pub id: Option<i32>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+/// Search users by name pattern - expects at least one match
+/// Generated from SQL: SELECT id, name, email FROM users WHERE name ILIKE ${pattern} ORDER BY name
+pub async fn search_users_by_name_pattern(client: &tokio_postgres::Client, pattern: String) -> Result<Vec<SearchUsersByNamePatternResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT id, name, email FROM users WHERE name ILIKE $1 ORDER BY name").await?;
+    let rows = client.query(&stmt, &[&pattern]).await?;
+    if rows.is_empty() {
+        // Simulate the same error that query_one would produce
+        let _ = client.query_one("SELECT 1 WHERE FALSE", &[]).await?;
+    }
+    let result = rows.into_iter().map(|row| {
+        SearchUsersByNamePatternResult {
+        id: row.get::<_, Option<i32>>(0),
+        name: row.get::<_, Option<String>>(1),
+        email: row.get::<_, Option<String>>(2),
+    }
+    }).collect();
+    Ok(result)
 }
 
 
