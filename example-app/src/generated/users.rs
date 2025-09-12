@@ -4,9 +4,9 @@ use std::error::Error;
 
 #[derive(Debug, Clone)]
 pub struct InsertUserResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
     pub age: Option<i32>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -20,9 +20,9 @@ pub async fn insert_user(client: &tokio_postgres::Client, name: String, email: S
     let stmt = client.prepare("INSERT INTO users (name, email, age, profile)\nVALUES ($1, $2, $3, $4)\nRETURNING id, name, email, age, created_at\n").await?;
     let row = client.query_one(&stmt, &[&name, &email, &age, &profile]).await?;
     Ok(InsertUserResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(4),
     })
@@ -30,9 +30,9 @@ pub async fn insert_user(client: &tokio_postgres::Client, name: String, email: S
 
 #[derive(Debug, Clone)]
 pub struct GetAllUsersResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
     pub age: Option<i32>,
     pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -46,9 +46,9 @@ pub async fn get_all_users(client: &tokio_postgres::Client) -> Result<Vec<GetAll
     let rows = client.query(&stmt, &[]).await?;
     let result = rows.into_iter().map(|row| {
         GetAllUsersResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
@@ -60,9 +60,9 @@ pub async fn get_all_users(client: &tokio_postgres::Client) -> Result<Vec<GetAll
 
 #[derive(Debug, Clone)]
 pub struct FindUserByEmailResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
     pub age: Option<i32>,
     pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -76,9 +76,9 @@ pub async fn find_user_by_email(client: &tokio_postgres::Client, email: String) 
     let rows = client.query(&stmt, &[&email]).await?;
     let extracted_value = if let Some(row) = rows.into_iter().next() {
         Some(FindUserByEmailResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
@@ -92,9 +92,9 @@ pub async fn find_user_by_email(client: &tokio_postgres::Client, email: String) 
 
 #[derive(Debug, Clone)]
 pub struct UpdateUserProfileResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
     pub age: Option<i32>,
     pub profile: Option<crate::models::UserProfile>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -106,9 +106,9 @@ pub async fn update_user_profile(client: &tokio_postgres::Client, profile: serde
     let stmt = client.prepare("UPDATE users SET profile = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, age, profile, updated_at").await?;
     let row = client.query_one(&stmt, &[&profile, &user_id]).await?;
     Ok(UpdateUserProfileResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
@@ -117,9 +117,9 @@ pub async fn update_user_profile(client: &tokio_postgres::Client, profile: serde
 
 #[derive(Debug, Clone)]
 pub struct GetRecentUsersResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
     pub age: Option<i32>,
     pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -137,9 +137,9 @@ pub async fn get_recent_users(client: &tokio_postgres::Client, since: chrono::Da
     }
     let result = rows.into_iter().map(|row| {
         GetRecentUsersResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
@@ -151,9 +151,9 @@ pub async fn get_recent_users(client: &tokio_postgres::Client, since: chrono::Da
 
 #[derive(Debug, Clone)]
 pub struct GetActiveUsersByAgeRangeResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
     pub age: Option<i32>,
     pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -170,9 +170,9 @@ pub async fn get_active_users_by_age_range(client: &tokio_postgres::Client, min_
     }
     let result = rows.into_iter().map(|row| {
         GetActiveUsersByAgeRangeResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
         profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
@@ -183,9 +183,9 @@ pub async fn get_active_users_by_age_range(client: &tokio_postgres::Client, min_
 
 #[derive(Debug, Clone)]
 pub struct SearchUsersByNamePatternResult {
-    pub id: Option<i32>,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id: i32,
+    pub name: String,
+    pub email: String,
 }
 
 /// Search users by name pattern - expects at least one match
@@ -199,9 +199,9 @@ pub async fn search_users_by_name_pattern(client: &tokio_postgres::Client, patte
     }
     let result = rows.into_iter().map(|row| {
         SearchUsersByNamePatternResult {
-        id: row.get::<_, Option<i32>>(0),
-        name: row.get::<_, Option<String>>(1),
-        email: row.get::<_, Option<String>>(2),
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
     }
     }).collect();
     Ok(result)

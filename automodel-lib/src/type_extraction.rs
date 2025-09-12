@@ -62,8 +62,9 @@ pub async fn extract_query_types(
         )
     })?;
 
+    // Extract types
     let input_types = extract_input_types(&statement)?;
-    let output_types = extract_output_types(&statement, field_type_mappings)?;
+    let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
 
     Ok(QueryTypeInfo {
         input_types,
@@ -84,17 +85,61 @@ fn extract_input_types(statement: &Statement) -> Result<Vec<RustType>> {
     Ok(input_types)
 }
 
+/// Get nullability information for columns by querying PostgreSQL system catalogs
+async fn get_column_nullability(
+    client: &tokio_postgres::Client,
+    columns: &[tokio_postgres::Column],
+) -> Result<Vec<bool>> {
+    let mut nullability = Vec::new();
+
+    for column in columns {
+        let table_oid = column.table_oid();
+        let column_id = column.column_id();
+
+        let is_nullable = if let (Some(table_oid), Some(column_id)) = (table_oid, column_id) {
+            // Query pg_attribute to get the actual NOT NULL constraint
+            let rows = client
+                .query(
+                    "SELECT attnotnull FROM pg_attribute WHERE attrelid = $1 AND attnum = $2",
+                    &[&table_oid, &column_id],
+                )
+                .await?;
+
+            if let Some(row) = rows.first() {
+                let attnotnull: bool = row.get(0);
+                !attnotnull // attnotnull=true means NOT NULL, so nullable=false
+            } else {
+                // Fallback: if we can't find the column info, assume nullable
+                true
+            }
+        } else {
+            // No table/column info available (computed column, function result, etc.)
+            // Assume nullable for safety
+            true
+        };
+
+        nullability.push(is_nullable);
+    }
+
+    Ok(nullability)
+}
+
 /// Extract output column types from a prepared statement
-fn extract_output_types(
+async fn extract_output_types(
+    client: &tokio_postgres::Client,
     statement: &Statement,
     field_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<Vec<OutputColumn>> {
     let columns = statement.columns();
     let mut output_types = Vec::new();
 
-    for column in columns {
+    // Get nullability information for all columns
+    let nullability_info = get_column_nullability(client, &columns).await?;
+
+    for (i, column) in columns.iter().enumerate() {
         let column_name = column.name();
-        let base_rust_type = pg_type_to_rust_type(column.type_(), true)?;
+        let is_nullable = nullability_info.get(i).copied().unwrap_or(true); // Default to nullable if unknown
+        let base_rust_type = pg_type_to_rust_type(column.type_(), is_nullable)?;
 
         // Check if there's a custom type mapping for this field
         // Note: Since we only have the column name here, we can't determine the exact table
