@@ -28,7 +28,7 @@ impl AutoModel {
         let config = parse_yaml_file(path).await?;
         Ok(Self {
             queries: config.queries,
-            field_type_mappings: config.field_type_mappings,
+            field_type_mappings: config.types,
         })
     }
 

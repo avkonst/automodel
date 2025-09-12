@@ -24,7 +24,8 @@ pub struct QueryConfig {
     /// Optional field-specific type mappings
     /// Key format: "schema.table.field" or "table.field" (e.g., "public.users.profile" or "users.profile")
     /// Value: Rust type to use (e.g., "crate::models::UserProfile", "MyStruct")
-    pub field_type_mappings: Option<HashMap<String, String>>,
+    #[serde(alias = "field_type_mappings")]
+    pub types: Option<HashMap<String, String>>,
 }
 
 /// Optional metadata for the query collection
@@ -44,7 +45,7 @@ impl QueryConfig {
         Self {
             queries: Vec::new(),
             metadata: None,
-            field_type_mappings: None,
+            types: None,
         }
     }
 
@@ -61,7 +62,7 @@ impl QueryConfig {
     /// Get custom type mapping for a specific field
     /// Supports both "schema.table.field" and "table.field" formats
     pub fn get_field_type_mapping(&self, table_name: &str, field_name: &str) -> Option<&String> {
-        if let Some(mappings) = &self.field_type_mappings {
+        if let Some(mappings) = &self.types {
             // Try "table.field" format first
             let table_field_key = format!("{}.{}", table_name, field_name);
             if let Some(rust_type) = mappings.get(&table_field_key) {
@@ -78,7 +79,7 @@ impl QueryConfig {
 
     /// Get all field type mappings
     pub fn field_type_mappings(&self) -> Option<&HashMap<String, String>> {
-        self.field_type_mappings.as_ref()
+        self.types.as_ref()
     }
 }
 

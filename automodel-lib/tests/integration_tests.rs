@@ -39,21 +39,21 @@ async fn test_query_validation() {
 
     assert!(validate_query_names(&valid_queries).is_ok());
 
-    let invalid_queries = vec![
-        QueryDefinition {
-            name: "123invalid".to_string(),
-            sql: "SELECT 1".to_string(),
-            description: None,
-            tags: None,
-        },
-    ];
+    let invalid_queries = vec![QueryDefinition {
+        name: "123invalid".to_string(),
+        sql: "SELECT 1".to_string(),
+        description: None,
+        tags: None,
+    }];
 
     assert!(validate_query_names(&invalid_queries).is_err());
 }
 
 #[test]
 fn test_type_conversions() {
-    use automodel::type_extraction::{generate_input_params, generate_return_type, RustType, OutputColumn};
+    use automodel::type_extraction::{
+        generate_input_params, generate_return_type, OutputColumn, RustType,
+    };
 
     let input_types = vec![
         RustType {
@@ -73,17 +73,15 @@ fn test_type_conversions() {
     let params = generate_input_params(&input_types);
     assert_eq!(params, "param_1: i32, param_2: String");
 
-    let output_types = vec![
-        OutputColumn {
-            name: "id".to_string(),
-            rust_type: RustType {
-                rust_type: "i32".to_string(),
-                is_nullable: false,
-                pg_type: "INT4".to_string(),
-                needs_json_wrapper: false,
-            },
+    let output_types = vec![OutputColumn {
+        name: "id".to_string(),
+        rust_type: RustType {
+            rust_type: "i32".to_string(),
+            is_nullable: false,
+            pg_type: "INT4".to_string(),
+            needs_json_wrapper: false,
         },
-    ];
+    }];
 
     let return_type = generate_return_type(&output_types);
     assert_eq!(return_type, "i32");
@@ -92,7 +90,7 @@ fn test_type_conversions() {
 #[test]
 fn test_code_generation() {
     use automodel::code_generation::generate_function_code;
-    use automodel::type_extraction::{QueryTypeInfo, RustType, OutputColumn};
+    use automodel::type_extraction::{OutputColumn, QueryTypeInfo, RustType};
 
     let query = QueryDefinition {
         name: "get_count".to_string(),
@@ -103,17 +101,15 @@ fn test_code_generation() {
 
     let type_info = QueryTypeInfo {
         input_types: vec![],
-        output_types: vec![
-            OutputColumn {
-                name: "count".to_string(),
-                rust_type: RustType {
-                    rust_type: "i64".to_string(),
-                    is_nullable: false,
-                    pg_type: "INT8".to_string(),
-                    needs_json_wrapper: false,
-                },
+        output_types: vec![OutputColumn {
+            name: "count".to_string(),
+            rust_type: RustType {
+                rust_type: "i64".to_string(),
+                is_nullable: false,
+                pg_type: "INT8".to_string(),
+                needs_json_wrapper: false,
             },
-        ],
+        }],
     };
 
     let code = generate_function_code(&query, &type_info).unwrap();

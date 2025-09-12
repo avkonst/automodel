@@ -2,25 +2,18 @@ queries:
   - name: get_current_time
     sql: "SELECT NOW() as current_time"
     description: "Get the current timestamp"
-    tags: ["utility"]
 
   - name: get_version
     sql: "SELECT version() as pg_version"
     description: "Get PostgreSQL version"
-    tags: ["utility"]
 
   - name: test_json_query
     sql: "SELECT $1::jsonb as test_data"
     description: "Test query with JSON parameter"
-    tags: ["test"]
 
 # Field-specific type mappings for JSON/JSONB fields
 # This demonstrates how you would map specific fields to custom Rust types
-field_type_mappings:
+# Schema names can be included: "schema.table.field" or just "table.field"
+types:
   "test.test_data": "crate::models::TestData"
   "users.profile": "crate::models::UserProfile"
-
-metadata:
-  version: "1.0"
-  description: "Simple test queries that work with any PostgreSQL database"
-  author: "AutoModel Generator"
