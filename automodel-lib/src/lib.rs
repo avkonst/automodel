@@ -23,9 +23,6 @@ impl AutoModel {
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let config = parse_yaml_file(path).await?;
 
-        // Validate query names during construction
-        validate_query_names(&config.queries)?;
-
         Ok(Self {
             queries: config.queries,
             field_type_mappings: config.types,

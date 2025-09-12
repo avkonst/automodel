@@ -9,7 +9,12 @@ pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Config> {
         .await
         .with_context(|| format!("Failed to read YAML file: {}", path.as_ref().display()))?;
 
-    parse_yaml_string(&content)
+    let config = parse_yaml_string(&content)?;
+
+    // Validate query names during parsing
+    validate_query_names(&config.queries)?;
+
+    Ok(config)
 }
 
 /// Parse a YAML string and return the full configuration including queries and type mappings
