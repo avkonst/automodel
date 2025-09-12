@@ -1,8 +1,7 @@
-use crate::db_connection::DatabaseConnection;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use tokio_postgres::types::Type as PgType;
-use tokio_postgres::Statement;
+use tokio_postgres::{NoTls, Statement};
 
 /// Information about a SQL query's input and output types
 #[derive(Debug, Clone)]
@@ -37,14 +36,26 @@ pub struct OutputColumn {
 
 /// Extract type information from a prepared SQL statement
 pub async fn extract_query_types(
-    db: &mut DatabaseConnection,
+    database_url: &str,
     sql: &str,
     field_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<QueryTypeInfo> {
+    // Create database connection
+    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+        .await
+        .with_context(|| format!("Failed to connect to database: {}", database_url))?;
+
+    // Spawn the connection in the background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Database connection error: {}", e);
+        }
+    });
+
     // Convert named parameters to positional parameters for PostgreSQL
     let (converted_sql, _param_names) = convert_named_params_to_positional(sql);
 
-    let statement = db.prepare(&converted_sql).await.with_context(|| {
+    let statement = client.prepare(&converted_sql).await.with_context(|| {
         format!(
             "Failed to prepare statement for type extraction: {}",
             converted_sql

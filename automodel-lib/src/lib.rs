@@ -1,16 +1,12 @@
-pub mod build_helper;
-pub mod code_generation;
-pub mod db_connection;
-pub mod query_config;
-pub mod type_extraction;
-pub mod yaml_parser;
+mod codegen;
+mod config;
+mod type_extraction;
+mod yaml_parser;
 
-pub use build_helper::*;
-pub use code_generation::{generate_json_wrapper_helper, *};
-pub use db_connection::*;
-pub use query_config::*;
-pub use type_extraction::*;
-pub use yaml_parser::*;
+use codegen::*;
+use config::*;
+use type_extraction::*;
+use yaml_parser::*;
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -26,6 +22,10 @@ impl AutoModel {
     /// Create a new AutoModel instance by loading queries from a YAML file
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let config = parse_yaml_file(path).await?;
+
+        // Validate query names during construction
+        validate_query_names(&config.queries)?;
+
         Ok(Self {
             queries: config.queries,
             field_type_mappings: config.types,
@@ -34,7 +34,6 @@ impl AutoModel {
 
     /// Generate Rust code for all loaded queries
     pub async fn generate_code(&self, database_url: &str) -> Result<String> {
-        let mut db = DatabaseConnection::new(database_url).await?;
         let mut generated_code = String::new();
 
         // Add imports first
@@ -46,7 +45,8 @@ impl AutoModel {
 
         for query in &self.queries {
             let type_info =
-                extract_query_types(&mut db, &query.sql, self.field_type_mappings.as_ref()).await?;
+                extract_query_types(database_url, &query.sql, self.field_type_mappings.as_ref())
+                    .await?;
             let function_code = generate_function_code(query, &type_info)?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
@@ -63,5 +63,69 @@ impl AutoModel {
     /// Get all loaded queries
     pub fn queries(&self) -> &[QueryDefinition] {
         &self.queries
+    }
+
+    /// Build script helper for automatically generating code at build time.
+    ///
+    /// This function should be called from your build.rs script. It will:
+    /// - Check if DATABASE_URL environment variable is set
+    /// - If set, generate code and fail the build if something goes wrong
+    /// - If not set, skip code generation silently (letting compilation fail if generated code is used)
+    ///
+    /// # Arguments
+    ///
+    /// * `yaml_file` - Path to the YAML file containing query definitions (relative to build.rs)
+    /// * `output_file` - Path to write the generated Rust code (relative to build.rs, typically "src/generated.rs")
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// // build.rs
+    /// use automodel::AutoModel;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     AutoModel::generate_at_build_time("queries.yaml", "src/generated.rs").await?;
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn generate_at_build_time(
+        yaml_file: &str,
+        output_file: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::env;
+        use std::fs;
+
+        // Tell cargo to rerun if the input YAML file changes
+        println!("cargo:rerun-if-changed={}", yaml_file);
+        // Tell cargo to rerun if the output file is manually modified
+        println!("cargo:rerun-if-changed={}", output_file);
+
+        // Check if DATABASE_URL environment variable is set
+        match env::var("DATABASE_URL") {
+            Ok(database_url) => {
+                // DATABASE_URL is set - generate code and fail build if something goes wrong
+                println!("cargo:info=DATABASE_URL found, generating database functions...");
+
+                // Create AutoModel instance and load queries from YAML file
+                let automodel = AutoModel::new(yaml_file).await?;
+
+                // Generate Rust code
+                let generated_code = automodel.generate_code(&database_url).await?;
+
+                // Write the generated code to the specified output file
+                fs::write(output_file, &generated_code)?;
+
+                println!("cargo:info=Successfully generated database functions");
+            }
+            Err(_) => {
+                // DATABASE_URL is not set - skip codegen silently
+                println!("cargo:info=DATABASE_URL not set, skipping code generation");
+                // Don't generate any code - let the app fail compilation if it tries to use generated functions
+            }
+        }
+
+        Ok(())
     }
 }

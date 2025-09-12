@@ -1,10 +1,10 @@
-use crate::query_config::{QueryConfig, QueryDefinition};
+use crate::config::{Config, QueryDefinition};
 use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 
 /// Parse a YAML file and return the full configuration including queries and type mappings
-pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<QueryConfig> {
+pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Config> {
     let content = fs::read_to_string(&path)
         .await
         .with_context(|| format!("Failed to read YAML file: {}", path.as_ref().display()))?;
@@ -13,9 +13,9 @@ pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<QueryConfig> {
 }
 
 /// Parse a YAML string and return the full configuration including queries and type mappings
-pub fn parse_yaml_string(content: &str) -> Result<QueryConfig> {
-    let config: QueryConfig = serde_yaml::from_str(content)
-        .with_context(|| "Failed to parse YAML content")?;
+pub fn parse_yaml_string(content: &str) -> Result<Config> {
+    let config: Config =
+        serde_yaml::from_str(content).with_context(|| "Failed to parse YAML content")?;
 
     Ok(config)
 }
@@ -62,12 +62,56 @@ fn is_valid_rust_identifier(name: &str) -> bool {
 fn is_rust_keyword(name: &str) -> bool {
     matches!(
         name,
-        "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern" | "false"
-            | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move"
-            | "mut" | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct" | "super"
-            | "trait" | "true" | "type" | "unsafe" | "use" | "where" | "while" | "async" | "await"
-            | "dyn" | "abstract" | "become" | "box" | "do" | "final" | "macro" | "override"
-            | "priv" | "typeof" | "unsized" | "virtual" | "yield" | "try"
+        "as" | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "async"
+            | "await"
+            | "dyn"
+            | "abstract"
+            | "become"
+            | "box"
+            | "do"
+            | "final"
+            | "macro"
+            | "override"
+            | "priv"
+            | "typeof"
+            | "unsized"
+            | "virtual"
+            | "yield"
+            | "try"
     )
 }
 
@@ -82,7 +126,7 @@ mod tests {
         assert!(is_valid_rust_identifier("camelCase"));
         assert!(is_valid_rust_identifier("snake_case"));
         assert!(is_valid_rust_identifier("PascalCase"));
-        
+
         assert!(!is_valid_rust_identifier("123invalid"));
         assert!(!is_valid_rust_identifier("invalid-name"));
         assert!(!is_valid_rust_identifier("invalid.name"));

@@ -11,9 +11,6 @@ async fn main() -> Result<()> {
         Some(("generate", sub_matches)) => {
             generate_command(sub_matches).await?;
         }
-        Some(("validate", sub_matches)) => {
-            validate_command(sub_matches).await?;
-        }
         _ => {
             // Default to generate command for backward compatibility
             if let (Some(database_url), Some(yaml_file)) = (
@@ -92,25 +89,6 @@ fn build_cli() -> Command {
                         .long("dry-run")
                         .help("Generate code but don't write to file")
                         .action(clap::ArgAction::SetTrue),
-                ),
-        )
-        .subcommand(
-            Command::new("validate")
-                .about("Validate YAML queries without generating code")
-                .arg(
-                    Arg::new("yaml-file")
-                        .short('f')
-                        .long("file")
-                        .value_name("FILE")
-                        .help("YAML file containing query definitions")
-                        .required(true),
-                )
-                .arg(
-                    Arg::new("database-url")
-                        .short('d')
-                        .long("database-url")
-                        .value_name("URL")
-                        .help("PostgreSQL database connection URL (optional, for SQL validation)"),
                 ),
         )
 }
@@ -192,58 +170,5 @@ async fn generate_with_args(
         output_file.file_stem().unwrap().to_str().unwrap()
     );
 
-    Ok(())
-}
-
-async fn validate_command(matches: &ArgMatches) -> Result<()> {
-    let yaml_file = matches.get_one::<String>("yaml-file").unwrap();
-    let yaml_path = PathBuf::from(yaml_file);
-
-    if !yaml_path.exists() {
-        anyhow::bail!("YAML file '{}' does not exist", yaml_path.display());
-    }
-
-    println!("AutoModel Query Validator");
-    println!("========================");
-    println!("YAML file: {}", yaml_path.display());
-    println!();
-
-    // Parse YAML file
-    let config = parse_yaml_file(&yaml_path).await?;
-
-    println!("✓ YAML file parsed successfully");
-    println!("✓ Found {} queries", config.queries.len());
-
-    // Validate query names
-    validate_query_names(&config.queries)?;
-    println!("✓ All query names are valid Rust identifiers");
-
-    // List queries
-    for (i, query) in config.queries.iter().enumerate() {
-        println!(
-            "  {}. {}: {}",
-            i + 1,
-            query.name,
-            query.description.as_deref().unwrap_or("No description")
-        );
-    }
-
-    // If database URL is provided, validate SQL queries
-    if let Some(database_url) = matches.get_one::<String>("database-url") {
-        println!("\nConnecting to database for SQL validation...");
-        let automodel = AutoModel::new(&yaml_path).await?;
-
-        // Try to prepare each query
-        let mut db = DatabaseConnection::new(database_url).await?;
-
-        for query in automodel.queries() {
-            match db.prepare(&query.sql).await {
-                Ok(_) => println!("  ✓ {}: SQL is valid", query.name),
-                Err(e) => println!("  ✗ {}: SQL error - {}", query.name, e),
-            }
-        }
-    }
-
-    println!("\n✓ Validation completed");
     Ok(())
 }

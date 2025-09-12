@@ -1,4 +1,4 @@
-use crate::query_config::QueryDefinition;
+use crate::config::QueryDefinition;
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
     generate_return_type, parse_parameter_names_from_sql, QueryTypeInfo,
