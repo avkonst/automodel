@@ -45,33 +45,47 @@ async fn connect_to_database(database_url: &str) -> Result<Client, Box<dyn std::
     Ok(client)
 }
 
-async fn run_examples(_client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_examples(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nRunning example queries...");
 
     // Note: The actual generated functions would be used here
-    // For now, we'll show how they would be called:
+    // For now, we'll show how they would be called with the new module structure:
 
-    println!("Generated functions available:");
-    println!("- get_user_by_id(client, id)");
-    println!("- list_active_users(client)");
-    println!("- create_user(client, name, email, is_active)");
-    println!("- update_user_email(client, id, email)");
-    println!("- delete_user(client, id)");
+    println!("Generated functions organized by modules:");
+    println!("Admin module:");
+    println!("- generated::admin::get_current_time(client)");
+    println!("- generated::admin::get_version(client)");
+    println!("\nSetup module:");
+    println!("- generated::setup::create_users_table(client)");
+    println!("\nUsers module:");
+    println!("- generated::users::insert_user(client, name, email, age, profile)");
+    println!("- generated::users::get_all_users(client)");
+    println!("- generated::users::find_user_by_email(client, email)");
+    println!("- generated::users::update_user_profile(client, profile, user_id)");
+    println!("\nMain module (queries without module specified):");
+    println!("- generated::test_json_query(client, test_data)");
 
     // Example of how you would use the generated functions:
-    /*
-    match generated::get_user_by_id(client, 1).await {
-        Ok(user) => println!("Found user: {:?}", user),
-        Err(e) => println!("Error getting user: {}", e),
+
+    // Admin functions
+    match generated::admin::get_current_time(client).await {
+        Ok(time) => println!("Current time: {:?}", time),
+        Err(e) => println!("Error getting time: {}", e),
     }
 
-    match generated::list_active_users(client).await {
-        Ok(users) => println!("Active users: {:?}", users),
+    // Setup functions
+    match generated::setup::create_users_table(client).await {
+        Ok(_) => println!("Users table created successfully"),
+        Err(e) => println!("Error creating table: {}", e),
+    }
+
+    // Users functions
+    match generated::users::get_all_users(client).await {
+        Ok(users) => println!("All users: {:?}", users),
         Err(e) => println!("Error listing users: {}", e),
     }
-    */
-
-    println!("\nTo see the actual generated code, check src/generated.rs");
+    println!("\nTo see the actual generated code, check src/generated/ directory");
+    println!("Functions are organized into modules: admin.rs, setup.rs, users.rs, and mod.rs");
     println!("The code is regenerated automatically when queries.yaml changes!");
 
     Ok(())

@@ -1,17 +1,13 @@
-pub mod admin;
-pub mod setup;
-pub mod users;
-
 use serde::{Serialize, Deserialize};
 use tokio_postgres::types::{FromSql, ToSql, Type};
 use std::error::Error;
 
-/// Test query with JSON parameter
-/// Generated from SQL: SELECT ${test_data}::jsonb as test_data
-pub async fn test_json_query(client: &tokio_postgres::Client, test_data: serde_json::Value) -> Result<Option<crate::models::TestData>, tokio_postgres::Error> {
-    let stmt = client.prepare("SELECT $1::jsonb as test_data").await?;
-    let row = client.query_one(&stmt, &[&test_data]).await?;
-    Ok(row.get::<_, Option<JsonWrapper<crate::models::TestData>>>(0).map(|wrapper| wrapper.into_inner()))
+/// Create the users table with all necessary fields
+/// Generated from SQL: CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())
+pub async fn create_users_table(client: &tokio_postgres::Client) -> Result<(), tokio_postgres::Error> {
+    let stmt = client.prepare("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())").await?;
+    client.execute(&stmt, &[]).await?;
+    Ok(())
 }
 
 

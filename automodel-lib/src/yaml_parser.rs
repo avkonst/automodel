@@ -3,6 +3,51 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 
+/// Validates that a module name is a valid Rust identifier
+fn validate_module_name(module_name: &str) -> Result<(), String> {
+    if module_name.is_empty() {
+        return Err("Module name cannot be empty".to_string());
+    }
+
+    // Reuse existing validation logic
+    if !is_valid_rust_identifier(module_name) {
+        // Check specific error cases to provide better error messages
+        let first_char = module_name.chars().next().unwrap();
+        if !first_char.is_ascii_alphabetic() && first_char != '_' {
+            return Err(format!(
+                "Module name '{}' must start with a letter or underscore",
+                module_name
+            ));
+        }
+
+        // Check for invalid characters
+        for ch in module_name.chars() {
+            if !ch.is_ascii_alphanumeric() && ch != '_' {
+                return Err(format!(
+                    "Module name '{}' contains invalid character '{}'. Only letters, numbers, and underscores are allowed",
+                    module_name, ch
+                ));
+            }
+        }
+
+        // If we get here, it must be a reserved keyword
+        if is_rust_keyword(module_name) {
+            return Err(format!(
+                "Module name '{}' is a reserved Rust keyword and cannot be used",
+                module_name
+            ));
+        }
+
+        // Fallback error (should not happen with current logic)
+        return Err(format!(
+            "Module name '{}' is not a valid Rust identifier",
+            module_name
+        ));
+    }
+
+    Ok(())
+}
+
 /// Parse a YAML file and return the full configuration including queries and type mappings
 pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Config> {
     let content = fs::read_to_string(&path)
@@ -25,14 +70,22 @@ pub fn parse_yaml_string(content: &str) -> Result<Config> {
     Ok(config)
 }
 
-/// Validate that query names are valid Rust function names
+/// Validate that query names are valid Rust function names and module names are valid
 pub fn validate_query_names(queries: &[QueryDefinition]) -> Result<()> {
     for query in queries {
+        // Validate query name
         if !is_valid_rust_identifier(&query.name) {
             anyhow::bail!(
                 "Query name '{}' is not a valid Rust function name. Use only alphanumeric characters and underscores, and start with a letter or underscore.",
                 query.name
             );
+        }
+
+        // Validate module name if specified
+        if let Some(module_name) = &query.module {
+            if let Err(error) = validate_module_name(module_name) {
+                anyhow::bail!("Invalid module name in query '{}': {}", query.name, error);
+            }
         }
     }
     Ok(())
@@ -159,5 +212,54 @@ metadata:
         assert_eq!(config.queries.len(), 2);
         assert_eq!(config.queries[0].name, "get_user");
         assert_eq!(config.queries[1].name, "list_users");
+    }
+
+    #[test]
+    fn test_module_validation() {
+        // Valid module names
+        let valid_yaml = r#"
+queries:
+  - name: get_user
+    sql: "SELECT id FROM users"
+    module: "users"
+  - name: get_admin
+    sql: "SELECT id FROM admins"
+    module: "admin_module"
+  - name: get_data
+    sql: "SELECT * FROM data"
+    module: "_private"
+"#;
+        let config = parse_yaml_string(valid_yaml).unwrap();
+        assert!(validate_query_names(&config.queries).is_ok());
+
+        // Invalid module names
+        let invalid_cases = vec![
+            ("123invalid", "starts with number"),
+            ("invalid-name", "contains hyphen"),
+            ("invalid.name", "contains dot"),
+            ("fn", "reserved keyword"),
+            ("mod", "reserved keyword"),
+            ("", "empty name"),
+        ];
+
+        for (invalid_module, description) in invalid_cases {
+            let invalid_yaml = format!(
+                r#"
+queries:
+  - name: test_query
+    sql: "SELECT 1"
+    module: "{}"
+"#,
+                invalid_module
+            );
+            let config = parse_yaml_string(&invalid_yaml).unwrap();
+            let result = validate_query_names(&config.queries);
+            assert!(
+                result.is_err(),
+                "Expected error for {}: {}",
+                description,
+                invalid_module
+            );
+        }
     }
 }

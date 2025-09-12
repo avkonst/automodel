@@ -1,0 +1,14 @@
+queries:
+  - name: get_current_time
+    sql: "SELECT NOW() as current_time"
+    description: "Get the current timestamp"
+    module: "123invalid"  # Invalid module name - starts with number
+
+  - name: get_version
+    sql: "SELECT version() as pg_version"
+    description: "Get PostgreSQL version"
+    module: "admin"
+
+types:
+  "test.test_data": "crate::models::TestData"
+  "users.profile": "crate::models::UserProfile"

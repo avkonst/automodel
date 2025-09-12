@@ -373,7 +373,7 @@ mod tests {
             name: "get_user".to_string(),
             sql: "SELECT id, name FROM users WHERE id = $1".to_string(),
             description: Some("Get user by ID".to_string()),
-            tags: None,
+            module: None,
         };
 
         let type_info = QueryTypeInfo {

@@ -10,8 +10,10 @@ pub struct QueryDefinition {
     pub sql: String,
     /// Optional description of what the query does
     pub description: Option<String>,
-    /// Optional tags for categorization
-    pub tags: Option<Vec<String>>,
+    /// Optional module name where this function should be generated
+    /// If not specified, the function will be generated in mod.rs
+    /// Must be a valid Rust module name (alphanumeric + underscore, starting with letter/underscore)
+    pub module: Option<String>,
 }
 
 /// Root structure for the YAML file containing multiple queries

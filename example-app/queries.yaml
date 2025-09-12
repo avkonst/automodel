@@ -2,10 +2,12 @@ queries:
   - name: get_current_time
     sql: "SELECT NOW() as current_time"
     description: "Get the current timestamp"
+    module: "admin"
 
   - name: get_version
     sql: "SELECT version() as pg_version"
     description: "Get PostgreSQL version"
+    module: "admin"
 
   - name: test_json_query
     sql: "SELECT ${test_data}::jsonb as test_data"
@@ -14,6 +16,7 @@ queries:
   - name: create_users_table
     sql: "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())"
     description: "Create the users table with all necessary fields"
+    module: "setup"
 
   - name: insert_user
     sql: |
@@ -21,18 +24,22 @@ queries:
       VALUES (${name}, ${email}, ${age}, ${profile})
       RETURNING id, name, email, age, created_at
     description: "Insert a new user with all fields and return the created user"
+    module: "users"
 
   - name: get_all_users
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"
     description: "Get all users with all their fields"
+    module: "users"
 
   - name: find_user_by_email
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = ${email}"
     description: "Find a user by their email address"
+    module: "users"
 
   - name: update_user_profile
     sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at"
     description: "Update a user's profile by their ID"
+    module: "users"
 
 # Field-specific type mappings for JSON/JSONB fields
 # This demonstrates how you would map specific fields to custom Rust types
