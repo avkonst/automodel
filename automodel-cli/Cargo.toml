@@ -13,7 +13,7 @@ name = "automodel"
 path = "src/main.rs"
 
 [dependencies]
-automodel-lib = { path = "../automodel-lib" }
+automodel = { path = "../automodel-lib" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 clap = { version = "4.0", features = ["derive"] }

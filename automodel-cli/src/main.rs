@@ -1,5 +1,5 @@
 use anyhow::Result;
-use automodel_lib::*;
+use automodel::*;
 use clap::{Arg, ArgMatches, Command};
 use std::path::PathBuf;
 
@@ -238,7 +238,7 @@ async fn validate_command(matches: &ArgMatches) -> Result<()> {
         automodel.load_queries_from_file(&yaml_path).await?;
 
         // Try to prepare each query
-        let mut db = automodel_lib::DatabaseConnection::new(database_url).await?;
+        let mut db = DatabaseConnection::new(database_url).await?;
 
         for query in &queries {
             match db.prepare(&query.sql).await {

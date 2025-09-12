@@ -1,5 +1,5 @@
 [package]
-name = "automodel-lib"
+name = "automodel"
 version = "0.1.0"
 edition = "2021"
 description = "A Rust library for generating typed functions from YAML-defined SQL queries"

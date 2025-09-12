@@ -117,17 +117,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "automodel-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "automodel-lib",
- "clap",
- "tokio",
-]
-
-[[package]]
-name = "automodel-lib"
+name = "automodel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -142,6 +132,16 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "automodel-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "automodel",
+ "clap",
+ "tokio",
 ]
 
 [[package]]
@@ -418,7 +418,7 @@ name = "example-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "automodel-lib",
+ "automodel",
  "serde_json",
  "tokio",
  "tokio-postgres",

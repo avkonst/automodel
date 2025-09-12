@@ -18,12 +18,10 @@ use std::fs;
 ///
 /// ```rust,no_run
 /// // build.rs
-/// use automodel_lib::build_helper::generate_at_build_time;
+/// use automodel::generate_at_build_time;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     println!("cargo:rerun-if-changed=queries.yaml");
-///     
 ///     generate_at_build_time("queries.yaml", "src/generated.rs").await?;
 ///     
 ///     Ok(())
@@ -33,6 +31,11 @@ pub async fn generate_at_build_time(
     yaml_file: &str,
     output_file: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Tell cargo to rerun if the input YAML file changes
+    println!("cargo:rerun-if-changed={}", yaml_file);
+    // Tell cargo to rerun if the output file is manually modified
+    println!("cargo:rerun-if-changed={}", output_file);
+
     // Check if DATABASE_URL environment variable is set
     match env::var("DATABASE_URL") {
         Ok(database_url) => {
