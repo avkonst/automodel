@@ -61,11 +61,33 @@ impl AutoModel {
             generated_code.push_str("use std::error::Error;\n\n");
         }
 
-        for query in module_queries {
+        // Collect type information for all queries in this module
+        let mut type_infos = Vec::new();
+        for query in &module_queries {
             let type_info =
                 extract_query_types(database_url, &query.sql, self.field_type_mappings.as_ref())
                     .await?;
-            let function_code = generate_function_code(query, &type_info)?;
+            type_infos.push(type_info);
+        }
+
+        // Extract and generate all unique enum types for this module
+        let mut all_enum_types = std::collections::HashMap::new();
+        for type_info in &type_infos {
+            let enum_types = extract_enum_types(&type_info.input_types, &type_info.output_types);
+            for (enum_name, enum_variants) in enum_types {
+                all_enum_types.insert(enum_name, enum_variants);
+            }
+        }
+
+        // Generate enum definitions once at the top of the module
+        for (enum_name, enum_variants) in all_enum_types {
+            generated_code.push_str(&generate_enum_definition(&enum_variants, &enum_name));
+            generated_code.push('\n');
+        }
+
+        // Generate functions without enum definitions (since they're already at the top)
+        for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
+            let function_code = generate_function_code_without_enums(query, type_info)?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
         }

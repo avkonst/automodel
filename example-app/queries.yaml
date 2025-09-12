@@ -14,7 +14,10 @@ queries:
   - name: test_json_query
     sql: "SELECT ${test_data}::jsonb as test_data"
     description: "Test query with JSON parameter"
-    expect: "possible_one"
+    module: "admin"
+    expect: "exactly_one"
+
+  # PostgreSQL Enum Examples
 
   - name: create_users_table
     sql: "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())"
@@ -71,6 +74,25 @@ queries:
     description: "Search users by name pattern - expects at least one match"
     module: "users"
     expect: "at_least_one"
+
+  # PostgreSQL Enum Examples
+  - name: get_users_by_status
+    sql: "SELECT id, name, email, status FROM users WHERE status = ${user_status} ORDER BY name"
+    description: "Get users by their status (enum parameter and enum output)"
+    module: "users"
+    expect: "multiple"
+
+  - name: update_user_status
+    sql: "UPDATE users SET status = ${new_status} WHERE id = ${user_id} RETURNING id, status"
+    description: "Update user status and return the new status"
+    module: "users"
+    expect: "exactly_one"
+
+  - name: get_all_user_statuses
+    sql: "SELECT DISTINCT status FROM users ORDER BY status"
+    description: "Get all possible user statuses currently in use"
+    module: "users"
+    expect: "multiple"
 
 # Field-specific type mappings for JSON/JSONB fields
 # This demonstrates how you would map specific fields to custom Rust types

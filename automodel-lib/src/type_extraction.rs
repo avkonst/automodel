@@ -23,6 +23,17 @@ pub struct RustType {
     pub pg_type: String,
     /// Whether this is a custom type that needs JSON wrapper
     pub needs_json_wrapper: bool,
+    /// If this is an enum type, contains the enum variants
+    pub enum_variants: Option<Vec<String>>,
+}
+
+/// Information about a PostgreSQL enum type
+#[derive(Debug, Clone)]
+pub struct EnumTypeInfo {
+    /// The name of the enum type
+    pub type_name: String,
+    /// The variants of the enum
+    pub variants: Vec<String>,
 }
 
 /// Represents an output column with its name and type
@@ -63,7 +74,7 @@ pub async fn extract_query_types(
     })?;
 
     // Extract types
-    let input_types = extract_input_types(&statement, &param_names)?;
+    let input_types = extract_input_types(&client, &statement, &param_names).await?;
     let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
 
     Ok(QueryTypeInfo {
@@ -73,7 +84,11 @@ pub async fn extract_query_types(
 }
 
 /// Extract input parameter types from a prepared statement
-fn extract_input_types(statement: &Statement, param_names: &[String]) -> Result<Vec<RustType>> {
+async fn extract_input_types(
+    client: &tokio_postgres::Client,
+    statement: &Statement,
+    param_names: &[String],
+) -> Result<Vec<RustType>> {
     let params = statement.params();
     let mut input_types = Vec::new();
 
@@ -82,7 +97,7 @@ fn extract_input_types(statement: &Statement, param_names: &[String]) -> Result<
         let param_name = param_names.get(i).map(|s| s.as_str()).unwrap_or("");
         let is_optional_param = param_name.ends_with('?');
 
-        let mut rust_type = pg_type_to_rust_type(param_type, is_optional_param)?;
+        let mut rust_type = pg_type_to_rust_type(client, param_type, is_optional_param).await?;
 
         // If it's an optional parameter, wrap the type in Option if not already nullable
         if is_optional_param && !rust_type.is_nullable {
@@ -135,6 +150,38 @@ async fn get_column_nullability(
     Ok(nullability)
 }
 
+/// Get enum type information from PostgreSQL system catalogs
+async fn get_enum_type_info(
+    client: &tokio_postgres::Client,
+    type_oid: u32,
+) -> Result<Option<EnumTypeInfo>> {
+    // Query pg_enum to get enum values for a specific type
+    let rows = client
+        .query(
+            r#"
+            SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as enum_values
+            FROM pg_type t
+            JOIN pg_enum e ON t.oid = e.enumtypid
+            WHERE t.oid = $1
+            GROUP BY t.typname
+            "#,
+            &[&type_oid],
+        )
+        .await?;
+
+    if let Some(row) = rows.first() {
+        let type_name: String = row.get(0);
+        let enum_values: Vec<String> = row.get(1);
+
+        Ok(Some(EnumTypeInfo {
+            type_name,
+            variants: enum_values,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Extract output column types from a prepared statement
 async fn extract_output_types(
     client: &tokio_postgres::Client,
@@ -150,7 +197,7 @@ async fn extract_output_types(
     for (i, column) in columns.iter().enumerate() {
         let column_name = column.name();
         let is_nullable = nullability_info.get(i).copied().unwrap_or(true); // Default to nullable if unknown
-        let base_rust_type = pg_type_to_rust_type(column.type_(), is_nullable)?;
+        let base_rust_type = pg_type_to_rust_type(client, column.type_(), is_nullable).await?;
 
         // Check if there's a custom type mapping for this field
         // Note: Since we only have the column name here, we can't determine the exact table
@@ -172,6 +219,7 @@ async fn extract_output_types(
                     is_nullable: base_rust_type.is_nullable,
                     pg_type: base_rust_type.pg_type,
                     needs_json_wrapper: true, // Custom types need JSON wrapper
+                    enum_variants: None,
                 }
             } else {
                 base_rust_type
@@ -190,7 +238,29 @@ async fn extract_output_types(
 }
 
 /// Convert PostgreSQL type to Rust type
-fn pg_type_to_rust_type(pg_type: &PgType, is_nullable: bool) -> Result<RustType> {
+async fn pg_type_to_rust_type(
+    client: &tokio_postgres::Client,
+    pg_type: &PgType,
+    is_nullable: bool,
+) -> Result<RustType> {
+    // Check if this is an enum type by trying to get enum info
+    if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
+        let enum_name = to_pascal_case(&enum_info.type_name);
+        let rust_type = if is_nullable {
+            format!("Option<{}>", enum_name)
+        } else {
+            enum_name
+        };
+
+        return Ok(RustType {
+            rust_type,
+            is_nullable,
+            pg_type: enum_info.type_name,
+            needs_json_wrapper: false,
+            enum_variants: Some(enum_info.variants),
+        });
+    }
+
     let base_type = match *pg_type {
         PgType::BOOL => "bool",
         PgType::CHAR => "i8",
@@ -217,6 +287,7 @@ fn pg_type_to_rust_type(pg_type: &PgType, is_nullable: bool) -> Result<RustType>
                 is_nullable,
                 pg_type: pg_type.name().to_string(),
                 needs_json_wrapper: false,
+                enum_variants: None,
             });
         }
     };
@@ -232,6 +303,7 @@ fn pg_type_to_rust_type(pg_type: &PgType, is_nullable: bool) -> Result<RustType>
         is_nullable,
         pg_type: pg_type.name().to_string(),
         needs_json_wrapper: false, // Standard types don't need JSON wrapper
+        enum_variants: None,
     })
 }
 
@@ -390,7 +462,162 @@ pub fn generate_return_type(output_types: &[OutputColumn]) -> String {
     format!("({})", types.join(", "))
 }
 
-/// Generate struct definition for query result if there are multiple columns
+/// Generate Rust enum definition from enum type info
+pub fn generate_enum_definition(enum_variants: &[String], enum_name: &str) -> String {
+    let mut enum_def = format!(
+        "#[derive(Debug, Clone, PartialEq, Eq)]\npub enum {} {{\n",
+        enum_name
+    );
+
+    for variant in enum_variants {
+        let variant_name = to_pascal_case(variant);
+        enum_def.push_str(&format!("    {},\n", variant_name));
+    }
+
+    enum_def.push_str("}\n\n");
+
+    // Add FromStr implementation for converting from database strings
+    enum_def.push_str(&format!(
+        r#"impl std::str::FromStr for {} {{
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {{
+        match s {{
+"#,
+        enum_name
+    ));
+
+    for variant in enum_variants {
+        let variant_name = to_pascal_case(variant);
+        enum_def.push_str(&format!(
+            "            \"{}\" => Ok({}::{}),\n",
+            variant, enum_name, variant_name
+        ));
+    }
+
+    enum_def.push_str(&format!(
+        r#"            _ => Err(format!("Invalid {} variant: {{}}", s)),
+        }}
+    }}
+}}
+
+"#,
+        enum_name
+    ));
+
+    // Add Display implementation for converting to database strings
+    enum_def.push_str(&format!(
+        r#"impl std::fmt::Display for {} {{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
+        let s = match self {{
+"#,
+        enum_name
+    ));
+
+    for variant in enum_variants {
+        let variant_name = to_pascal_case(variant);
+        enum_def.push_str(&format!(
+            "            {}::{} => \"{}\",\n",
+            enum_name, variant_name, variant
+        ));
+    }
+
+    enum_def.push_str(&format!(
+        r#"        }};
+        write!(f, "{{}}", s)
+    }}
+}}
+
+"#
+    ));
+
+    // Add tokio-postgres FromSql implementation
+    enum_def.push_str(&format!(
+        r#"impl tokio_postgres::types::FromSql<'_> for {} {{
+    fn from_sql(
+        _ty: &tokio_postgres::types::Type,
+        raw: &[u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {{
+        let s = std::str::from_utf8(raw)?;
+        s.parse().map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)) as Box<dyn std::error::Error + Sync + Send>)
+    }}
+
+    fn accepts(ty: &tokio_postgres::types::Type) -> bool {{
+        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
+    }}
+}}
+
+"#,
+        enum_name
+    ));
+
+    // Add tokio-postgres ToSql implementation
+    enum_def.push_str(&format!(
+        r#"impl tokio_postgres::types::ToSql for {} {{
+    fn to_sql(
+        &self,
+        _ty: &tokio_postgres::types::Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {{
+        out.extend_from_slice(self.to_string().as_bytes());
+        Ok(tokio_postgres::types::IsNull::No)
+    }}
+
+    fn accepts(ty: &tokio_postgres::types::Type) -> bool {{
+        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
+    }}
+
+    tokio_postgres::types::to_sql_checked!();
+}}
+
+"#,
+        enum_name
+    ));
+
+    enum_def
+}
+
+/// Extract all unique enum types from input and output types
+pub fn extract_enum_types(
+    input_types: &[RustType],
+    output_types: &[OutputColumn],
+) -> Vec<(String, Vec<String>)> {
+    let mut enum_types = std::collections::HashMap::new();
+
+    // Check input types for enums
+    for input_type in input_types {
+        if let Some(ref variants) = input_type.enum_variants {
+            let enum_name = extract_enum_name_from_rust_type(&input_type.rust_type);
+            if let Some(name) = enum_name {
+                enum_types.insert(name, variants.clone());
+            }
+        }
+    }
+
+    // Check output types for enums
+    for output_col in output_types {
+        if let Some(ref variants) = output_col.rust_type.enum_variants {
+            let enum_name = extract_enum_name_from_rust_type(&output_col.rust_type.rust_type);
+            if let Some(name) = enum_name {
+                enum_types.insert(name, variants.clone());
+            }
+        }
+    }
+
+    enum_types.into_iter().collect()
+}
+
+/// Extract enum name from a Rust type string (e.g., "Option<UserStatus>" -> "UserStatus")
+fn extract_enum_name_from_rust_type(rust_type: &str) -> Option<String> {
+    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+        // Extract the inner type from Option<T>
+        let inner = &rust_type[7..rust_type.len() - 1];
+        Some(inner.to_string())
+    } else {
+        // Direct enum type
+        Some(rust_type.to_string())
+    }
+}
 pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -> Option<String> {
     if output_types.len() <= 1 {
         return None;
@@ -479,12 +706,14 @@ mod tests {
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
                 needs_json_wrapper: false,
+                enum_variants: None,
             },
             RustType {
                 rust_type: "String".to_string(),
                 is_nullable: false,
                 pg_type: "TEXT".to_string(),
                 needs_json_wrapper: false,
+                enum_variants: None,
             },
         ];
 
@@ -501,6 +730,7 @@ mod tests {
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
                 needs_json_wrapper: false,
+                enum_variants: None,
             },
         }];
 
@@ -514,6 +744,7 @@ mod tests {
                     is_nullable: false,
                     pg_type: "INT4".to_string(),
                     needs_json_wrapper: false,
+                    enum_variants: None,
                 },
             },
             OutputColumn {
@@ -523,6 +754,7 @@ mod tests {
                     is_nullable: false,
                     pg_type: "TEXT".to_string(),
                     needs_json_wrapper: false,
+                    enum_variants: None,
                 },
             },
         ];

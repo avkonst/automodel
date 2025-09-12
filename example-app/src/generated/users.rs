@@ -2,6 +2,72 @@ use serde::{Serialize, Deserialize};
 use tokio_postgres::types::{FromSql, ToSql, Type};
 use std::error::Error;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserStatus {
+    Active,
+    Inactive,
+    Suspended,
+    Pending,
+}
+
+impl std::str::FromStr for UserStatus {
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "active" => Ok(UserStatus::Active),
+            "inactive" => Ok(UserStatus::Inactive),
+            "suspended" => Ok(UserStatus::Suspended),
+            "pending" => Ok(UserStatus::Pending),
+            _ => Err(format!("Invalid UserStatus variant: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            UserStatus::Active => "active",
+            UserStatus::Inactive => "inactive",
+            UserStatus::Suspended => "suspended",
+            UserStatus::Pending => "pending",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl tokio_postgres::types::FromSql<'_> for UserStatus {
+    fn from_sql(
+        _ty: &tokio_postgres::types::Type,
+        raw: &[u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        let s = std::str::from_utf8(raw)?;
+        s.parse().map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)) as Box<dyn std::error::Error + Sync + Send>)
+    }
+
+    fn accepts(ty: &tokio_postgres::types::Type) -> bool {
+        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
+    }
+}
+
+impl tokio_postgres::types::ToSql for UserStatus {
+    fn to_sql(
+        &self,
+        _ty: &tokio_postgres::types::Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        out.extend_from_slice(self.to_string().as_bytes());
+        Ok(tokio_postgres::types::IsNull::No)
+    }
+
+    fn accepts(ty: &tokio_postgres::types::Type) -> bool {
+        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
+    }
+
+    tokio_postgres::types::to_sql_checked!();
+}
+
+
 #[derive(Debug, Clone)]
 pub struct InsertUserResult {
     pub id: i32,
@@ -227,6 +293,58 @@ pub async fn search_users_by_name_pattern(client: &tokio_postgres::Client, patte
         name: row.get::<_, String>(1),
         email: row.get::<_, String>(2),
     }
+    }).collect();
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
+pub struct GetUsersByStatusResult {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub status: Option<UserStatus>,
+}
+
+/// Get users by their status (enum parameter and enum output)
+/// Generated from SQL: SELECT id, name, email, status FROM users WHERE status = ${user_status} ORDER BY name
+pub async fn get_users_by_status(client: &tokio_postgres::Client, user_status: UserStatus) -> Result<Vec<GetUsersByStatusResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT id, name, email, status FROM users WHERE status = $1 ORDER BY name").await?;
+    let rows = client.query(&stmt, &[&user_status]).await?;
+    let result = rows.into_iter().map(|row| {
+        GetUsersByStatusResult {
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
+        status: row.get::<_, Option<UserStatus>>(3),
+    }
+    }).collect();
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateUserStatusResult {
+    pub id: i32,
+    pub status: Option<UserStatus>,
+}
+
+/// Update user status and return the new status
+/// Generated from SQL: UPDATE users SET status = ${new_status} WHERE id = ${user_id} RETURNING id, status
+pub async fn update_user_status(client: &tokio_postgres::Client, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusResult, tokio_postgres::Error> {
+    let stmt = client.prepare("UPDATE users SET status = $1 WHERE id = $2 RETURNING id, status").await?;
+    let row = client.query_one(&stmt, &[&new_status, &user_id]).await?;
+    Ok(UpdateUserStatusResult {
+        id: row.get::<_, i32>(0),
+        status: row.get::<_, Option<UserStatus>>(1),
+    })
+}
+
+/// Get all possible user statuses currently in use
+/// Generated from SQL: SELECT DISTINCT status FROM users ORDER BY status
+pub async fn get_all_user_statuses(client: &tokio_postgres::Client) -> Result<Vec<Option<UserStatus>>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT DISTINCT status FROM users ORDER BY status").await?;
+    let rows = client.query(&stmt, &[]).await?;
+    let result = rows.into_iter().map(|row| {
+        row.get::<_, Option<UserStatus>>(0)
     }).collect();
     Ok(result)
 }

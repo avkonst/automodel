@@ -1,7 +1,8 @@
 use crate::config::{ExpectedResult, QueryDefinition};
 use crate::type_extraction::{
-    convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
-    generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
+    convert_named_params_to_positional, extract_enum_types, generate_enum_definition,
+    generate_input_params_with_names, generate_result_struct, generate_return_type,
+    parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use anyhow::Result;
 
@@ -66,12 +67,115 @@ where
 "#.to_string()
 }
 
-/// Generate Rust function code for a SQL query
+/// Generate Rust function code for a SQL query without enum definitions
+/// (assumes enums are already defined elsewhere in the module)
+pub fn generate_function_code_without_enums(
+    query: &QueryDefinition,
+    type_info: &QueryTypeInfo,
+) -> Result<String> {
+    let mut code = String::new();
+
+    // Generate result struct if needed (but no enums)
+    if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
+        code.push_str(&struct_def);
+        code.push('\n');
+    }
+
+    // Generate function documentation
+    let sql_lines: Vec<&str> = query.sql.lines().collect();
+    if let Some(description) = &query.description {
+        code.push_str(&format!("/// {}\n", description));
+    }
+
+    if sql_lines.len() == 1 {
+        code.push_str(&format!("/// Generated from SQL: {}\n", sql_lines[0]));
+    } else {
+        code.push_str("/// Generated from SQL:\n");
+        for line in sql_lines {
+            code.push_str(&format!("/// {}\n", line.trim()));
+        }
+    }
+
+    // Generate function signature
+    // Extract clean parameter names directly from the SQL for function signature
+    let original_param_names = parse_parameter_names_from_sql(&query.sql);
+    let clean_param_names: Vec<String> = original_param_names
+        .iter()
+        .map(|name| {
+            if name.ends_with('?') {
+                name.trim_end_matches('?').to_string()
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+
+    let input_params = generate_input_params_with_names(&type_info.input_types, &clean_param_names);
+    let base_return_type = if type_info.output_types.len() > 1 {
+        format!("{}Result", to_pascal_case(&query.name))
+    } else {
+        generate_return_type(&type_info.output_types)
+    };
+
+    // Generate function signature
+    let params_str = if input_params.is_empty() {
+        "client: &tokio_postgres::Client".to_string()
+    } else {
+        format!("client: &tokio_postgres::Client, {}", input_params)
+    };
+
+    let return_type = match query.expect {
+        ExpectedResult::ExactlyOne => {
+            // For ExactlyOne, unwrap Option<> types since user expects non-null result
+            let final_return_type = if type_info.output_types.len() == 1 {
+                let rust_type = &type_info.output_types[0].rust_type.rust_type;
+                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                    // Extract the inner type from Option<T>
+                    rust_type[7..rust_type.len() - 1].to_string()
+                } else {
+                    rust_type.clone()
+                }
+            } else {
+                base_return_type.clone()
+            };
+            format!("Result<{}, tokio_postgres::Error>", final_return_type)
+        }
+        ExpectedResult::PossibleOne => {
+            format!(
+                "Result<Option<{}>, tokio_postgres::Error>",
+                base_return_type
+            )
+        }
+        ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
+            format!("Result<Vec<{}>, tokio_postgres::Error>", base_return_type)
+        }
+    };
+
+    code.push_str(&format!(
+        "pub async fn {}({}) -> {} {{\n",
+        query.name, params_str, return_type
+    ));
+
+    // Generate function body
+    let function_body = generate_function_body(query, type_info, &base_return_type)?;
+    code.push_str(&function_body);
+
+    code.push_str("}\n");
+
+    Ok(code)
+}
 pub fn generate_function_code(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
 ) -> Result<String> {
     let mut code = String::new();
+
+    // Generate enum definitions for any enum types found
+    let enum_types = extract_enum_types(&type_info.input_types, &type_info.output_types);
+    for (enum_name, enum_variants) in enum_types {
+        code.push_str(&generate_enum_definition(&enum_variants, &enum_name));
+        code.push('\n');
+    }
 
     // Generate result struct if needed
     if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
@@ -116,7 +220,20 @@ pub fn generate_function_code(
     } else {
         // Adjust return type based on expect field
         match query.expect {
-            ExpectedResult::ExactlyOne => base_return_type.clone(),
+            ExpectedResult::ExactlyOne => {
+                // For ExactlyOne, unwrap Option<> types since user expects non-null result
+                if type_info.output_types.len() == 1 {
+                    let rust_type = &type_info.output_types[0].rust_type.rust_type;
+                    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                        // Extract the inner type from Option<T>
+                        rust_type[7..rust_type.len() - 1].to_string()
+                    } else {
+                        rust_type.clone()
+                    }
+                } else {
+                    base_return_type.clone()
+                }
+            }
             ExpectedResult::PossibleOne => {
                 // For PossibleOne, we need to wrap the non-nullable version in Option<>
                 let non_nullable_type = if type_info.output_types.len() == 1 {
@@ -264,18 +381,43 @@ fn generate_function_body(
                 &output_col.rust_type.rust_type
             };
 
-            if output_col.rust_type.is_nullable {
-                // For nullable types, just extract normally
+            // For ExactlyOne, extract as non-nullable even if column is marked nullable
+            // For other cases, respect the nullable setting
+            let should_extract_as_nullable = match query.expect {
+                ExpectedResult::ExactlyOne => false, // Always extract as non-null for ExactlyOne
+                _ => output_col.rust_type.is_nullable,
+            };
+
+            if should_extract_as_nullable {
+                // For nullable types, extract as Option<JsonWrapper<T>>
                 format!(
                     "row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner())",
                     inner_type
                 )
             } else {
+                // For non-nullable types, extract as JsonWrapper<T>
                 format!("row.get::<_, JsonWrapper<{}>>(0).into_inner()", inner_type)
             }
         } else {
-            // For non-JSON wrapper types, just extract normally
-            format!("row.get::<_, {}>(0)", output_col.rust_type.rust_type)
+            // For non-JSON wrapper types, apply the same nullable logic
+            let should_extract_as_nullable = match query.expect {
+                ExpectedResult::ExactlyOne => false, // Always extract as non-null for ExactlyOne
+                _ => output_col.rust_type.is_nullable,
+            };
+
+            if should_extract_as_nullable {
+                // Extract as Option<T>
+                format!("row.get::<_, {}>(0)", output_col.rust_type.rust_type)
+            } else {
+                // Extract as T (unwrap the Option if needed)
+                let rust_type = &output_col.rust_type.rust_type;
+                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
+                    // For ExactlyOne with nullable columns, extract as Option<T> then unwrap
+                    format!("row.get::<_, {}>(0).unwrap()", rust_type)
+                } else {
+                    format!("row.get::<_, {}>(0)", rust_type)
+                }
+            }
         };
 
         match query.expect {
@@ -530,6 +672,7 @@ mod tests {
                 is_nullable: false,
                 pg_type: "INT4".to_string(),
                 needs_json_wrapper: false,
+                enum_variants: None,
             }],
             output_types: vec![
                 OutputColumn {
@@ -539,6 +682,7 @@ mod tests {
                         is_nullable: false,
                         pg_type: "INT4".to_string(),
                         needs_json_wrapper: false,
+                        enum_variants: None,
                     },
                 },
                 OutputColumn {
@@ -548,6 +692,7 @@ mod tests {
                         is_nullable: false,
                         pg_type: "TEXT".to_string(),
                         needs_json_wrapper: false,
+                        enum_variants: None,
                     },
                 },
             ],

@@ -73,6 +73,13 @@ async fn run_examples(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         Err(e) => println!("Error getting time: {}", e),
     }
 
+    // Test JSON query with exactly_one
+    let test_data = serde_json::json!({"message": "Hello from test", "value": 42});
+    match generated::admin::test_json_query(client, test_data).await {
+        Ok(result) => println!("JSON query result: {:?}", result),
+        Err(e) => println!("Error in JSON query: {}", e),
+    }
+
     // Setup functions
     match generated::setup::create_users_table(client).await {
         Ok(_) => println!("Users table created successfully"),
