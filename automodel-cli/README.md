@@ -1,53 +1,56 @@
 # AutoModel CLI
 
-Command-line interface for AutoModel - generate typed Rust functions from YAML-defined SQL queries.
+🔧 **Command-line interface for AutoModel - Generate type-safe Rust functions from SQL queries**
 
-## Installation
+The AutoModel CLI provides powerful tools for validating SQL query definitions and generating type-safe Rust code. Perfect for CI/CD pipelines, development workflows, and standalone code generation.
 
+## ✨ Features
+
+- 📝 **YAML Validation** - Validate syntax, query names, and SQL queries
+- 🛠️ **Code Generation** - Generate type-safe Rust functions with full type checking
+- 🔌 **PostgreSQL Integration** - Full support for PostgreSQL types including enums
+- 🎯 **Advanced Options** - Dry-run, custom output, module organization
+- ⚡ **CI/CD Ready** - Perfect for automated validation and code generation
+- 🏗️ **Module Support** - Generate organized code with separate modules
+
+## 🚀 Installation
+
+### From Source
 ```bash
-# From workspace root
-cargo build -p automodel-cli
-
-# The binary will be at target/debug/automodel
+git clone <repository-url>
+cd automodel
+cargo install --path automodel-cli
 ```
 
-## Usage
-
-### Basic Commands
-
+### Using Cargo (when published)
 ```bash
-# Show help
-automodel --help
-
-# Validate a YAML file
-automodel validate -f queries.yaml
-
-# Generate code from YAML
-automodel generate -d postgresql://localhost/mydb -f queries.yaml
+cargo install automodel-cli
 ```
 
-### Validate Command
+## 📋 Commands
 
-Validates YAML syntax, query names, and optionally SQL queries:
+### Validate Queries
+
+Validate YAML syntax, query names, and optionally SQL queries against your database:
 
 ```bash
 # Basic validation (syntax and query names only)
 automodel validate -f queries.yaml
 
-# Advanced validation with database connection (also validates SQL)
+# Full validation with database connection (validates SQL)
 automodel validate -f queries.yaml -d postgresql://localhost/mydb
 ```
 
 **Options:**
-- `-f, --file <FILE>` - YAML file containing query definitions (required)
+- `-f, --file <FILE>` - YAML file to validate (required)
 - `-d, --database-url <URL>` - PostgreSQL database URL for SQL validation (optional)
 
-### Generate Command
+### Generate Code
 
-Generates Rust code from YAML query definitions:
+Generate type-safe Rust functions from your query definitions:
 
 ```bash
-# Basic generation (outputs to queries.rs)
+# Basic generation
 automodel generate -d postgresql://localhost/mydb -f queries.yaml
 
 # Custom output file
@@ -59,86 +62,162 @@ automodel generate -d postgresql://localhost/mydb -f queries.yaml --dry-run
 
 **Options:**
 - `-d, --database-url <URL>` - PostgreSQL database URL (required)
-- `-f, --file <FILE>` - YAML file containing query definitions (required)
-- `-o, --output <FILE>` - Output file for generated code (optional, defaults to `<yaml_file>.rs`)
-- `-m, --module <NAME>` - Module name for generated code (optional)
+- `-f, --file <FILE>` - YAML file containing query definitions (required)  
+- `-o, --output <FILE>` - Output file for generated code (optional, defaults to `generated.rs`)
+- `-m, --module <NAME>` - Root module name for generated code (optional)
 - `--dry-run` - Generate code but don't write to file (optional)
 
-## Examples
+## 📄 Query Definition Format
 
-### Example YAML File
+### Basic Structure
 
 ```yaml
 queries:
   - name: get_user_by_id
-    sql: "SELECT id, name, email FROM users WHERE id = $1"
-    description: "Retrieve a user by their ID"
+    sql: "SELECT id, name, email, created_at FROM users WHERE id = ${user_id}"
+    description: "Get a user by their ID"
+    module: "users"
+    expect: "exactly_one"
+  
+  - name: find_users_by_name
+    sql: "SELECT id, name FROM users WHERE name ILIKE ${pattern} AND (${min_age?} IS NULL OR age >= ${min_age?})"
+    description: "Find users by name with optional age filter"
+    module: "users"
+    expect: "multiple"
     
-  - name: list_active_users
-    sql: "SELECT id, name FROM users WHERE active = true"
-    description: "List all active users"
-    
-  - name: create_user
-    sql: "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id"
-    description: "Create a new user"
+  - name: get_user_profile
+    sql: "SELECT id, name, profile FROM users WHERE id = ${user_id}"
+    description: "Get user with JSON profile data"
+    module: "users"
+    expect: "possible_one"
+    types:
+      profile: "crate::models::UserProfile"
 ```
 
-### Validation Output
+### Advanced Features
+
+- **Named Parameters**: Use `${param_name}` instead of `$1`, `$2`
+- **Optional Parameters**: Use `${param?}` for optional parameters
+- **Custom Types**: Map JSON/JSONB fields to custom Rust types
+- **Module Organization**: Organize functions into separate modules
+- **Return Types**: Control result handling with `expect` field
+- **PostgreSQL Enums**: Automatic detection and generation of Rust enums
+
+### expect Field Options
+
+- `exactly_one` - Returns `Result<T, Error>`, fails if 0 or >1 rows
+- `possible_one` - Returns `Result<Option<T>, Error>`, None if no rows  
+- `multiple` - Returns `Result<Vec<T>, Error>`, empty Vec if no rows
+- `at_least_one` - Returns `Result<Vec<T>, Error>`, fails if no rows
+
+## 💻 Examples
+
+### Validation Example
 
 ```bash
-$ automodel validate -f queries.yaml
+$ automodel validate -f queries.yaml -d postgresql://localhost/mydb
 
 AutoModel Query Validator
 ========================
 YAML file: queries.yaml
+Database: postgresql://localhost/mydb
 
-✓ YAML file parsed successfully
-✓ Found 3 queries
-✓ All query names are valid Rust identifiers
-  1. get_user_by_id: Retrieve a user by their ID
-  2. list_active_users: List all active users
-  3. create_user: Create a new user
+✅ YAML file parsed successfully
+✅ Found 4 queries across 2 modules
+✅ All query names are valid Rust identifiers
+✅ Database connection successful
+✅ PostgreSQL enums detected: user_status, post_type
+✅ All SQL queries validated successfully
 
-✓ Validation completed
+Query Summary:
+📁 users module (2 queries):
+  1. get_user_by_id: Get a user by their ID
+  2. find_users_by_name: Find users by name with optional age filter
+
+📁 posts module (2 queries):  
+  3. get_user_posts: Get all posts for a user
+  4. create_post: Create a new post
+
+✅ Validation completed - All queries are valid!
 ```
 
-### Generation Output
+### Generation Example
 
 ```bash
 $ automodel generate -d postgresql://localhost/mydb -f queries.yaml
 
-AutoModel Code Generator
+AutoModel Code Generator  
 =======================
-Database URL: postgresql://localhost/mydb
+Database: postgresql://localhost/mydb
 YAML file: queries.yaml
 
-Loading queries from YAML file...
-✓ Successfully loaded 3 queries
-  1. get_user_by_id: Retrieve a user by their ID
-  2. list_active_users: List all active users
-  3. create_user: Create a new user
+Loading queries from YAML...
+✅ Successfully loaded 4 queries across 2 modules
 
-Connecting to database and generating code...
-✓ Successfully generated Rust code
-✓ Generated code written to: queries.rs
+Connecting to database...
+✅ Database connection established
+✅ PostgreSQL enums detected and processed:
+   • UserStatus (active, inactive, suspended, pending)
+   • PostType (article, tutorial, announcement)
 
-You can now include this file in your Rust project:
-  mod queries;
+Analyzing queries and generating code...
+✅ Type analysis completed for all queries
+✅ Generated 4 type-safe functions
+✅ Generated 2 result structs  
+✅ Generated 2 PostgreSQL enums
+
+📁 Generated files:
+   • src/generated/mod.rs (main module + enums)
+   • src/generated/users.rs (users module)
+   • src/generated/posts.rs (posts module)
+
+✅ Code generation completed successfully!
+
+Usage in your Rust code:
+   mod generated;
+   
+   // Use generated functions
+   let user = generated::users::get_user_by_id(client, 42).await?;
+   let posts = generated::posts::get_user_posts(client, 42, PostType::Article).await?;
 ```
 
-## Error Handling
+### Dry Run Example
 
-The CLI provides helpful error messages for common issues:
+```bash
+$ automodel generate -d postgresql://localhost/mydb -f queries.yaml --dry-run
 
-- **File not found**: Clear message when YAML file doesn't exist
-- **Invalid YAML**: Syntax error details with line numbers
-- **Invalid query names**: Lists invalid identifiers with suggestions
-- **Database connection**: Network and authentication error details
-- **SQL errors**: Database-specific error messages for invalid queries
+AutoModel Code Generator (Dry Run)
+==================================
+This is a preview of the code that would be generated.
+No files will be written.
 
-## Integration
+// ===== src/generated/mod.rs =====
 
-### CI/CD Pipeline
+//! Auto-generated database functions
+//! Generated from queries.yaml
+
+pub mod users;
+pub mod posts;
+
+use tokio_postgres::{types::ToSql, Client, Error, Row};
+
+// PostgreSQL enum: UserStatus
+#[derive(Debug, Clone, PartialEq, Eq)]  
+pub enum UserStatus {
+    Active,
+    Inactive,
+    Suspended,
+    Pending,
+}
+
+// ... (rest of generated code preview)
+
+✅ Dry run completed - 287 lines of code would be generated
+```
+
+## 🔧 Integration Examples
+
+### CI/CD Pipeline (GitHub Actions)
 
 ```yaml
 # .github/workflows/validate-queries.yml
@@ -160,20 +239,21 @@ jobs:
           --health-retries 5
     
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       
-      - name: Setup database
+      - name: Setup database schema
         run: |
           psql -h localhost -U postgres -d postgres -f schema.sql
         env:
           PGPASSWORD: postgres
           
+      - name: Install AutoModel CLI
+        run: cargo install --path automodel-cli
+          
       - name: Validate queries
         run: |
-          cargo run -p automodel-cli -- validate -f queries.yaml -d postgresql://postgres:postgres@localhost/postgres
+          automodel validate -f queries.yaml -d postgresql://postgres:postgres@localhost/postgres
 ```
 
 ### Build Script Integration
@@ -185,24 +265,114 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=queries.yaml");
     
-    let output = Command::new("cargo")
-        .args(&[
-            "run", "-p", "automodel-cli", "--",
-            "generate",
-            "-d", &std::env::var("DATABASE_URL").unwrap_or_default(),
-            "-f", "queries.yaml",
-            "-o", "src/generated.rs"
-        ])
-        .output()
-        .expect("Failed to run automodel-cli");
+    if let Ok(database_url) = std::env::var("DATABASE_URL") {
+        let output = Command::new("automodel")
+            .args([
+                "generate",
+                "-d", &database_url,
+                "-f", "queries.yaml", 
+                "-o", "src/generated.rs"
+            ])
+            .output()
+            .expect("Failed to run automodel CLI");
+            
+        if !output.status.success() {
+            panic!("Query generation failed: {}", String::from_utf8_lossy(&output.stderr));
+        }
         
-    if !output.status.success() {
-        panic!("Query generation failed: {}", String::from_utf8_lossy(&output.stderr));
+        println!("✅ Generated database functions");
+    } else {
+        println!("⚠️ DATABASE_URL not set, skipping code generation");
     }
 }
 ```
 
-## Development
+### Development Workflow
+
+```bash
+# 1. Create/edit your queries
+vim queries.yaml
+
+# 2. Validate queries during development
+automodel validate -f queries.yaml -d $DATABASE_URL
+
+# 3. Generate code when ready
+automodel generate -f queries.yaml -d $DATABASE_URL -o src/generated.rs
+
+# 4. Build your project
+cargo build
+```
+
+### Makefile Integration
+
+```makefile
+# Makefile
+.PHONY: validate-queries generate-code
+
+validate-queries:
+	automodel validate -f queries.yaml -d $(DATABASE_URL)
+
+generate-code:
+	automodel generate -f queries.yaml -d $(DATABASE_URL) -o src/generated.rs
+
+build: validate-queries generate-code
+	cargo build
+
+check: validate-queries
+	cargo check
+```
+
+## 🚨 Error Handling
+
+The CLI provides detailed error messages for common issues:
+
+### File Errors
+```bash
+❌ Error: YAML file not found: queries.yaml
+   Help: Check that the file path is correct
+```
+
+### YAML Syntax Errors  
+```bash
+❌ YAML parsing error at line 5, column 8:
+   unexpected character '}'
+   
+   4 |   - name: get_user
+   5 |     sql: "SELECT }" 
+                        ^
+   6 |     description: "..."
+```
+
+### Invalid Query Names
+```bash
+❌ Validation failed: Invalid query names
+   • Query 'get-user-by-id' (line 3): Contains invalid character '-'
+     Suggestion: Use 'get_user_by_id' instead
+   • Query '123_users' (line 8): Cannot start with a number
+     Suggestion: Use 'list_123_users' instead
+```
+
+### Database Connection Errors
+```bash
+❌ Database connection failed: 
+   connection to server at "localhost" (127.0.0.1), port 5432 failed: 
+   FATAL: database "nonexistent" does not exist
+   
+   Help: Check your database URL and ensure the database exists
+```
+
+### SQL Validation Errors
+```bash
+❌ SQL validation failed for query 'get_user_by_id':
+   column "ide" does not exist at character 8
+   
+   Query: SELECT ide, name FROM users WHERE id = $1
+                 ^^^
+   
+   Help: Check your column names against your database schema
+```
+
+## 🛠️ Development
 
 ### Building from Source
 
@@ -212,15 +382,25 @@ git clone <repository-url>
 cd automodel
 
 # Build the CLI
-cargo build -p automodel-cli
+cargo build -p automodel-cli --release
 
 # Run tests
 cargo test -p automodel-lib
 
-# Install locally (optional)
+# Install locally
 cargo install --path automodel-cli
 ```
 
-### Contributing
+### Testing
 
-See the main repository README for contribution guidelines.
+```bash
+# Test CLI commands
+cargo test -p automodel-cli
+
+# Test with real database (requires DATABASE_URL)
+DATABASE_URL=postgresql://localhost/test_db cargo test
+```
+
+## 📄 License
+
+MIT License - see LICENSE file for details.
