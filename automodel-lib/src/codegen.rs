@@ -126,19 +126,7 @@ pub fn generate_function_code_without_enums(
 
     let return_type = match query.expect {
         ExpectedResult::ExactlyOne => {
-            // For ExactlyOne, unwrap Option<> types since user expects non-null result
-            let final_return_type = if type_info.output_types.len() == 1 {
-                let rust_type = &type_info.output_types[0].rust_type.rust_type;
-                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                    // Extract the inner type from Option<T>
-                    rust_type[7..rust_type.len() - 1].to_string()
-                } else {
-                    rust_type.clone()
-                }
-            } else {
-                base_return_type.clone()
-            };
-            format!("Result<{}, tokio_postgres::Error>", final_return_type)
+            format!("Result<{}, tokio_postgres::Error>", base_return_type)
         }
         ExpectedResult::PossibleOne => {
             format!(
@@ -220,20 +208,7 @@ pub fn generate_function_code(
     } else {
         // Adjust return type based on expect field
         match query.expect {
-            ExpectedResult::ExactlyOne => {
-                // For ExactlyOne, unwrap Option<> types since user expects non-null result
-                if type_info.output_types.len() == 1 {
-                    let rust_type = &type_info.output_types[0].rust_type.rust_type;
-                    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                        // Extract the inner type from Option<T>
-                        rust_type[7..rust_type.len() - 1].to_string()
-                    } else {
-                        rust_type.clone()
-                    }
-                } else {
-                    base_return_type.clone()
-                }
-            }
+            ExpectedResult::ExactlyOne => base_return_type.clone(),
             ExpectedResult::PossibleOne => {
                 // For PossibleOne, we need to wrap the non-nullable version in Option<>
                 let non_nullable_type = if type_info.output_types.len() == 1 {
@@ -381,43 +356,18 @@ fn generate_function_body(
                 &output_col.rust_type.rust_type
             };
 
-            // For ExactlyOne, extract as non-nullable even if column is marked nullable
-            // For other cases, respect the nullable setting
-            let should_extract_as_nullable = match query.expect {
-                ExpectedResult::ExactlyOne => false, // Always extract as non-null for ExactlyOne
-                _ => output_col.rust_type.is_nullable,
-            };
-
-            if should_extract_as_nullable {
-                // For nullable types, extract as Option<JsonWrapper<T>>
+            if output_col.rust_type.is_nullable {
+                // For nullable types, just extract normally
                 format!(
                     "row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner())",
                     inner_type
                 )
             } else {
-                // For non-nullable types, extract as JsonWrapper<T>
                 format!("row.get::<_, JsonWrapper<{}>>(0).into_inner()", inner_type)
             }
         } else {
-            // For non-JSON wrapper types, apply the same nullable logic
-            let should_extract_as_nullable = match query.expect {
-                ExpectedResult::ExactlyOne => false, // Always extract as non-null for ExactlyOne
-                _ => output_col.rust_type.is_nullable,
-            };
-
-            if should_extract_as_nullable {
-                // Extract as Option<T>
-                format!("row.get::<_, {}>(0)", output_col.rust_type.rust_type)
-            } else {
-                // Extract as T (unwrap the Option if needed)
-                let rust_type = &output_col.rust_type.rust_type;
-                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                    // For ExactlyOne with nullable columns, extract as Option<T> then unwrap
-                    format!("row.get::<_, {}>(0).unwrap()", rust_type)
-                } else {
-                    format!("row.get::<_, {}>(0)", rust_type)
-                }
-            }
+            // For non-JSON wrapper types, just extract normally
+            format!("row.get::<_, {}>(0)", output_col.rust_type.rust_type)
         };
 
         match query.expect {
