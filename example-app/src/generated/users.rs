@@ -1,7 +1,3 @@
-use serde::{Serialize, Deserialize};
-use tokio_postgres::types::{FromSql, ToSql, Type};
-use std::error::Error;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserStatus {
     Active,
@@ -100,7 +96,7 @@ pub struct GetAllUsersResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<crate::models::UserProfile>,
+    pub profile: Option<serde_json::Value>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -116,7 +112,7 @@ pub async fn get_all_users(client: &tokio_postgres::Client) -> Result<Vec<GetAll
         name: row.get::<_, String>(1),
         email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
-        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
     }
@@ -130,7 +126,7 @@ pub struct FindUserByEmailResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<crate::models::UserProfile>,
+    pub profile: Option<serde_json::Value>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -146,7 +142,7 @@ pub async fn find_user_by_email(client: &tokio_postgres::Client, email: String) 
         name: row.get::<_, String>(1),
         email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
-        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
     })
@@ -162,7 +158,7 @@ pub struct UpdateUserProfileResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<crate::models::UserProfile>,
+    pub profile: Option<serde_json::Value>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -176,7 +172,7 @@ pub async fn update_user_profile(client: &tokio_postgres::Client, profile: serde
         name: row.get::<_, String>(1),
         email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
-        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
     })
 }
@@ -211,7 +207,7 @@ pub struct GetRecentUsersResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<crate::models::UserProfile>,
+    pub profile: Option<serde_json::Value>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -231,7 +227,7 @@ pub async fn get_recent_users(client: &tokio_postgres::Client, since: chrono::Da
         name: row.get::<_, String>(1),
         email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
-        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
         updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
     }
@@ -245,7 +241,7 @@ pub struct GetActiveUsersByAgeRangeResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<crate::models::UserProfile>,
+    pub profile: Option<serde_json::Value>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -264,7 +260,7 @@ pub async fn get_active_users_by_age_range(client: &tokio_postgres::Client, min_
         name: row.get::<_, String>(1),
         email: row.get::<_, String>(2),
         age: row.get::<_, Option<i32>>(3),
-        profile: row.get::<_, Option<JsonWrapper<crate::models::UserProfile>>>(4).map(|wrapper| wrapper.into_inner()),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
         created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
     }
     }).collect();
@@ -349,59 +345,73 @@ pub async fn get_all_user_statuses(client: &tokio_postgres::Client) -> Result<Ve
     Ok(result)
 }
 
-
-// JSON wrapper for custom types that implement Serialize/Deserialize
-struct JsonWrapper<T>(T);
-
-impl<T> JsonWrapper<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
-    fn new(value: T) -> Self {
-        Self(value)
-    }
-    
-    fn into_inner(self) -> T {
-        self.0
-    }
+#[derive(Debug, Clone)]
+pub struct GetAllUsersWithStarResult {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub age: Option<i32>,
+    pub profile: Option<serde_json::Value>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub status: Option<UserStatus>,
+    pub referrer_id: Option<i32>,
 }
 
-impl<T> FromSql<'_> for JsonWrapper<T>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    fn from_sql(ty: &Type, raw: &[u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
-        let json_value = serde_json::Value::from_sql(ty, raw)?;
-        let value = T::deserialize(json_value)?;
-        Ok(JsonWrapper(value))
+/// Get all users using SELECT * to fetch all columns
+/// Generated from SQL: SELECT * FROM users ORDER BY created_at DESC
+pub async fn get_all_users_with_star(client: &tokio_postgres::Client) -> Result<Vec<GetAllUsersWithStarResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT * FROM users ORDER BY created_at DESC").await?;
+    let rows = client.query(&stmt, &[]).await?;
+    let result = rows.into_iter().map(|row| {
+        GetAllUsersWithStarResult {
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
+        age: row.get::<_, Option<i32>>(3),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
+        created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
+        updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
+        status: row.get::<_, Option<UserStatus>>(7),
+        referrer_id: row.get::<_, Option<i32>>(8),
     }
-
-    fn accepts(ty: &Type) -> bool {
-        matches!(*ty, Type::JSON | Type::JSONB)
-    }
+    }).collect();
+    Ok(result)
 }
 
-impl<T> ToSql for JsonWrapper<T>
-where
-    T: Serialize + std::fmt::Debug,
-{
-    fn to_sql(&self, ty: &Type, out: &mut bytes::BytesMut) -> Result<tokio_postgres::types::IsNull, Box<dyn Error + Sync + Send>> {
-        let json_value = serde_json::to_value(&self.0)?;
-        json_value.to_sql(ty, out)
-    }
-
-    fn accepts(ty: &Type) -> bool {
-        matches!(*ty, Type::JSON | Type::JSONB)
-    }
-
-    tokio_postgres::types::to_sql_checked!();
+#[derive(Debug, Clone)]
+pub struct GetUserByIdWithStarResult {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub age: Option<i32>,
+    pub profile: Option<serde_json::Value>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub status: Option<UserStatus>,
+    pub referrer_id: Option<i32>,
 }
 
-impl<T> std::fmt::Debug for JsonWrapper<T>
-where
-    T: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("JsonWrapper").field(&self.0).finish()
-    }
+/// Get a single user by ID using SELECT * to fetch all columns
+/// Generated from SQL: SELECT * FROM users WHERE id = ${user_id}
+pub async fn get_user_by_id_with_star(client: &tokio_postgres::Client, user_id: i32) -> Result<Option<GetUserByIdWithStarResult>, tokio_postgres::Error> {
+    let stmt = client.prepare("SELECT * FROM users WHERE id = $1").await?;
+    let rows = client.query(&stmt, &[&user_id]).await?;
+    let extracted_value = if let Some(row) = rows.into_iter().next() {
+        Some(GetUserByIdWithStarResult {
+        id: row.get::<_, i32>(0),
+        name: row.get::<_, String>(1),
+        email: row.get::<_, String>(2),
+        age: row.get::<_, Option<i32>>(3),
+        profile: row.get::<_, Option<serde_json::Value>>(4),
+        created_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(5),
+        updated_at: row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
+        status: row.get::<_, Option<UserStatus>>(7),
+        referrer_id: row.get::<_, Option<i32>>(8),
+    })
+    } else {
+        None
+    };
+    Ok(extracted_value)
 }
+

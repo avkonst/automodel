@@ -88,6 +88,228 @@ queries:
     module: "users"
     expect: "multiple"
 
+  # Examples using SELECT * for fetching all columns
+  - name: get_all_users_with_star
+    sql: "SELECT * FROM users ORDER BY created_at DESC"
+    description: "Get all users using SELECT * to fetch all columns"
+    module: "users"
+    expect: "multiple"
+
+  - name: get_user_by_id_with_star
+    sql: "SELECT * FROM users WHERE id = ${user_id}"
+    description: "Get a single user by ID using SELECT * to fetch all columns"
+    module: "users"
+    expect: "possible_one"
+
+  # Complex queries with CTEs (Common Table Expressions)
+  - name: get_user_activity_summary
+    sql: |
+      WITH recent_users AS (
+        SELECT id, name, email, created_at,
+               ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank
+        FROM users 
+        WHERE created_at > NOW() - INTERVAL '30 days'
+      ),
+      user_stats AS (
+        SELECT 
+          COUNT(*) as total_users,
+          COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,
+          AVG(age)::float8 as avg_age
+        FROM users
+      )
+      SELECT 
+        ru.id,
+        ru.name, 
+        ru.email,
+        ru.created_at,
+        ru.rank,
+        us.total_users,
+        us.weekly_users,
+        us.avg_age
+      FROM recent_users ru
+      CROSS JOIN user_stats us
+      WHERE ru.rank <= 10
+      ORDER BY ru.rank
+    description: "Complex CTE query combining recent users with aggregate statistics"
+    module: "analytics"
+    expect: "multiple"
+
+  - name: get_hierarchical_user_data
+    sql: |
+      WITH RECURSIVE user_hierarchy AS (
+        -- Base case: users without referrers (or top-level users)
+        SELECT 
+          id, 
+          name, 
+          email, 
+          NULL::integer as referrer_id,
+          1 as level,
+          ARRAY[id] as path
+        FROM users 
+        WHERE referrer_id IS NULL
+        
+        UNION ALL
+        
+        -- Recursive case: users with referrers
+        SELECT 
+          u.id,
+          u.name,
+          u.email,
+          u.referrer_id,
+          uh.level + 1,
+          uh.path || u.id
+        FROM users u
+        INNER JOIN user_hierarchy uh ON u.referrer_id = uh.id
+        WHERE u.id != ALL(uh.path) -- Prevent cycles
+        AND uh.level < 5 -- Limit depth
+      )
+      SELECT 
+        uh.id,
+        uh.name,
+        uh.email,
+        uh.referrer_id,
+        uh.level,
+        uh.path,
+        COUNT(referrals.id) as direct_referrals_count
+      FROM user_hierarchy uh
+      LEFT JOIN users referrals ON referrals.referrer_id = uh.id
+      GROUP BY uh.id, uh.name, uh.email, uh.referrer_id, uh.level, uh.path
+      ORDER BY uh.level, uh.name
+    description: "Recursive CTE to build user hierarchy with referral relationships"
+    module: "analytics"
+    expect: "multiple"
+
+  # Complex JOIN queries selecting from multiple tables including temporal data
+  - name: get_user_activity_with_posts
+    sql: |
+      SELECT 
+        u.id as user_id,
+        u.name,
+        u.email,
+        u.created_at as user_created_at,
+        u.updated_at as user_updated_at,
+        p.id as post_id,
+        p.title,
+        p.content,
+        p.created_at as post_created_at,
+        p.published_at,
+        c.comment_count,
+        EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,
+        DATE_TRUNC('day', p.created_at) as post_date
+      FROM users u
+      INNER JOIN posts p ON u.id = p.author_id
+      LEFT JOIN (
+        SELECT post_id, COUNT(*) as comment_count
+        FROM comments 
+        GROUP BY post_id
+      ) c ON p.id = c.post_id
+      WHERE u.created_at > ${since}
+        AND p.published_at IS NOT NULL
+        AND p.created_at BETWEEN ${start_date} AND ${end_date}
+      ORDER BY p.created_at DESC, u.name
+    description: "Complex JOIN query with temporal filtering across multiple tables"
+    module: "analytics"
+    expect: "multiple"
+
+  - name: get_user_engagement_metrics
+    sql: |
+      WITH user_activity AS (
+        SELECT 
+          u.id,
+          u.name,
+          u.email,
+          u.created_at,
+          COUNT(DISTINCT p.id) as post_count,
+          COUNT(DISTINCT c.id) as comment_count,
+          MAX(p.created_at) as last_post_date,
+          MAX(c.created_at) as last_comment_date,
+          AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours
+        FROM users u
+        LEFT JOIN posts p ON u.id = p.author_id 
+          AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
+        LEFT JOIN comments c ON u.id = c.author_id 
+          AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
+        GROUP BY u.id, u.name, u.email, u.created_at
+      ),
+      engagement_scores AS (
+        SELECT 
+          *,
+          (post_count * 3 + comment_count) as engagement_score,
+          CASE 
+            WHEN last_post_date > NOW() - INTERVAL '7 days' OR 
+                 last_comment_date > NOW() - INTERVAL '7 days' THEN 'active'
+            WHEN last_post_date > NOW() - INTERVAL '30 days' OR 
+                 last_comment_date > NOW() - INTERVAL '30 days' THEN 'semi_active'
+            ELSE 'inactive'
+          END as activity_status,
+          EXTRACT(EPOCH FROM (NOW() - GREATEST(
+            COALESCE(last_post_date, '1970-01-01'::timestamp), 
+            COALESCE(last_comment_date, '1970-01-01'::timestamp)
+          )))::float8/86400 as days_since_last_activity
+        FROM user_activity
+      )
+      SELECT 
+        es.*,
+        RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,
+        PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile
+      FROM engagement_scores es
+      WHERE engagement_score > ${min_engagement_score}
+      ORDER BY engagement_score DESC, name
+      LIMIT ${limit_results}
+    description: "Complex multi-CTE query calculating user engagement metrics with temporal analysis"
+    module: "analytics"
+    expect: "multiple"
+
+  # Temporal queries with advanced date/time functions
+  - name: get_time_series_user_registrations
+    sql: |
+      WITH time_series AS (
+        SELECT 
+          DATE_TRUNC('day', created_at) as period_start,
+          COUNT(*) as registrations_count,
+          COUNT(*) FILTER (WHERE age BETWEEN 18 AND 30) as young_adult_count,
+          COUNT(*) FILTER (WHERE age BETWEEN 31 AND 50) as middle_aged_count, 
+          COUNT(*) FILTER (WHERE age > 50) as senior_count,
+          AVG(age) as avg_age,
+          MIN(created_at) as first_registration,
+          MAX(created_at) as last_registration
+        FROM users
+        WHERE created_at BETWEEN ${start_date} AND ${end_date}
+        GROUP BY DATE_TRUNC('day', created_at)
+        HAVING COUNT(*) >= ${min_registrations}
+      )
+      SELECT 
+        *,
+        EXTRACT(EPOCH FROM (last_registration - first_registration))::float8/3600 as period_span_hours
+      FROM time_series
+      ORDER BY period_start DESC
+    description: "Time series analysis of user registrations with age demographics"
+    module: "analytics"
+    expect: "multiple"
+
+  - name: get_users_with_timezone_info
+    sql: |
+      SELECT 
+        id,
+        name,
+        email,
+        created_at,
+        created_at AT TIME ZONE 'UTC' AT TIME ZONE ${user_timezone} as created_at_user_tz,
+        updated_at,
+        updated_at AT TIME ZONE 'UTC' AT TIME ZONE ${user_timezone} as updated_at_user_tz,
+        AGE(NOW(), created_at) as account_age,
+        EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 as account_age_days,
+        DATE_PART('dow', created_at) as created_day_of_week,
+        DATE_PART('hour', created_at) as created_hour,
+        TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at
+      FROM users 
+      WHERE created_at BETWEEN ${start_date} AND ${end_date}
+        AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN ${min_age_days} AND ${max_age_days}
+      ORDER BY created_at DESC
+    description: "Users with comprehensive timezone and temporal information"
+    module: "analytics"
+    expect: "multiple"
+
 # Field-specific type mappings for JSON/JSONB fields
 # This demonstrates how you would map specific fields to custom Rust types
 # Schema names can be included: "schema.table.field" or just "table.field"
