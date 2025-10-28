@@ -19,7 +19,7 @@ This is a Cargo workspace with three main components:
 - ✅ Support for all common PostgreSQL types
 - 🏗️ Generate result structs for multi-column queries
 - ⚡ Build-time code generation with automatic regeneration when YAML changes
-- 🎯 Advanced CLI with validation, dry-run, and flexible output options
+- 🎯 Advanced CLI with dry-run and flexible output options
 
 ## Quick Start
 
@@ -34,16 +34,6 @@ cargo build
 ### 2. CLI Usage
 
 The CLI tool provides several commands for different workflows:
-
-#### Validate YAML files
-
-```bash
-# Basic validation (syntax and query names)
-cargo run -p automodel-cli -- validate -f queries.yaml
-
-# Advanced validation with database connection (validates SQL)
-cargo run -p automodel-cli -- validate -f queries.yaml -d postgresql://localhost/mydb
-```
 
 #### Generate code
 
@@ -66,7 +56,6 @@ cargo run -p automodel-cli -- --help
 
 # Subcommand help
 cargo run -p automodel-cli -- generate --help
-cargo run -p automodel-cli -- validate --help
 ```
 
 ### 3. Run the Example App
