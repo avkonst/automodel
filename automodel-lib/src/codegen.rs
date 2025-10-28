@@ -1,8 +1,7 @@
 use crate::config::{ExpectedResult, QueryDefinition};
 use crate::type_extraction::{
-    convert_named_params_to_positional, extract_enum_types, generate_enum_definition,
-    generate_input_params_with_names, generate_result_struct, generate_return_type,
-    parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
+    convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
+    generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use anyhow::Result;
 
@@ -152,102 +151,8 @@ pub fn generate_function_code_without_enums(
 
     Ok(code)
 }
-pub fn generate_function_code(
-    query: &QueryDefinition,
-    type_info: &QueryTypeInfo,
-) -> Result<String> {
-    let mut code = String::new();
 
-    // Generate enum definitions for any enum types found
-    let enum_types = extract_enum_types(&type_info.input_types, &type_info.output_types);
-    for (enum_name, enum_variants) in enum_types {
-        code.push_str(&generate_enum_definition(&enum_variants, &enum_name));
-        code.push('\n');
-    }
-
-    // Generate result struct if needed
-    if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
-        code.push_str(&struct_def);
-        code.push('\n');
-    }
-
-    // Generate function documentation
-    if let Some(description) = &query.description {
-        code.push_str(&format!("/// {}\n", description));
-    }
-
-    // Handle multiline SQL comments properly
-    let sql_lines: Vec<&str> = query.sql.trim().lines().collect();
-    if sql_lines.len() == 1 {
-        code.push_str(&format!("/// Generated from SQL: {}\n", sql_lines[0]));
-    } else {
-        code.push_str("/// Generated from SQL:\n");
-        for line in sql_lines {
-            code.push_str(&format!("/// {}\n", line.trim()));
-        }
-    }
-
-    // Generate function signature
-    let param_names = parse_parameter_names_from_sql(&query.sql);
-    let input_params = generate_input_params_with_names(&type_info.input_types, &param_names);
-    let base_return_type = if type_info.output_types.len() > 1 {
-        format!("{}Result", to_pascal_case(&query.name))
-    } else {
-        generate_return_type(&type_info.output_types)
-    };
-
-    // Generate function signature
-    let params_str = if input_params.is_empty() {
-        "client: &tokio_postgres::Client".to_string()
-    } else {
-        format!("client: &tokio_postgres::Client, {}", input_params)
-    };
-
-    let final_return_type = if type_info.output_types.is_empty() {
-        "()".to_string()
-    } else {
-        // Adjust return type based on expect field
-        match query.expect {
-            ExpectedResult::ExactlyOne => base_return_type.clone(),
-            ExpectedResult::PossibleOne => {
-                // For PossibleOne, we need to wrap the non-nullable version in Option<>
-                let non_nullable_type = if type_info.output_types.len() == 1 {
-                    // For single column, get the inner type without Option<>
-                    let rust_type = &type_info.output_types[0].rust_type.rust_type;
-                    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                        // If it's already Option<T>, for PossibleOne we just use Option<T>
-                        rust_type.clone()
-                    } else {
-                        // If it's T, for PossibleOne we use Option<T>
-                        format!("Option<{}>", rust_type)
-                    }
-                } else {
-                    // For multi-column, use Option<StructName>
-                    format!("Option<{}>", base_return_type)
-                };
-                non_nullable_type
-            }
-            ExpectedResult::AtLeastOne => format!("Vec<{}>", base_return_type),
-            ExpectedResult::Multiple => format!("Vec<{}>", base_return_type),
-        }
-    };
-
-    code.push_str(&format!(
-        "pub async fn {}({}) -> Result<{}, tokio_postgres::Error> {{\n",
-        query.name, params_str, final_return_type
-    ));
-
-    // Generate function body
-    code.push_str(&generate_function_body(
-        query,
-        type_info,
-        &base_return_type,
-    )?);
-
-    code.push_str("}\n");
-
-    Ok(code)
-}
+/// Generate struct creation code for multi-column results
 
 /// Generate the function body
 fn generate_function_body(
@@ -344,30 +249,25 @@ fn generate_function_body(
         let output_col = &type_info.output_types[0];
         let value_extraction = if output_col.rust_type.needs_json_wrapper {
             // Use JSON wrapper for custom types
-            let inner_type = if output_col.rust_type.is_nullable {
-                // Extract the inner type from Option<CustomType>
-                let rust_type = &output_col.rust_type.rust_type;
-                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                    &rust_type[7..rust_type.len() - 1]
-                } else {
-                    rust_type
-                }
-            } else {
-                &output_col.rust_type.rust_type
-            };
+            let inner_type = &output_col.rust_type.rust_type;
 
             if output_col.rust_type.is_nullable {
-                // For nullable types, just extract normally
+                // For nullable types, extract as Option<JsonWrapper<T>>
                 format!(
-                    "row.get::<_, Option<JsonWrapper<{}>>>(0).map(|wrapper| wrapper.into_inner())",
+                    "row.get::<_, Option<JsonWrapper<{}>>>(0).map(|opt| opt.map(|wrapper| wrapper.into_inner())).flatten()",
                     inner_type
                 )
             } else {
                 format!("row.get::<_, JsonWrapper<{}>>(0).into_inner()", inner_type)
             }
         } else {
-            // For non-JSON wrapper types, just extract normally
-            format!("row.get::<_, {}>(0)", output_col.rust_type.rust_type)
+            // For non-JSON wrapper types, extract based on nullability
+            let extraction_type = if output_col.rust_type.is_nullable {
+                format!("Option<{}>", output_col.rust_type.rust_type)
+            } else {
+                output_col.rust_type.rust_type.clone()
+            };
+            format!("row.get::<_, {}>(0)", extraction_type)
         };
 
         match query.expect {
@@ -464,21 +364,11 @@ fn generate_struct_creation(struct_name: &str, output_types: &[OutputColumn]) ->
     for (i, col) in output_types.iter().enumerate() {
         if col.rust_type.needs_json_wrapper {
             // Use JSON wrapper for custom types
-            let inner_type = if col.rust_type.is_nullable {
-                // Extract the inner type from Option<CustomType>
-                let rust_type = &col.rust_type.rust_type;
-                if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-                    &rust_type[7..rust_type.len() - 1]
-                } else {
-                    rust_type
-                }
-            } else {
-                &col.rust_type.rust_type
-            };
+            let inner_type = &col.rust_type.rust_type;
 
             if col.rust_type.is_nullable {
                 creation.push_str(&format!(
-                    "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|wrapper| wrapper.into_inner()),\n",
+                    "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|opt| opt.map(|wrapper| wrapper.into_inner())).flatten(),\n",
                     to_snake_case(&col.name),
                     inner_type,
                     i
@@ -492,10 +382,15 @@ fn generate_struct_creation(struct_name: &str, output_types: &[OutputColumn]) ->
                 ));
             }
         } else {
+            let extraction_type = if col.rust_type.is_nullable {
+                format!("Option<{}>", col.rust_type.rust_type)
+            } else {
+                col.rust_type.rust_type.clone()
+            };
             creation.push_str(&format!(
                 "        {}: row.get::<_, {}>({}),\n",
                 to_snake_case(&col.name),
-                col.rust_type.rust_type,
+                extraction_type,
                 i
             ));
         }
@@ -546,111 +441,4 @@ fn to_snake_case(s: &str) -> String {
     }
 
     result
-}
-
-/// Generate a complete module with all functions
-pub fn generate_module_code(
-    queries: &[QueryDefinition],
-    type_infos: &[QueryTypeInfo],
-) -> Result<String> {
-    let mut module_code = String::new();
-
-    // Add module header
-    module_code.push_str("// This file was auto-generated by automodel\n");
-    module_code.push_str("// Do not edit manually\n\n");
-    module_code.push_str("use tokio_postgres::{Client, Error};\n");
-    module_code.push_str("use std::result::Result;\n\n");
-
-    // Generate all functions
-    for (query, type_info) in queries.iter().zip(type_infos.iter()) {
-        let function_code = generate_function_code(query, type_info)?;
-        module_code.push_str(&function_code);
-        module_code.push('\n');
-    }
-
-    Ok(module_code)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::type_extraction::{OutputColumn, RustType};
-
-    #[test]
-    fn test_escape_sql_string() {
-        assert_eq!(
-            escape_sql_string(r#"SELECT "name" FROM users"#),
-            r#"SELECT \"name\" FROM users"#
-        );
-        assert_eq!(
-            escape_sql_string("SELECT *\nFROM users"),
-            "SELECT *\\nFROM users"
-        );
-        assert_eq!(
-            escape_sql_string("SELECT * FROM users\r\n"),
-            "SELECT * FROM users\\r\\n"
-        );
-    }
-
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("get_user"), "GetUser");
-        assert_eq!(to_pascal_case("list_all_users"), "ListAllUsers");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_to_snake_case() {
-        assert_eq!(to_snake_case("userId"), "user_id");
-        assert_eq!(to_snake_case("firstName"), "first_name");
-        assert_eq!(to_snake_case("simple"), "simple");
-    }
-
-    #[test]
-    fn test_generate_function_code() {
-        let query = QueryDefinition {
-            name: "get_user".to_string(),
-            sql: "SELECT id, name FROM users WHERE id = $1".to_string(),
-            description: Some("Get user by ID".to_string()),
-            module: None,
-            expect: ExpectedResult::ExactlyOne,
-        };
-
-        let type_info = QueryTypeInfo {
-            input_types: vec![RustType {
-                rust_type: "i32".to_string(),
-                is_nullable: false,
-                pg_type: "INT4".to_string(),
-                needs_json_wrapper: false,
-                enum_variants: None,
-            }],
-            output_types: vec![
-                OutputColumn {
-                    name: "id".to_string(),
-                    rust_type: RustType {
-                        rust_type: "i32".to_string(),
-                        is_nullable: false,
-                        pg_type: "INT4".to_string(),
-                        needs_json_wrapper: false,
-                        enum_variants: None,
-                    },
-                },
-                OutputColumn {
-                    name: "name".to_string(),
-                    rust_type: RustType {
-                        rust_type: "String".to_string(),
-                        is_nullable: false,
-                        pg_type: "TEXT".to_string(),
-                        needs_json_wrapper: false,
-                        enum_variants: None,
-                    },
-                },
-            ],
-        };
-
-        let code = generate_function_code(&query, &type_info).unwrap();
-        assert!(code.contains("pub async fn get_user"));
-        assert!(code.contains("param_1: i32"));
-        assert!(code.contains("GetUserResult"));
-    }
 }

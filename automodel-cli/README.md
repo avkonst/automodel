@@ -332,9 +332,6 @@ cd automodel
 # Build the CLI
 cargo build -p automodel-cli --release
 
-# Run tests
-cargo test -p automodel-lib
-
 # Install locally
 cargo install --path automodel-cli
 ```

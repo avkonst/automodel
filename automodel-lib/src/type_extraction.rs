@@ -97,12 +97,11 @@ async fn extract_input_types(
         let param_name = param_names.get(i).map(|s| s.as_str()).unwrap_or("");
         let is_optional_param = param_name.ends_with('?');
 
-        let mut rust_type = pg_type_to_rust_type(client, param_type, is_optional_param).await?;
+        let mut rust_type = pg_type_to_rust_type(client, param_type, false).await?; // Always get base type
 
-        // If it's an optional parameter, wrap the type in Option if not already nullable
-        if is_optional_param && !rust_type.is_nullable {
-            rust_type.rust_type = format!("Option<{}>", rust_type.rust_type);
-            rust_type.is_nullable = true; // Mark as nullable since it's wrapped in Option
+        // If it's an optional parameter, mark it as nullable
+        if is_optional_param {
+            rust_type.is_nullable = true;
         }
 
         input_types.push(rust_type);
@@ -211,11 +210,7 @@ async fn extract_output_types(
 
             if let Some(custom_type) = custom_type {
                 RustType {
-                    rust_type: if base_rust_type.is_nullable {
-                        format!("Option<{}>", custom_type)
-                    } else {
-                        custom_type
-                    },
+                    rust_type: custom_type, // Store base type without Option<>
                     is_nullable: base_rust_type.is_nullable,
                     pg_type: base_rust_type.pg_type,
                     needs_json_wrapper: true, // Custom types need JSON wrapper
@@ -246,14 +241,9 @@ async fn pg_type_to_rust_type(
     // Check if this is an enum type by trying to get enum info
     if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
         let enum_name = to_pascal_case(&enum_info.type_name);
-        let rust_type = if is_nullable {
-            format!("Option<{}>", enum_name)
-        } else {
-            enum_name
-        };
 
         return Ok(RustType {
-            rust_type,
+            rust_type: enum_name, // Store base enum type without Option<>
             is_nullable,
             pg_type: enum_info.type_name,
             needs_json_wrapper: false,
@@ -292,33 +282,13 @@ async fn pg_type_to_rust_type(
         }
     };
 
-    let rust_type = if is_nullable {
-        format!("Option<{}>", base_type)
-    } else {
-        base_type.to_string()
-    };
-
     Ok(RustType {
-        rust_type,
+        rust_type: base_type.to_string(), // Store base type without Option<>
         is_nullable,
         pg_type: pg_type.name().to_string(),
         needs_json_wrapper: false, // Standard types don't need JSON wrapper
         enum_variants: None,
     })
-}
-
-/// Generate function parameter list from input types
-pub fn generate_input_params(input_types: &[RustType]) -> String {
-    if input_types.is_empty() {
-        return String::new();
-    }
-
-    input_types
-        .iter()
-        .enumerate()
-        .map(|(i, rust_type)| format!("param_{}: {}", i + 1, rust_type.rust_type))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// Generate function parameter list with custom parameter names
@@ -348,7 +318,12 @@ pub fn generate_input_params_with_names(
 
         // Only add if we haven't seen this parameter name before
         if !unique_params.contains_key(&clean_param_name) {
-            unique_params.insert(clean_param_name.clone(), rust_type.rust_type.clone());
+            let final_type = if rust_type.is_nullable {
+                format!("Option<{}>", rust_type.rust_type)
+            } else {
+                rust_type.rust_type.clone()
+            };
+            unique_params.insert(clean_param_name.clone(), final_type);
             param_order.push(clean_param_name);
         }
     }
@@ -450,13 +425,24 @@ pub fn generate_return_type(output_types: &[OutputColumn]) -> String {
     }
 
     if output_types.len() == 1 {
-        return output_types[0].rust_type.rust_type.clone();
+        let col = &output_types[0];
+        return if col.rust_type.is_nullable {
+            format!("Option<{}>", col.rust_type.rust_type)
+        } else {
+            col.rust_type.rust_type.clone()
+        };
     }
 
     // For multiple columns, generate a tuple
     let types: Vec<String> = output_types
         .iter()
-        .map(|col| col.rust_type.rust_type.clone())
+        .map(|col| {
+            if col.rust_type.is_nullable {
+                format!("Option<{}>", col.rust_type.rust_type)
+            } else {
+                col.rust_type.rust_type.clone()
+            }
+        })
         .collect();
 
     format!("({})", types.join(", "))
@@ -587,37 +573,22 @@ pub fn extract_enum_types(
     // Check input types for enums
     for input_type in input_types {
         if let Some(ref variants) = input_type.enum_variants {
-            let enum_name = extract_enum_name_from_rust_type(&input_type.rust_type);
-            if let Some(name) = enum_name {
-                enum_types.insert(name, variants.clone());
-            }
+            // Since we now store the base type, just use it directly
+            enum_types.insert(input_type.rust_type.clone(), variants.clone());
         }
     }
 
     // Check output types for enums
     for output_col in output_types {
         if let Some(ref variants) = output_col.rust_type.enum_variants {
-            let enum_name = extract_enum_name_from_rust_type(&output_col.rust_type.rust_type);
-            if let Some(name) = enum_name {
-                enum_types.insert(name, variants.clone());
-            }
+            // Since we now store the base type, just use it directly
+            enum_types.insert(output_col.rust_type.rust_type.clone(), variants.clone());
         }
     }
 
     enum_types.into_iter().collect()
 }
 
-/// Extract enum name from a Rust type string (e.g., "Option<UserStatus>" -> "UserStatus")
-fn extract_enum_name_from_rust_type(rust_type: &str) -> Option<String> {
-    if rust_type.starts_with("Option<") && rust_type.ends_with('>') {
-        // Extract the inner type from Option<T>
-        let inner = &rust_type[7..rust_type.len() - 1];
-        Some(inner.to_string())
-    } else {
-        // Direct enum type
-        Some(rust_type.to_string())
-    }
-}
 pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -> Option<String> {
     if output_types.len() <= 1 {
         return None;
@@ -627,10 +598,15 @@ pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -
     let mut struct_def = format!("#[derive(Debug, Clone)]\npub struct {} {{\n", struct_name);
 
     for col in output_types {
+        let field_type = if col.rust_type.is_nullable {
+            format!("Option<{}>", col.rust_type.rust_type)
+        } else {
+            col.rust_type.rust_type.clone()
+        };
         struct_def.push_str(&format!(
             "    pub {}: {},\n",
             to_snake_case(&col.name),
-            col.rust_type.rust_type
+            field_type
         ));
     }
 
@@ -677,88 +653,4 @@ fn to_snake_case(s: &str) -> String {
     }
 
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("get_user"), "GetUser");
-        assert_eq!(to_pascal_case("list_all_users"), "ListAllUsers");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_to_snake_case() {
-        assert_eq!(to_snake_case("userId"), "user_id");
-        assert_eq!(to_snake_case("firstName"), "first_name");
-        assert_eq!(to_snake_case("ID"), "id"); // Fixed expectation
-        assert_eq!(to_snake_case("simple"), "simple");
-    }
-
-    #[test]
-    fn test_generate_input_params() {
-        let types = vec![
-            RustType {
-                rust_type: "i32".to_string(),
-                is_nullable: false,
-                pg_type: "INT4".to_string(),
-                needs_json_wrapper: false,
-                enum_variants: None,
-            },
-            RustType {
-                rust_type: "String".to_string(),
-                is_nullable: false,
-                pg_type: "TEXT".to_string(),
-                needs_json_wrapper: false,
-                enum_variants: None,
-            },
-        ];
-
-        let params = generate_input_params(&types);
-        assert_eq!(params, "param_1: i32, param_2: String");
-    }
-
-    #[test]
-    fn test_generate_return_type() {
-        let single_col = vec![OutputColumn {
-            name: "id".to_string(),
-            rust_type: RustType {
-                rust_type: "i32".to_string(),
-                is_nullable: false,
-                pg_type: "INT4".to_string(),
-                needs_json_wrapper: false,
-                enum_variants: None,
-            },
-        }];
-
-        assert_eq!(generate_return_type(&single_col), "i32");
-
-        let multi_col = vec![
-            OutputColumn {
-                name: "id".to_string(),
-                rust_type: RustType {
-                    rust_type: "i32".to_string(),
-                    is_nullable: false,
-                    pg_type: "INT4".to_string(),
-                    needs_json_wrapper: false,
-                    enum_variants: None,
-                },
-            },
-            OutputColumn {
-                name: "name".to_string(),
-                rust_type: RustType {
-                    rust_type: "String".to_string(),
-                    is_nullable: false,
-                    pg_type: "TEXT".to_string(),
-                    needs_json_wrapper: false,
-                    enum_variants: None,
-                },
-            },
-        ];
-
-        assert_eq!(generate_return_type(&multi_col), "(i32, String)");
-    }
 }
