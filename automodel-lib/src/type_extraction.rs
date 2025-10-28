@@ -418,34 +418,18 @@ pub fn convert_named_params_to_positional(sql: &str) -> (String, Vec<String>) {
     }
 }
 
-/// Generate return type from output types
-pub fn generate_return_type(output_types: &[OutputColumn]) -> String {
-    if output_types.is_empty() {
-        return "()".to_string();
-    }
-
-    if output_types.len() == 1 {
-        let col = &output_types[0];
-        return if col.rust_type.is_nullable {
-            format!("Option<{}>", col.rust_type.rust_type)
-        } else {
-            col.rust_type.rust_type.clone()
-        };
-    }
-
-    // For multiple columns, generate a tuple
-    let types: Vec<String> = output_types
-        .iter()
-        .map(|col| {
+/// Generate return type for single column results or empty results
+pub fn generate_return_type(output_column: Option<&OutputColumn>) -> String {
+    match output_column {
+        None => "()".to_string(),
+        Some(col) => {
             if col.rust_type.is_nullable {
                 format!("Option<{}>", col.rust_type.rust_type)
             } else {
                 col.rust_type.rust_type.clone()
             }
-        })
-        .collect();
-
-    format!("({})", types.join(", "))
+        }
+    }
 }
 
 /// Generate Rust enum definition from enum type info

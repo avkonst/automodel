@@ -113,7 +113,7 @@ pub fn generate_function_code_without_enums(
     let base_return_type = if type_info.output_types.len() > 1 {
         format!("{}Result", to_pascal_case(&query.name))
     } else {
-        generate_return_type(&type_info.output_types)
+        generate_return_type(type_info.output_types.first())
     };
 
     // Generate function signature
