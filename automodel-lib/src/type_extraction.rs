@@ -19,8 +19,6 @@ pub struct RustType {
     pub rust_type: String,
     /// Whether this type is nullable
     pub is_nullable: bool,
-    /// The original PostgreSQL type
-    pub pg_type: String,
     /// Whether this is a custom type that needs JSON wrapper
     pub needs_json_wrapper: bool,
     /// If this is an enum type, contains the enum variants
@@ -212,7 +210,6 @@ async fn extract_output_types(
                 RustType {
                     rust_type: custom_type, // Store base type without Option<>
                     is_nullable: base_rust_type.is_nullable,
-                    pg_type: base_rust_type.pg_type,
                     needs_json_wrapper: true, // Custom types need JSON wrapper
                     enum_variants: None,
                 }
@@ -245,7 +242,6 @@ async fn pg_type_to_rust_type(
         return Ok(RustType {
             rust_type: enum_name, // Store base enum type without Option<>
             is_nullable,
-            pg_type: enum_info.type_name,
             needs_json_wrapper: false,
             enum_variants: Some(enum_info.variants),
         });
@@ -275,7 +271,6 @@ async fn pg_type_to_rust_type(
             return Ok(RustType {
                 rust_type: format!("/* Unknown type: {} */ String", pg_type.name()),
                 is_nullable,
-                pg_type: pg_type.name().to_string(),
                 needs_json_wrapper: false,
                 enum_variants: None,
             });
@@ -285,7 +280,6 @@ async fn pg_type_to_rust_type(
     Ok(RustType {
         rust_type: base_type.to_string(), // Store base type without Option<>
         is_nullable,
-        pg_type: pg_type.name().to_string(),
         needs_json_wrapper: false, // Standard types don't need JSON wrapper
         enum_variants: None,
     })
