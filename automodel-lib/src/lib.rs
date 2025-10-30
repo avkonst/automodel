@@ -456,6 +456,9 @@ impl AutoModel {
             if query.ensure_indexes.is_none() {
                 query.ensure_indexes = config.defaults.ensure_indexes;
             }
+            if query.module.is_none() {
+                query.module = config.defaults.module.clone();
+            }
         }
 
         /// Calculate SHA-256 hash of a file's contents

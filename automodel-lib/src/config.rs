@@ -45,6 +45,9 @@ pub struct DefaultsConfig {
     /// Defaults to false
     #[serde(default)]
     pub ensure_indexes: Option<bool>,
+    /// Default module for queries without a module specified
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 /// Default configuration for telemetry and analysis
