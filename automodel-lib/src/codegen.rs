@@ -47,9 +47,12 @@ pub fn generate_function_code_without_enums(
 
     // Generate function signature
     let params_str = if input_params.is_empty() {
-        "pool: &sqlx::PgPool".to_string()
+        "executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>".to_string()
     } else {
-        format!("pool: &sqlx::PgPool, {}", input_params)
+        format!(
+            "executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, {}",
+            input_params
+        )
     };
 
     let return_type = match query.expect {
@@ -126,19 +129,19 @@ fn generate_function_body(
 
     if type_info.output_types.is_empty() {
         // For queries that don't return data (INSERT, UPDATE, DELETE)
-        body.push_str("    query.execute(pool).await?;\n");
+        body.push_str("    query.execute(executor).await?;\n");
         body.push_str("    Ok(())\n");
     } else if type_info.output_types.len() == 1 {
         // For queries that return a single column
         match query.expect {
             ExpectedResult::ExactlyOne => {
-                body.push_str("    let row = query.fetch_one(pool).await?;\n");
+                body.push_str("    let row = query.fetch_one(executor).await?;\n");
                 let value_extraction =
                     generate_sqlx_value_extraction(&type_info.output_types[0], 0);
                 body.push_str(&format!("    Ok({})\n", value_extraction));
             }
             ExpectedResult::PossibleOne => {
-                body.push_str("    let row = query.fetch_optional(pool).await?;\n");
+                body.push_str("    let row = query.fetch_optional(executor).await?;\n");
                 body.push_str("    match row {\n");
                 body.push_str("        Some(row) => {\n");
                 let value_extraction =
@@ -153,7 +156,7 @@ fn generate_function_body(
                 body.push_str("    }\n");
             }
             ExpectedResult::AtLeastOne => {
-                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str("    let rows = query.fetch_all(executor).await?;\n");
                 body.push_str("    if rows.is_empty() {\n");
                 body.push_str("        return Err(sqlx::Error::RowNotFound);\n");
                 body.push_str("    }\n");
@@ -167,7 +170,7 @@ fn generate_function_body(
                 body.push_str("    result\n");
             }
             ExpectedResult::Multiple => {
-                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str("    let rows = query.fetch_all(executor).await?;\n");
                 body.push_str(
                     "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
                 );
@@ -182,7 +185,7 @@ fn generate_function_body(
         // For queries that return multiple columns
         match query.expect {
             ExpectedResult::ExactlyOne => {
-                body.push_str("    let row = query.fetch_one(pool).await?;\n");
+                body.push_str("    let row = query.fetch_one(executor).await?;\n");
                 body.push_str("    let result: Result<_, sqlx::Error> = (|| {\n");
                 let struct_creation =
                     generate_sqlx_struct_creation(return_type, &type_info.output_types);
@@ -191,7 +194,7 @@ fn generate_function_body(
                 body.push_str("    result\n");
             }
             ExpectedResult::PossibleOne => {
-                body.push_str("    let row = query.fetch_optional(pool).await?;\n");
+                body.push_str("    let row = query.fetch_optional(executor).await?;\n");
                 body.push_str("    match row {\n");
                 body.push_str("        Some(row) => {\n");
                 body.push_str("            let result: Result<_, sqlx::Error> = (|| {\n");
@@ -205,7 +208,7 @@ fn generate_function_body(
                 body.push_str("    }\n");
             }
             ExpectedResult::AtLeastOne => {
-                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str("    let rows = query.fetch_all(executor).await?;\n");
                 body.push_str("    if rows.is_empty() {\n");
                 body.push_str("        return Err(sqlx::Error::RowNotFound);\n");
                 body.push_str("    }\n");
@@ -219,7 +222,7 @@ fn generate_function_body(
                 body.push_str("    result\n");
             }
             ExpectedResult::Multiple => {
-                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str("    let rows = query.fetch_all(executor).await?;\n");
                 body.push_str(
                     "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
                 );

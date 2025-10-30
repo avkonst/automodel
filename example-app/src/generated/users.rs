@@ -64,13 +64,13 @@ pub struct InsertUserResult {
 }
 
 /// Insert a new user with all fields and return the created user
-pub async fn insert_user(pool: &sqlx::PgPool, name: String, email: String, age: i32, profile: serde_json::Value) -> Result<InsertUserResult, sqlx::Error> {
+pub async fn insert_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: i32, profile: serde_json::Value) -> Result<InsertUserResult, sqlx::Error> {
     let query = sqlx::query("INSERT INTO users (name, email, age, profile)\nVALUES ($1, $2, $3, $4)\nRETURNING id, name, email, age, created_at\n");
     let query = query.bind(&name);
     let query = query.bind(&email);
     let query = query.bind(age);
     let query = query.bind(profile);
-    let row = query.fetch_one(pool).await?;
+    let row = query.fetch_one(executor).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(InsertUserResult {
         id: row.try_get::<i32, _>("id")?,
@@ -95,9 +95,9 @@ pub struct GetAllUsersResult {
 }
 
 /// Get all users with all their fields
-pub async fn get_all_users(pool: &sqlx::PgPool) -> Result<Vec<GetAllUsersResult>, sqlx::Error> {
+pub async fn get_all_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC");
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetAllUsersResult {
         id: row.try_get::<i32, _>("id")?,
@@ -124,10 +124,10 @@ pub struct FindUserByEmailResult {
 }
 
 /// Find a user by their email address
-pub async fn find_user_by_email(pool: &sqlx::PgPool, email: String) -> Result<Option<FindUserByEmailResult>, sqlx::Error> {
+pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<FindUserByEmailResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = $1");
     let query = query.bind(&email);
-    let row = query.fetch_optional(pool).await?;
+    let row = query.fetch_optional(executor).await?;
     match row {
         Some(row) => {
             let result: Result<_, sqlx::Error> = (|| {
@@ -158,11 +158,11 @@ pub struct UpdateUserProfileResult {
 }
 
 /// Update a user's profile by their ID
-pub async fn update_user_profile(pool: &sqlx::PgPool, profile: serde_json::Value, user_id: i32) -> Result<UpdateUserProfileResult, sqlx::Error> {
+pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: serde_json::Value, user_id: i32) -> Result<UpdateUserProfileResult, sqlx::Error> {
     let query = sqlx::query("UPDATE users SET profile = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, age, profile, updated_at");
     let query = query.bind(profile);
     let query = query.bind(user_id);
-    let row = query.fetch_one(pool).await?;
+    let row = query.fetch_one(executor).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(UpdateUserProfileResult {
         id: row.try_get::<i32, _>("id")?,
@@ -185,12 +185,12 @@ pub struct FindUsersByNameAndAgeResult {
 }
 
 /// Find users by name pattern with optional minimum age filter
-pub async fn find_users_by_name_and_age(pool: &sqlx::PgPool, name_pattern: String, min_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeResult>, sqlx::Error> {
+pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email, age FROM users WHERE name ILIKE $1 AND ($2::integer IS NULL OR age >= $3)");
     let query = query.bind(&name_pattern);
     let query = query.bind(min_age);
     let query = query.bind(min_age);
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(FindUsersByNameAndAgeResult {
         id: row.try_get::<i32, _>("id")?,
@@ -214,10 +214,10 @@ pub struct GetRecentUsersResult {
 }
 
 /// Get users created after a specific timestamp - expects at least one user
-pub async fn get_recent_users(pool: &sqlx::PgPool, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersResult>, sqlx::Error> {
+pub async fn get_recent_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > $1 ORDER BY created_at DESC");
     let query = query.bind(since);
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     if rows.is_empty() {
         return Err(sqlx::Error::RowNotFound);
     }
@@ -246,11 +246,11 @@ pub struct GetActiveUsersByAgeRangeResult {
 }
 
 /// Get active users within an age range - must return at least one user or fails
-pub async fn get_active_users_by_age_range(pool: &sqlx::PgPool, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeResult>, sqlx::Error> {
+pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN $1 AND $2 AND updated_at > NOW() - INTERVAL '30 days'");
     let query = query.bind(min_age);
     let query = query.bind(max_age);
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     if rows.is_empty() {
         return Err(sqlx::Error::RowNotFound);
     }
@@ -275,10 +275,10 @@ pub struct SearchUsersByNamePatternResult {
 }
 
 /// Search users by name pattern - expects at least one match
-pub async fn search_users_by_name_pattern(pool: &sqlx::PgPool, pattern: String) -> Result<Vec<SearchUsersByNamePatternResult>, sqlx::Error> {
+pub async fn search_users_by_name_pattern(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<SearchUsersByNamePatternResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email FROM users WHERE name ILIKE $1 ORDER BY name");
     let query = query.bind(&pattern);
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     if rows.is_empty() {
         return Err(sqlx::Error::RowNotFound);
     }
@@ -301,10 +301,10 @@ pub struct GetUsersByStatusResult {
 }
 
 /// Get users by their status (enum parameter and enum output)
-pub async fn get_users_by_status(pool: &sqlx::PgPool, user_status: UserStatus) -> Result<Vec<GetUsersByStatusResult>, sqlx::Error> {
+pub async fn get_users_by_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_status: UserStatus) -> Result<Vec<GetUsersByStatusResult>, sqlx::Error> {
     let query = sqlx::query("SELECT id, name, email, status FROM users WHERE status = $1 ORDER BY name");
     let query = query.bind(user_status);
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetUsersByStatusResult {
         id: row.try_get::<i32, _>("id")?,
@@ -323,11 +323,11 @@ pub struct UpdateUserStatusResult {
 }
 
 /// Update user status and return the new status
-pub async fn update_user_status(pool: &sqlx::PgPool, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusResult, sqlx::Error> {
+pub async fn update_user_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusResult, sqlx::Error> {
     let query = sqlx::query("UPDATE users SET status = $1 WHERE id = $2 RETURNING id, status");
     let query = query.bind(new_status);
     let query = query.bind(user_id);
-    let row = query.fetch_one(pool).await?;
+    let row = query.fetch_one(executor).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(UpdateUserStatusResult {
         id: row.try_get::<i32, _>("id")?,
@@ -338,9 +338,9 @@ pub async fn update_user_status(pool: &sqlx::PgPool, new_status: UserStatus, use
 }
 
 /// Get all possible user statuses currently in use
-pub async fn get_all_user_statuses(pool: &sqlx::PgPool) -> Result<Vec<Option<UserStatus>>, sqlx::Error> {
+pub async fn get_all_user_statuses(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<Option<UserStatus>>, sqlx::Error> {
     let query = sqlx::query("SELECT DISTINCT status FROM users ORDER BY status");
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(row.try_get::<Option<UserStatus>, _>("status")?)
     }).collect();
@@ -361,9 +361,9 @@ pub struct GetAllUsersWithStarResult {
 }
 
 /// Get all users using SELECT * to fetch all columns
-pub async fn get_all_users_with_star(pool: &sqlx::PgPool) -> Result<Vec<GetAllUsersWithStarResult>, sqlx::Error> {
+pub async fn get_all_users_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersWithStarResult>, sqlx::Error> {
     let query = sqlx::query("SELECT * FROM users ORDER BY created_at DESC");
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(executor).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetAllUsersWithStarResult {
         id: row.try_get::<i32, _>("id")?,
@@ -394,10 +394,10 @@ pub struct GetUserByIdWithStarResult {
 }
 
 /// Get a single user by ID using SELECT * to fetch all columns
-pub async fn get_user_by_id_with_star(pool: &sqlx::PgPool, user_id: i32) -> Result<Option<GetUserByIdWithStarResult>, sqlx::Error> {
+pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserByIdWithStarResult>, sqlx::Error> {
     let query = sqlx::query("SELECT * FROM users WHERE id = $1");
     let query = query.bind(user_id);
-    let row = query.fetch_optional(pool).await?;
+    let row = query.fetch_optional(executor).await?;
     match row {
         Some(row) => {
             let result: Result<_, sqlx::Error> = (|| {
