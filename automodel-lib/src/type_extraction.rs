@@ -23,6 +23,8 @@ pub struct RustType {
     pub needs_json_wrapper: bool,
     /// If this is an enum type, contains the enum variants
     pub enum_variants: Option<Vec<String>>,
+    /// If this is an enum type, contains the original PostgreSQL type name
+    pub pg_type_name: Option<String>,
 }
 
 /// Information about a PostgreSQL enum type
@@ -212,6 +214,7 @@ async fn extract_output_types(
                     is_nullable: base_rust_type.is_nullable,
                     needs_json_wrapper: true, // Custom types need JSON wrapper
                     enum_variants: None,
+                    pg_type_name: None,
                 }
             } else {
                 base_rust_type
@@ -244,6 +247,7 @@ async fn pg_type_to_rust_type(
             is_nullable,
             needs_json_wrapper: false,
             enum_variants: Some(enum_info.variants),
+            pg_type_name: Some(enum_info.type_name),
         });
     }
 
@@ -273,6 +277,7 @@ async fn pg_type_to_rust_type(
                 is_nullable,
                 needs_json_wrapper: false,
                 enum_variants: None,
+                pg_type_name: None,
             });
         }
     };
@@ -282,6 +287,7 @@ async fn pg_type_to_rust_type(
         is_nullable,
         needs_json_wrapper: false, // Standard types don't need JSON wrapper
         enum_variants: None,
+        pg_type_name: None,
     })
 }
 
@@ -427,7 +433,11 @@ pub fn generate_return_type(output_column: Option<&OutputColumn>) -> String {
 }
 
 /// Generate Rust enum definition from enum type info
-pub fn generate_enum_definition(enum_variants: &[String], enum_name: &str) -> String {
+pub fn generate_enum_definition(
+    enum_variants: &[String],
+    enum_name: &str,
+    pg_type_name: &str,
+) -> String {
     let mut enum_def = format!(
         "#[derive(Debug, Clone, PartialEq, Eq)]\npub enum {} {{\n",
         enum_name
@@ -495,47 +505,29 @@ pub fn generate_enum_definition(enum_variants: &[String], enum_name: &str) -> St
 "#
     ));
 
-    // Add tokio-postgres FromSql implementation
+    // Add SQLx Type implementation for enum
     enum_def.push_str(&format!(
-        r#"impl tokio_postgres::types::FromSql<'_> for {} {{
-    fn from_sql(
-        _ty: &tokio_postgres::types::Type,
-        raw: &[u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {{
-        let s = std::str::from_utf8(raw)?;
-        s.parse().map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)) as Box<dyn std::error::Error + Sync + Send>)
+        r#"impl sqlx::Type<sqlx::Postgres> for {} {{
+    fn type_info() -> sqlx::postgres::PgTypeInfo {{
+        sqlx::postgres::PgTypeInfo::with_name("{}")
     }}
+}}
 
-    fn accepts(ty: &tokio_postgres::types::Type) -> bool {{
-        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for {} {{
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {{
+        let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        s.parse().map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)) as Box<dyn std::error::Error + Send + Sync + 'static>)
+    }}
+}}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for {} {{
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {{
+        <&str as sqlx::Encode<sqlx::Postgres>>::encode(&self.to_string(), buf)
     }}
 }}
 
 "#,
-        enum_name
-    ));
-
-    // Add tokio-postgres ToSql implementation
-    enum_def.push_str(&format!(
-        r#"impl tokio_postgres::types::ToSql for {} {{
-    fn to_sql(
-        &self,
-        _ty: &tokio_postgres::types::Type,
-        out: &mut tokio_postgres::types::private::BytesMut,
-    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {{
-        out.extend_from_slice(self.to_string().as_bytes());
-        Ok(tokio_postgres::types::IsNull::No)
-    }}
-
-    fn accepts(ty: &tokio_postgres::types::Type) -> bool {{
-        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
-    }}
-
-    tokio_postgres::types::to_sql_checked!();
-}}
-
-"#,
-        enum_name
+        enum_name, pg_type_name, enum_name, enum_name
     ));
 
     enum_def
@@ -545,26 +537,37 @@ pub fn generate_enum_definition(enum_variants: &[String], enum_name: &str) -> St
 pub fn extract_enum_types(
     input_types: &[RustType],
     output_types: &[OutputColumn],
-) -> Vec<(String, Vec<String>)> {
+) -> Vec<(String, Vec<String>, String)> {
     let mut enum_types = std::collections::HashMap::new();
 
     // Check input types for enums
     for input_type in input_types {
         if let Some(ref variants) = input_type.enum_variants {
-            // Since we now store the base type, just use it directly
-            enum_types.insert(input_type.rust_type.clone(), variants.clone());
+            if let Some(ref pg_type_name) = input_type.pg_type_name {
+                enum_types.insert(
+                    input_type.rust_type.clone(),
+                    (variants.clone(), pg_type_name.clone()),
+                );
+            }
         }
     }
 
     // Check output types for enums
     for output_col in output_types {
         if let Some(ref variants) = output_col.rust_type.enum_variants {
-            // Since we now store the base type, just use it directly
-            enum_types.insert(output_col.rust_type.rust_type.clone(), variants.clone());
+            if let Some(ref pg_type_name) = output_col.rust_type.pg_type_name {
+                enum_types.insert(
+                    output_col.rust_type.rust_type.clone(),
+                    (variants.clone(), pg_type_name.clone()),
+                );
+            }
         }
     }
 
-    enum_types.into_iter().collect()
+    enum_types
+        .into_iter()
+        .map(|(rust_name, (variants, pg_name))| (rust_name, variants, pg_name))
+        .collect()
 }
 
 pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -> Option<String> {

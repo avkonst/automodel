@@ -118,23 +118,20 @@ pub fn generate_function_code_without_enums(
 
     // Generate function signature
     let params_str = if input_params.is_empty() {
-        "client: &tokio_postgres::Client".to_string()
+        "pool: &sqlx::PgPool".to_string()
     } else {
-        format!("client: &tokio_postgres::Client, {}", input_params)
+        format!("pool: &sqlx::PgPool, {}", input_params)
     };
 
     let return_type = match query.expect {
         ExpectedResult::ExactlyOne => {
-            format!("Result<{}, tokio_postgres::Error>", base_return_type)
+            format!("Result<{}, sqlx::Error>", base_return_type)
         }
         ExpectedResult::PossibleOne => {
-            format!(
-                "Result<Option<{}>, tokio_postgres::Error>",
-                base_return_type
-            )
+            format!("Result<Option<{}>, sqlx::Error>", base_return_type)
         }
         ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
-            format!("Result<Vec<{}>, tokio_postgres::Error>", base_return_type)
+            format!("Result<Vec<{}>, sqlx::Error>", base_return_type)
         }
     };
 
@@ -154,7 +151,7 @@ pub fn generate_function_code_without_enums(
 
 /// Generate struct creation code for multi-column results
 
-/// Generate the function body
+/// Generate the function body using SQLx
 fn generate_function_body(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
@@ -162,194 +159,146 @@ fn generate_function_body(
 ) -> Result<String> {
     let mut body = String::new();
 
-    // Convert named parameters to positional parameters for the generated SQL
+    // Convert named parameters to positional parameters for SQLx
     let (converted_sql, param_names) = convert_named_params_to_positional(&query.sql);
 
-    // Prepare the statement
+    // Build the SQLx query with parameter bindings
     body.push_str(&format!(
-        "    let stmt = client.prepare(\"{}\").await?;\n",
+        "    let mut query = sqlx::query(\"{}\");\n",
         escape_sql_string(&converted_sql)
     ));
 
-    // Prepare parameters - use meaningful names if available
-    let param_refs = if type_info.input_types.is_empty() {
-        "&[]".to_string()
-    } else {
-        let params: Vec<String> = if param_names.is_empty() {
+    // Add parameter bindings
+    if !type_info.input_types.is_empty() {
+        if param_names.is_empty() {
             // Fallback to generic param names
-            (1..=type_info.input_types.len())
-                .map(|i| format!("&param_{}", i))
-                .collect()
+            for i in 1..=type_info.input_types.len() {
+                body.push_str(&format!("    query = query.bind(param_{});\n", i));
+            }
         } else {
-            // Use the meaningful parameter names, mapping each SQL parameter to its function parameter
-            // Don't deduplicate here - each SQL positional parameter needs its value
-            param_names
-                .iter()
-                .map(|name| {
-                    // Strip the ? suffix for optional parameters to get the function parameter name
-                    let clean_name = if name.ends_with('?') {
-                        name.trim_end_matches('?').to_string()
-                    } else {
-                        name.clone()
-                    };
-                    format!("&{}", clean_name)
-                })
-                .collect()
-        };
-        format!("&[{}]", params.join(", "))
-    };
+            // Use meaningful parameter names from SQL
+            for (i, name) in param_names.iter().enumerate() {
+                let clean_name = if name.ends_with('?') {
+                    name.trim_end_matches('?').to_string()
+                } else {
+                    name.clone()
+                };
+
+                // Use reference for String parameters to avoid move issues
+                let param_type = &type_info.input_types[i].rust_type;
+                if param_type == "String" {
+                    body.push_str(&format!("    query = query.bind(&{});\n", clean_name));
+                } else {
+                    body.push_str(&format!("    query = query.bind({});\n", clean_name));
+                }
+            }
+        }
+    }
 
     if type_info.output_types.is_empty() {
         // For queries that don't return data (INSERT, UPDATE, DELETE)
-        body.push_str(&format!(
-            "    client.execute(&stmt, {}).await?;\n",
-            param_refs
-        ));
+        body.push_str("    query.execute(pool).await?;\n");
         body.push_str("    Ok(())\n");
     } else if type_info.output_types.len() == 1 {
         // For queries that return a single column
         match query.expect {
             ExpectedResult::ExactlyOne => {
-                body.push_str(&format!(
-                    "    let row = client.query_one(&stmt, {}).await?;\n",
-                    param_refs
-                ));
-            }
-            ExpectedResult::PossibleOne => {
-                body.push_str(&format!(
-                    "    let rows = client.query(&stmt, {}).await?;\n",
-                    param_refs
-                ));
-                body.push_str(
-                    "    let extracted_value = if let Some(row) = rows.into_iter().next() {\n",
-                );
-            }
-            ExpectedResult::AtLeastOne => {
-                body.push_str(&format!(
-                    "    let rows = client.query(&stmt, {}).await?;\n",
-                    param_refs
-                ));
-                body.push_str("    if rows.is_empty() {\n");
-                body.push_str("        // Simulate the same error that query_one would produce\n");
-                body.push_str(
-                    "        let _ = client.query_one(\"SELECT 1 WHERE FALSE\", &[]).await?;\n",
-                );
-                body.push_str("    }\n");
-                body.push_str("    let result = rows.into_iter().map(|row| {\n");
-            }
-            ExpectedResult::Multiple => {
-                body.push_str(&format!(
-                    "    let rows = client.query(&stmt, {}).await?;\n",
-                    param_refs
-                ));
-                body.push_str("    let result = rows.into_iter().map(|row| {\n");
-            }
-        }
-
-        let output_col = &type_info.output_types[0];
-        let value_extraction = if output_col.rust_type.needs_json_wrapper {
-            // Use JSON wrapper for custom types
-            let inner_type = &output_col.rust_type.rust_type;
-
-            if output_col.rust_type.is_nullable {
-                // For nullable types, extract as Option<JsonWrapper<T>>
-                format!(
-                    "row.get::<_, Option<JsonWrapper<{}>>>(0).map(|opt| opt.map(|wrapper| wrapper.into_inner())).flatten()",
-                    inner_type
-                )
-            } else {
-                format!("row.get::<_, JsonWrapper<{}>>(0).into_inner()", inner_type)
-            }
-        } else {
-            // For non-JSON wrapper types, extract based on nullability
-            let extraction_type = if output_col.rust_type.is_nullable {
-                format!("Option<{}>", output_col.rust_type.rust_type)
-            } else {
-                output_col.rust_type.rust_type.clone()
-            };
-            format!("row.get::<_, {}>(0)", extraction_type)
-        };
-
-        match query.expect {
-            ExpectedResult::ExactlyOne => {
+                body.push_str("    let row = query.fetch_one(pool).await?;\n");
+                let value_extraction =
+                    generate_sqlx_value_extraction(&type_info.output_types[0], 0);
                 body.push_str(&format!("    Ok({})\n", value_extraction));
             }
             ExpectedResult::PossibleOne => {
-                if output_col.rust_type.is_nullable {
-                    // For nullable columns, return the value directly (it's already Option<T>)
-                    body.push_str(&format!("        {}\n", value_extraction));
+                body.push_str("    let row = query.fetch_optional(pool).await?;\n");
+                body.push_str("    match row {\n");
+                body.push_str("        Some(row) => {\n");
+                let value_extraction =
+                    generate_sqlx_value_extraction(&type_info.output_types[0], 0);
+                if type_info.output_types[0].rust_type.is_nullable {
+                    body.push_str(&format!("            Ok({})\n", value_extraction));
                 } else {
-                    // For non-nullable columns, wrap in Some()
-                    body.push_str(&format!("        Some({})\n", value_extraction));
+                    body.push_str(&format!("            Ok(Some({}))\n", value_extraction));
                 }
-                body.push_str("    } else {\n");
-                body.push_str("        None\n");
-                body.push_str("    };\n");
-                body.push_str("    Ok(extracted_value)\n");
+                body.push_str("        },\n");
+                body.push_str("        None => Ok(None),\n");
+                body.push_str("    }\n");
             }
-            ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
-                body.push_str(&format!("        {}\n", value_extraction));
+            ExpectedResult::AtLeastOne => {
+                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str("    if rows.is_empty() {\n");
+                body.push_str("        return Err(sqlx::Error::RowNotFound);\n");
+                body.push_str("    }\n");
+                body.push_str(
+                    "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
+                );
+                let value_extraction =
+                    generate_sqlx_value_extraction(&type_info.output_types[0], 0);
+                body.push_str(&format!("        Ok({})\n", value_extraction));
                 body.push_str("    }).collect();\n");
-                body.push_str("    Ok(result)\n");
+                body.push_str("    result\n");
+            }
+            ExpectedResult::Multiple => {
+                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str(
+                    "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
+                );
+                let value_extraction =
+                    generate_sqlx_value_extraction(&type_info.output_types[0], 0);
+                body.push_str(&format!("        Ok({})\n", value_extraction));
+                body.push_str("    }).collect();\n");
+                body.push_str("    result\n");
             }
         }
     } else {
         // For queries that return multiple columns
         match query.expect {
             ExpectedResult::ExactlyOne => {
-                body.push_str(&format!(
-                    "    let row = client.query_one(&stmt, {}).await?;\n",
-                    param_refs
-                ));
+                body.push_str("    let row = query.fetch_one(pool).await?;\n");
+                body.push_str("    let result: Result<_, sqlx::Error> = (|| {\n");
+                let struct_creation =
+                    generate_sqlx_struct_creation(return_type, &type_info.output_types);
+                body.push_str(&format!("        Ok({})\n", struct_creation));
+                body.push_str("    })();\n");
+                body.push_str("    result\n");
             }
             ExpectedResult::PossibleOne => {
-                body.push_str(&format!(
-                    "    let rows = client.query(&stmt, {}).await?;\n",
-                    param_refs
-                ));
-                body.push_str(
-                    "    let extracted_value = if let Some(row) = rows.into_iter().next() {\n",
-                );
+                body.push_str("    let row = query.fetch_optional(pool).await?;\n");
+                body.push_str("    match row {\n");
+                body.push_str("        Some(row) => {\n");
+                body.push_str("            let result: Result<_, sqlx::Error> = (|| {\n");
+                let struct_creation =
+                    generate_sqlx_struct_creation(return_type, &type_info.output_types);
+                body.push_str(&format!("                Ok({})\n", struct_creation));
+                body.push_str("            })();\n");
+                body.push_str("            result.map(Some)\n");
+                body.push_str("        },\n");
+                body.push_str("        None => Ok(None),\n");
+                body.push_str("    }\n");
             }
             ExpectedResult::AtLeastOne => {
-                body.push_str(&format!(
-                    "    let rows = client.query(&stmt, {}).await?;\n",
-                    param_refs
-                ));
+                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
                 body.push_str("    if rows.is_empty() {\n");
-                body.push_str("        // Simulate the same error that query_one would produce\n");
-                body.push_str(
-                    "        let _ = client.query_one(\"SELECT 1 WHERE FALSE\", &[]).await?;\n",
-                );
+                body.push_str("        return Err(sqlx::Error::RowNotFound);\n");
                 body.push_str("    }\n");
-                body.push_str("    let result = rows.into_iter().map(|row| {\n");
+                body.push_str(
+                    "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
+                );
+                let struct_creation =
+                    generate_sqlx_struct_creation(return_type, &type_info.output_types);
+                body.push_str(&format!("        Ok({})\n", struct_creation));
+                body.push_str("    }).collect();\n");
+                body.push_str("    result\n");
             }
             ExpectedResult::Multiple => {
-                body.push_str(&format!(
-                    "    let rows = client.query(&stmt, {}).await?;\n",
-                    param_refs
-                ));
-                body.push_str("    let result = rows.into_iter().map(|row| {\n");
-            }
-        }
-
-        let struct_creation = generate_struct_creation(return_type, &type_info.output_types);
-
-        match query.expect {
-            ExpectedResult::ExactlyOne => {
-                body.push_str(&format!("    Ok({})\n", struct_creation));
-            }
-            ExpectedResult::PossibleOne => {
-                body.push_str(&format!("        Some({})\n", struct_creation));
-                body.push_str("    } else {\n");
-                body.push_str("        None\n");
-                body.push_str("    };\n");
-                body.push_str("    Ok(extracted_value)\n");
-            }
-            ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
-                body.push_str(&format!("        {}\n", struct_creation));
+                body.push_str("    let rows = query.fetch_all(pool).await?;\n");
+                body.push_str(
+                    "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
+                );
+                let struct_creation =
+                    generate_sqlx_struct_creation(return_type, &type_info.output_types);
+                body.push_str(&format!("        Ok({})\n", struct_creation));
                 body.push_str("    }).collect();\n");
-                body.push_str("    Ok(result)\n");
+                body.push_str("    result\n");
             }
         }
     }
@@ -357,43 +306,48 @@ fn generate_function_body(
     Ok(body)
 }
 
-/// Generate struct creation code for multi-column results
-fn generate_struct_creation(struct_name: &str, output_types: &[OutputColumn]) -> String {
+/// Generate SQLx value extraction for a single column
+fn generate_sqlx_value_extraction(output_col: &OutputColumn, _index: usize) -> String {
+    let column_name = &output_col.name;
+
+    if output_col.rust_type.needs_json_wrapper {
+        // For custom types, we need to extract as serde_json::Value and then deserialize
+        let inner_type = &output_col.rust_type.rust_type;
+        if output_col.rust_type.is_nullable {
+            format!(
+                "row.try_get::<Option<serde_json::Value>, _>(\"{}\")?.map(|v| serde_json::from_value::<{}>(v)).transpose()?",
+                column_name, inner_type
+            )
+        } else {
+            format!(
+                "serde_json::from_value::<{}>(row.try_get::<serde_json::Value, _>(\"{}\")?)?,",
+                inner_type, column_name
+            )
+        }
+    } else {
+        // For standard types, extract directly
+        if output_col.rust_type.is_nullable {
+            format!(
+                "row.try_get::<Option<{}>, _>(\"{}\")?",
+                output_col.rust_type.rust_type, column_name
+            )
+        } else {
+            format!(
+                "row.try_get::<{}, _>(\"{}\")?",
+                output_col.rust_type.rust_type, column_name
+            )
+        }
+    }
+}
+
+/// Generate SQLx struct creation code for multi-column results
+fn generate_sqlx_struct_creation(struct_name: &str, output_types: &[OutputColumn]) -> String {
     let mut creation = format!("{} {{\n", struct_name);
 
     for (i, col) in output_types.iter().enumerate() {
-        if col.rust_type.needs_json_wrapper {
-            // Use JSON wrapper for custom types
-            let inner_type = &col.rust_type.rust_type;
-
-            if col.rust_type.is_nullable {
-                creation.push_str(&format!(
-                    "        {}: row.get::<_, Option<JsonWrapper<{}>>>({}).map(|opt| opt.map(|wrapper| wrapper.into_inner())).flatten(),\n",
-                    to_snake_case(&col.name),
-                    inner_type,
-                    i
-                ));
-            } else {
-                creation.push_str(&format!(
-                    "        {}: row.get::<_, JsonWrapper<{}>>({})).into_inner(),\n",
-                    to_snake_case(&col.name),
-                    inner_type,
-                    i
-                ));
-            }
-        } else {
-            let extraction_type = if col.rust_type.is_nullable {
-                format!("Option<{}>", col.rust_type.rust_type)
-            } else {
-                col.rust_type.rust_type.clone()
-            };
-            creation.push_str(&format!(
-                "        {}: row.get::<_, {}>({}),\n",
-                to_snake_case(&col.name),
-                extraction_type,
-                i
-            ));
-        }
+        let field_name = to_snake_case(&col.name);
+        let value_extraction = generate_sqlx_value_extraction(col, i);
+        creation.push_str(&format!("        {}: {},\n", field_name, value_extraction));
     }
 
     creation.push_str("    }");

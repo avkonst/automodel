@@ -10,7 +10,7 @@ categories = ["database", "development-tools"]
 
 [dependencies]
 tokio = { workspace = true }
-tokio-postgres = { workspace = true }
+tokio-postgres = { workspace = true }     # Still needed for type extraction
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 sea-query = { workspace = true }

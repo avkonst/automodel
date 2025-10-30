@@ -1,8 +1,8 @@
 mod generated;
 mod models;
 
+use sqlx::PgPool;
 use std::env;
-use tokio_postgres::{Client, NoTls};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,9 +15,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect to database
     match connect_to_database(&database_url).await {
-        Ok(client) => {
+        Ok(pool) => {
             println!("✓ Connected to database");
-            run_examples(&client).await?;
+            run_examples(&pool).await?;
         }
         Err(e) => {
             println!("✗ Failed to connect to database: {}", e);
@@ -32,20 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn connect_to_database(database_url: &str) -> Result<Client, Box<dyn std::error::Error>> {
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
-
-    // Spawn the connection in the background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Database connection error: {}", e);
-        }
-    });
-
-    Ok(client)
+async fn connect_to_database(database_url: &str) -> Result<PgPool, Box<dyn std::error::Error>> {
+    let pool = PgPool::connect(database_url).await?;
+    Ok(pool)
 }
 
-async fn run_examples(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nRunning example queries...");
 
     // Note: The actual generated functions would be used here
@@ -68,19 +60,19 @@ async fn run_examples(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     // Example of how you would use the generated functions:
 
     // Admin functions
-    match generated::admin::get_current_time(client).await {
+    match generated::admin::get_current_time(pool).await {
         Ok(time) => println!("Current time: {:?}", time),
         Err(e) => println!("Error getting time: {}", e),
     }
 
     // Setup functions
-    match generated::setup::create_users_table(client).await {
+    match generated::setup::create_users_table(pool).await {
         Ok(_) => println!("Users table created successfully"),
         Err(e) => println!("Error creating table: {}", e),
     }
 
     // Users functions
-    match generated::users::get_all_users(client).await {
+    match generated::users::get_all_users(pool).await {
         Ok(users) => println!("All users: {:?}", users),
         Err(e) => println!("Error listing users: {}", e),
     }

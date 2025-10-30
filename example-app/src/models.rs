@@ -1,9 +1,7 @@
-use postgres_types::{FromSql, ToSql};
 use serde::{Deserialize, Serialize};
 
 /// Example custom type for test_data field  
-#[derive(Debug, Clone, Serialize, Deserialize, ToSql, FromSql)]
-#[postgres(name = "jsonb")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestData {
     pub message: String,
     pub value: i32,

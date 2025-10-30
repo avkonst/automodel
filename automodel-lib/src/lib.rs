@@ -54,12 +54,14 @@ impl AutoModel {
         // Check if any query in this module has custom type mappings
         let has_custom_types = module_queries.iter().any(|q| q.types.is_some());
 
-        // Add imports first
+        // Add imports first - SQLx Row is always needed for generated functions
+        generated_code.push_str("use sqlx::Row;\n");
         if has_custom_types {
             generated_code.push_str("use serde::{Serialize, Deserialize};\n");
-            generated_code.push_str("use tokio_postgres::types::{FromSql, ToSql, Type};\n");
-            generated_code.push_str("use std::error::Error;\n\n");
+            generated_code.push_str("use sqlx::{FromRow, Type};\n");
+            generated_code.push_str("use std::error::Error;\n");
         }
+        generated_code.push_str("\n");
 
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
@@ -73,14 +75,18 @@ impl AutoModel {
         let mut all_enum_types = std::collections::HashMap::new();
         for type_info in &type_infos {
             let enum_types = extract_enum_types(&type_info.input_types, &type_info.output_types);
-            for (enum_name, enum_variants) in enum_types {
-                all_enum_types.insert(enum_name, enum_variants);
+            for (enum_name, enum_variants, pg_type_name) in enum_types {
+                all_enum_types.insert(enum_name, (enum_variants, pg_type_name));
             }
         }
 
         // Generate enum definitions once at the top of the module
-        for (enum_name, enum_variants) in all_enum_types {
-            generated_code.push_str(&generate_enum_definition(&enum_variants, &enum_name));
+        for (enum_name, (enum_variants, pg_type_name)) in all_enum_types {
+            generated_code.push_str(&generate_enum_definition(
+                &enum_variants,
+                &enum_name,
+                &pg_type_name,
+            ));
             generated_code.push('\n');
         }
 
