@@ -262,6 +262,25 @@ fn generate_function_body(
 ) -> Result<String> {
     let mut body = String::new();
 
+    // Check if this query has conditional blocks
+    if let Some(parsed_sql) = &type_info.parsed_sql {
+        // Generate dynamic SQL building for conditional queries
+        generate_conditional_function_body(&mut body, query, type_info, parsed_sql, return_type)?;
+    } else {
+        // Generate standard static SQL
+        generate_static_function_body(&mut body, query, type_info, return_type)?;
+    }
+
+    Ok(body)
+}
+
+/// Generate function body for static (non-conditional) SQL queries
+fn generate_static_function_body(
+    body: &mut String,
+    query: &QueryDefinition,
+    type_info: &QueryTypeInfo,
+    return_type: &str,
+) -> Result<()> {
     // Convert named parameters to positional parameters for SQLx
     let (converted_sql, param_names) = convert_named_params_to_positional(&query.sql);
 
@@ -308,6 +327,202 @@ fn generate_function_body(
         }
     }
 
+    generate_query_execution(body, query, type_info, return_type);
+    Ok(())
+}
+
+/// Generate function body for conditional (dynamic) SQL queries
+fn generate_conditional_function_body(
+    body: &mut String,
+    query: &QueryDefinition,
+    type_info: &QueryTypeInfo,
+    parsed_sql: &crate::type_extraction::ParsedSql,
+    return_type: &str,
+) -> Result<()> {
+    use crate::type_extraction::parse_parameter_names_from_sql;
+
+    body.push_str("    // Build dynamic SQL with conditional parts\n");
+
+    // Parse all parameters from the original SQL to get their order and types
+    let all_params = parse_parameter_names_from_sql(&query.sql);
+
+    // Track parameter count for proper numbering across all parts
+    let mut current_param_num = 1usize;
+
+    // Start with the base SQL template that has placeholders for conditional blocks
+    let mut sql_template = parsed_sql.base_sql.clone();
+
+    // Replace non-conditional parameters in the template with numbered placeholders
+    for param_name in parse_parameter_names_from_sql(&parsed_sql.base_sql) {
+        if !param_name.ends_with('?') {
+            // Only replace non-conditional parameters
+            sql_template = sql_template.replace(
+                &format!("${{{}}}", param_name),
+                &format!("${}", current_param_num),
+            );
+            current_param_num += 1;
+        }
+    }
+
+    // Create conditional block info (without fixed parameter numbers)
+    let mut conditional_replacements = Vec::new();
+    for (i, block) in parsed_sql.conditional_blocks.iter().enumerate() {
+        if !block.parameters.is_empty() {
+            let first_param = &block.parameters[0];
+            let block_sql = block.sql_content.clone(); // Keep original parameter syntax for now
+            conditional_replacements.push((i, block_sql, first_param.clone()));
+        }
+    }
+
+    // Generate the SQL building code with complete parameter renumbering
+    body.push_str("    // Build the complete SQL with conditional blocks\n");
+    body.push_str("    let mut final_sql = r\"");
+    body.push_str(&sql_template);
+    body.push_str("\".to_string();\n");
+    body.push_str("    let mut included_params = Vec::new();\n\n");
+
+    // Replace each conditional block based on parameter presence
+    for (_, block_sql, param_name) in &conditional_replacements {
+        let clean_param = if param_name.ends_with('?') {
+            param_name.trim_end_matches('?')
+        } else {
+            param_name
+        };
+
+        let conditional_block = format!("$[{}]", block_sql);
+
+        body.push_str(&format!("    if {}.is_some() {{\n", clean_param));
+        body.push_str(&format!(
+            "        final_sql = final_sql.replace(r\"{}\", r\"{}\");\n",
+            conditional_block,
+            &conditional_block[2..conditional_block.len() - 1]
+        ));
+        body.push_str(&format!(
+            "        included_params.push(\"{}\");\n",
+            clean_param
+        ));
+        body.push_str("    } else {\n");
+        body.push_str(&format!(
+            "        final_sql = final_sql.replace(r\"{}\", \"\");\n",
+            conditional_block
+        ));
+        body.push_str("    }\n\n");
+    }
+
+    // Renumber all parameters sequentially in the final SQL
+    body.push_str("    // Renumber all parameters sequentially in the final SQL\n");
+    body.push_str("    let mut param_counter = 1;\n");
+
+    // Renumber base (non-conditional) parameters first
+    for param_name in parse_parameter_names_from_sql(&parsed_sql.base_sql) {
+        if !param_name.ends_with('?') {
+            body.push_str(&format!(
+                "    final_sql = final_sql.replace(r\"${{{}}}\", &format!(\"${{}}\", param_counter));\n",
+                param_name
+            ));
+            body.push_str("    param_counter += 1;\n");
+        }
+    }
+
+    // Renumber conditional parameters that are included
+    for (_, _, param_name) in &conditional_replacements {
+        let clean_param = if param_name.ends_with('?') {
+            param_name.trim_end_matches('?')
+        } else {
+            param_name
+        };
+
+        body.push_str(&format!(
+            "    if included_params.contains(&r\"{}\") {{\n",
+            clean_param
+        ));
+        body.push_str(&format!(
+            "        final_sql = final_sql.replace(r\"${{{}}}\", &format!(\"${{}}\", param_counter));\n",
+            param_name
+        ));
+        body.push_str("        param_counter += 1;\n");
+        body.push_str("    }\n");
+    }
+
+    body.push_str("\n    let mut query = sqlx::query(&final_sql);\n\n");
+
+    // Bind parameters in the order they will appear in the final SQL
+    // First, bind base (non-conditional) parameters
+    for param_name in parse_parameter_names_from_sql(&parsed_sql.base_sql) {
+        if !param_name.ends_with('?') {
+            // Only bind non-conditional parameters
+            let clean_param = param_name.clone();
+
+            if let Some(param_index) = all_params.iter().position(|p| {
+                let clean_p = if p.ends_with('?') {
+                    p.trim_end_matches('?')
+                } else {
+                    p
+                };
+                clean_p == clean_param
+            }) {
+                if let Some(rust_type_info) = type_info.input_types.get(param_index) {
+                    if rust_type_info.needs_json_wrapper {
+                        body.push_str(&format!("    let {}_json = serde_json::to_value(&{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                        body.push_str(&format!("    query = query.bind({}_json);\n", clean_param));
+                    } else {
+                        body.push_str(&format!("    query = query.bind(&{});\n", clean_param));
+                    }
+                }
+            }
+        }
+    }
+
+    // Then, bind conditional parameters only if they are included
+    for (_, _, param_name) in &conditional_replacements {
+        let clean_param = if param_name.ends_with('?') {
+            param_name.trim_end_matches('?')
+        } else {
+            param_name
+        };
+
+        body.push_str(&format!(
+            "    if included_params.contains(&r\"{}\") {{\n",
+            clean_param
+        ));
+
+        if let Some(param_index) = all_params.iter().position(|p| {
+            let clean_p = if p.ends_with('?') {
+                p.trim_end_matches('?')
+            } else {
+                p
+            };
+            clean_p == clean_param
+        }) {
+            if let Some(rust_type_info) = type_info.input_types.get(param_index) {
+                if rust_type_info.needs_json_wrapper {
+                    body.push_str(&format!("        let {}_json = serde_json::to_value(&{}.as_ref().unwrap()).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                    body.push_str(&format!(
+                        "        query = query.bind({}_json);\n",
+                        clean_param
+                    ));
+                } else {
+                    body.push_str(&format!(
+                        "        query = query.bind({}.as_ref().unwrap());\n",
+                        clean_param
+                    ));
+                }
+            }
+        }
+
+        body.push_str("    }\n\n");
+    }
+
+    generate_query_execution(body, query, type_info, return_type);
+    Ok(())
+}
+/// Generate the query execution part (common for both static and conditional queries)
+fn generate_query_execution(
+    body: &mut String,
+    query: &QueryDefinition,
+    type_info: &QueryTypeInfo,
+    return_type: &str,
+) {
     if type_info.output_types.is_empty() {
         // For queries that don't return data (INSERT, UPDATE, DELETE)
         body.push_str("    query.execute(executor).await?;\n");
@@ -415,8 +630,6 @@ fn generate_function_body(
             }
         }
     }
-
-    Ok(body)
 }
 
 /// Generate SQLx value extraction for a single column

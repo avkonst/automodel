@@ -10,6 +10,8 @@ pub struct QueryTypeInfo {
     pub input_types: Vec<RustType>,
     /// Output column types and names
     pub output_types: Vec<OutputColumn>,
+    /// Parsed SQL with conditional blocks (if any)
+    pub parsed_sql: Option<ParsedSql>,
 }
 
 /// Represents a Rust type mapping from PostgreSQL types
@@ -45,6 +47,30 @@ pub struct OutputColumn {
     pub rust_type: RustType,
 }
 
+/// Represents a conditional block in a SQL query
+#[derive(Debug, Clone)]
+pub struct ConditionalBlock {
+    /// The SQL content inside the conditional block
+    pub sql_content: String,
+    /// Parameters referenced within this conditional block
+    pub parameters: Vec<String>,
+    /// Start position in the original SQL
+    pub start_pos: usize,
+    /// End position in the original SQL
+    pub end_pos: usize,
+}
+
+/// Parsed SQL with conditional blocks separated
+#[derive(Debug, Clone)]
+pub struct ParsedSql {
+    /// Base SQL with conditional blocks removed and placeholders inserted
+    pub base_sql: String,
+    /// List of conditional blocks found in the SQL
+    pub conditional_blocks: Vec<ConditionalBlock>,
+    /// All parameter names found in the SQL (including those in conditional blocks)
+    pub all_parameters: Vec<String>,
+}
+
 /// Extract type information from a prepared SQL statement
 pub async fn extract_query_types(
     database_url: &str,
@@ -63,8 +89,14 @@ pub async fn extract_query_types(
         }
     });
 
+    // Parse SQL to handle conditional blocks
+    let parsed_sql = parse_sql_with_conditionals(sql);
+
+    // For validation, create SQL with all conditional blocks included
+    let full_sql = reconstruct_full_sql(&parsed_sql);
+
     // Convert named parameters to positional parameters for PostgreSQL
-    let (converted_sql, param_names) = convert_named_params_to_positional(sql);
+    let (converted_sql, param_names) = convert_named_params_to_positional(&full_sql);
 
     let statement = client.prepare(&converted_sql).await.with_context(|| {
         format!(
@@ -78,9 +110,16 @@ pub async fn extract_query_types(
         extract_input_types(&client, &statement, &param_names, field_type_mappings).await?;
     let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
 
+    let has_conditionals = !parsed_sql.conditional_blocks.is_empty();
+
     Ok(QueryTypeInfo {
         input_types,
         output_types,
+        parsed_sql: if has_conditionals {
+            Some(parsed_sql)
+        } else {
+            None
+        },
     })
 }
 
@@ -405,6 +444,112 @@ pub fn parse_parameter_names_from_sql(sql: &str) -> Vec<String> {
     }
 
     param_names
+}
+
+/// Parse SQL to extract conditional blocks and return structured information
+pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
+    let mut result = ParsedSql {
+        base_sql: String::new(),
+        conditional_blocks: Vec::new(),
+        all_parameters: Vec::new(),
+    };
+
+    let mut chars = sql.chars().peekable();
+    let mut current_pos = 0;
+
+    while let Some(ch) = chars.next() {
+        current_pos += ch.len_utf8();
+
+        if ch == '$' {
+            if let Some(&'[') = chars.peek() {
+                // Found start of conditional block
+                chars.next(); // consume '['
+                current_pos += 1;
+
+                let block_start = current_pos;
+                let mut block_content = String::new();
+                let mut bracket_count = 1; // We already consumed one '['
+
+                // Read until we find the matching ']'
+                while let Some(inner_ch) = chars.next() {
+                    current_pos += inner_ch.len_utf8();
+
+                    if inner_ch == '[' {
+                        bracket_count += 1;
+                        block_content.push(inner_ch);
+                    } else if inner_ch == ']' {
+                        bracket_count -= 1;
+                        if bracket_count == 0 {
+                            // Found the end of this conditional block
+                            let block_end = current_pos - 1;
+
+                            // Extract parameters from this block
+                            let block_params = parse_parameter_names_from_sql(&block_content);
+
+                            // Add conditional block
+                            result.conditional_blocks.push(ConditionalBlock {
+                                sql_content: block_content.clone(),
+                                parameters: block_params.clone(),
+                                start_pos: block_start,
+                                end_pos: block_end,
+                            });
+
+                            // Add parameters to our global list
+                            result.all_parameters.extend(block_params);
+
+                            // Keep the original conditional block syntax in base SQL
+                            result.base_sql.push_str(&format!("$[{}]", block_content));
+                            break;
+                        } else {
+                            block_content.push(inner_ch);
+                        }
+                    } else {
+                        block_content.push(inner_ch);
+                    }
+                }
+            } else if let Some(&'{') = chars.peek() {
+                // Found regular parameter ${param}
+                chars.next(); // consume '{'
+                current_pos += 1;
+                let mut param_name = String::new();
+
+                while let Some(inner_ch) = chars.next() {
+                    current_pos += inner_ch.len_utf8();
+                    if inner_ch == '}' {
+                        if !param_name.is_empty() {
+                            result.all_parameters.push(param_name.clone());
+                            result.base_sql.push_str("${");
+                            result.base_sql.push_str(&param_name);
+                            result.base_sql.push('}');
+                        }
+                        break;
+                    } else {
+                        param_name.push(inner_ch);
+                    }
+                }
+            } else {
+                // Regular $ character
+                result.base_sql.push(ch);
+            }
+        } else {
+            result.base_sql.push(ch);
+        }
+    }
+
+    result
+}
+
+/// Reconstruct full SQL with all conditional blocks included for validation
+fn reconstruct_full_sql(parsed_sql: &ParsedSql) -> String {
+    let mut result = parsed_sql.base_sql.clone();
+
+    // Replace conditional blocks $[...] with their inner content
+    for block in &parsed_sql.conditional_blocks {
+        let conditional_block = format!("$[{}]", block.sql_content);
+        result = result.replace(&conditional_block, &block.sql_content);
+    }
+
+    result
 }
 
 /// Convert SQL with named parameters ${param} to positional parameters $1, $2, etc.

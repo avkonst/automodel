@@ -323,6 +323,90 @@ queries:
       include_sql: false
 ```
 
+## Conditional Queries
+
+AutoModel supports **conditional queries** that dynamically include or exclude SQL clauses based on parameter availability. This allows you to write flexible queries that adapt based on which optional parameters are provided.
+
+### Conditional Syntax
+
+Use the `$[...]` syntax to wrap optional SQL parts:
+
+```yaml
+- name: search_users
+  sql: "SELECT id, name, email FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] ORDER BY created_at DESC"
+  description: "Search users with optional name and age filters"
+```
+
+**Key Components:**
+- `$[AND name ILIKE ${name_pattern?}]` - Conditional block that includes the clause only if `name_pattern` is `Some`
+- `${name_pattern?}` - Optional parameter (note the `?` suffix)
+- The conditional block is removed entirely if the parameter is `None`
+
+### Runtime SQL Examples
+
+The same function generates different SQL based on parameter availability:
+
+```rust
+// Both parameters provided
+search_users(executor, Some("%john%".to_string()), Some(25)).await?;
+// SQL: "SELECT id, name, email FROM users WHERE 1=1 AND name ILIKE $1 AND age >= $2 ORDER BY created_at DESC"
+// Params: ["%john%", 25]
+
+// Only name pattern provided  
+search_users(executor, Some("%john%".to_string()), None).await?;
+// SQL: "SELECT id, name, email FROM users WHERE 1=1 AND name ILIKE $1 ORDER BY created_at DESC"
+// Params: ["%john%"]
+
+// Only age provided
+search_users(executor, None, Some(25)).await?;
+// SQL: "SELECT id, name, email FROM users WHERE 1=1 AND age >= $1 ORDER BY created_at DESC"  
+// Params: [25]
+
+// No optional parameters
+search_users(executor, None, None).await?;
+// SQL: "SELECT id, name, email FROM users WHERE 1=1 ORDER BY created_at DESC"
+// Params: []
+```
+
+### Complex Conditional Queries
+
+You can mix conditional and non-conditional parameters:
+
+```yaml
+- name: find_users_complex
+  sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} $[AND age >= ${min_age?}] AND email IS NOT NULL $[AND created_at >= ${since?}] ORDER BY name"
+  description: "Complex search with required name pattern and optional filters"
+```
+
+This generates a function with signature:
+```rust
+pub async fn find_users_complex(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    name_pattern: String,        // Required parameter
+    min_age: Option<i32>,        // Optional parameter
+    since: Option<chrono::DateTime<chrono::Utc>>  // Optional parameter
+) -> Result<Vec<FindUsersComplexItem>, sqlx::Error>
+```
+
+### Best Practices
+
+1. **Use `WHERE 1=1`** as a base condition when all WHERE clauses are conditional:
+   ```yaml
+   sql: "SELECT * FROM users WHERE 1=1 $[AND name = ${name?}] $[AND age > ${min_age?}]"
+   ```
+
+### Parameter Binding and Performance
+
+- **Sequential parameter binding**: AutoModel automatically renumbers parameters to ensure sequential binding ($1, $2, $3, etc.)
+- **No SQL parsing overhead**: Parameter renumbering happens at function generation time, not runtime
+- **Prepared statement compatibility**: Generated SQL is fully compatible with PostgreSQL prepared statements
+- **Type safety**: All parameter types are validated at compile time
+
+### Limitations
+
+- **No nested conditionals**: `$[...]` blocks cannot be nested inside other conditional blocks
+- **Parameter uniqueness**: Each optional parameter can only be used once per conditional block
+
 ## CLI Features
 
 ### Commands

@@ -204,15 +204,55 @@ pub struct FindUsersByNameAndAgeItem {
     pub age: Option<i32>,
 }
 
-/// Find users by name pattern with optional minimum age filter
-#[tracing::instrument(level = "debug", skip(executor, min_age, name_pattern), fields(sql = "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})"))]
-pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, sqlx::Error> {
-    let query = sqlx::query(
-        r"SELECT id, name, email, age FROM users WHERE name ILIKE $1 AND ($2::integer IS NULL OR age >= $3)"
-    );
-    let query = query.bind(&name_pattern);
-    let query = query.bind(min_age);
-    let query = query.bind(min_age);
+/// Find users by name pattern with optional minimum age filter (using conditional syntax)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} $[AND age >= ${min_age?}] AND name = ${name_exact} $[AND age <= ${max_age?}] ORDER BY name"))]
+pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>, name_exact: String, max_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, sqlx::Error> {
+    // Build dynamic SQL with conditional parts
+    // Build the complete SQL with conditional blocks
+    let mut final_sql = r"SELECT id, name, email, age FROM users WHERE name ILIKE $1 $[AND age >= ${min_age?}] AND name = $2 $[AND age <= ${max_age?}] ORDER BY name".to_string();
+    let mut included_params = Vec::new();
+
+    if min_age.is_some() {
+        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", r"AND age >= ${min_age?}");
+        included_params.push("min_age");
+    } else {
+        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", "");
+    }
+
+    if max_age.is_some() {
+        final_sql = final_sql.replace(r"$[AND age <= ${max_age?}]", r"AND age <= ${max_age?}");
+        included_params.push("max_age");
+    } else {
+        final_sql = final_sql.replace(r"$[AND age <= ${max_age?}]", "");
+    }
+
+    // Renumber all parameters sequentially in the final SQL
+    let mut param_counter = 1;
+    final_sql = final_sql.replace(r"${name_pattern}", &format!("${}", param_counter));
+    param_counter += 1;
+    final_sql = final_sql.replace(r"${name_exact}", &format!("${}", param_counter));
+    param_counter += 1;
+    if included_params.contains(&r"min_age") {
+        final_sql = final_sql.replace(r"${min_age?}", &format!("${}", param_counter));
+        param_counter += 1;
+    }
+    if included_params.contains(&r"max_age") {
+        final_sql = final_sql.replace(r"${max_age?}", &format!("${}", param_counter));
+        param_counter += 1;
+    }
+
+    let mut query = sqlx::query(&final_sql);
+
+    query = query.bind(&name_pattern);
+    query = query.bind(&name_exact);
+    if included_params.contains(&r"min_age") {
+        query = query.bind(min_age.as_ref().unwrap());
+    }
+
+    if included_params.contains(&r"max_age") {
+        query = query.bind(max_age.as_ref().unwrap());
+    }
+
     let rows = query.fetch_all(executor).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(FindUsersByNameAndAgeItem {
@@ -325,6 +365,86 @@ pub async fn search_users_by_name_pattern(executor: impl sqlx::Executor<'_, Data
         id: row.try_get::<i32, _>("id")?,
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
+    })
+    }).collect();
+    result
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchUsersAdvancedItem {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub age: Option<i32>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Advanced user search with multiple optional filters using conditional syntax
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] $[AND created_at >= ${since?}] ORDER BY created_at DESC"))]
+pub async fn search_users_advanced(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: Option<String>, min_age: Option<i32>, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<SearchUsersAdvancedItem>, sqlx::Error> {
+    // Build dynamic SQL with conditional parts
+    // Build the complete SQL with conditional blocks
+    let mut final_sql = r"SELECT id, name, email, age, created_at FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] $[AND created_at >= ${since?}] ORDER BY created_at DESC".to_string();
+    let mut included_params = Vec::new();
+
+    if name_pattern.is_some() {
+        final_sql = final_sql.replace(r"$[AND name ILIKE ${name_pattern?}]", r"AND name ILIKE ${name_pattern?}");
+        included_params.push("name_pattern");
+    } else {
+        final_sql = final_sql.replace(r"$[AND name ILIKE ${name_pattern?}]", "");
+    }
+
+    if min_age.is_some() {
+        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", r"AND age >= ${min_age?}");
+        included_params.push("min_age");
+    } else {
+        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", "");
+    }
+
+    if since.is_some() {
+        final_sql = final_sql.replace(r"$[AND created_at >= ${since?}]", r"AND created_at >= ${since?}");
+        included_params.push("since");
+    } else {
+        final_sql = final_sql.replace(r"$[AND created_at >= ${since?}]", "");
+    }
+
+    // Renumber all parameters sequentially in the final SQL
+    let mut param_counter = 1;
+    if included_params.contains(&r"name_pattern") {
+        final_sql = final_sql.replace(r"${name_pattern?}", &format!("${}", param_counter));
+        param_counter += 1;
+    }
+    if included_params.contains(&r"min_age") {
+        final_sql = final_sql.replace(r"${min_age?}", &format!("${}", param_counter));
+        param_counter += 1;
+    }
+    if included_params.contains(&r"since") {
+        final_sql = final_sql.replace(r"${since?}", &format!("${}", param_counter));
+        param_counter += 1;
+    }
+
+    let mut query = sqlx::query(&final_sql);
+
+    if included_params.contains(&r"name_pattern") {
+        query = query.bind(name_pattern.as_ref().unwrap());
+    }
+
+    if included_params.contains(&r"min_age") {
+        query = query.bind(min_age.as_ref().unwrap());
+    }
+
+    if included_params.contains(&r"since") {
+        query = query.bind(since.as_ref().unwrap());
+    }
+
+    let rows = query.fetch_all(executor).await?;
+    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
+        Ok(SearchUsersAdvancedItem {
+        id: row.try_get::<i32, _>("id")?,
+        name: row.try_get::<String, _>("name")?,
+        email: row.try_get::<String, _>("email")?,
+        age: row.try_get::<Option<i32>, _>("age")?,
+        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
     })
     }).collect();
     result

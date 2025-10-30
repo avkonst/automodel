@@ -68,8 +68,8 @@ queries:
       include_params: []              # Empty list means skip all parameters
 
   - name: find_users_by_name_and_age
-    sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})"
-    description: "Find users by name pattern with optional minimum age filter"
+    sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} $[AND age >= ${min_age?}] AND name = ${name_exact} $[AND age <= ${max_age?}] ORDER BY name"
+    description: "Find users by name pattern with optional minimum age filter (using conditional syntax)"
     module: "users"
     expect: "multiple"
 
@@ -94,6 +94,12 @@ queries:
     description: "Search users by name pattern - expects at least one match"
     module: "users"
     expect: "at_least_one"
+  
+  - name: search_users_advanced
+    sql: "SELECT id, name, email, age, created_at FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] $[AND created_at >= ${since?}] ORDER BY created_at DESC"
+    description: "Advanced user search with multiple optional filters using conditional syntax"
+    module: "users"
+    expect: "multiple"
 
   # PostgreSQL Enum Examples
   - name: get_users_by_status
