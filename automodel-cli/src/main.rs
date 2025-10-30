@@ -89,12 +89,6 @@ fn build_cli() -> Command {
                         .long("dry-run")
                         .help("Generate code but don't write to file")
                         .action(clap::ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("analysis-only")
-                        .long("analysis-only")
-                        .help("Only run query performance analysis, don't generate code")
-                        .action(clap::ArgAction::SetTrue),
                 ),
         )
 }
@@ -118,22 +112,13 @@ async fn generate_with_args(
     }
 
     let dry_run = matches.get_flag("dry-run");
-    let analysis_only = matches.get_flag("analysis-only");
 
-    if analysis_only {
-        println!("AutoModel Query Analyzer");
-        println!("=======================");
-    } else {
-        println!("AutoModel Code Generator");
-        println!("=======================");
-    }
+    println!("AutoModel Code Generator");
+    println!("=======================");
     println!("Database URL: {}", database_url);
     println!("YAML file: {}", yaml_path.display());
     if dry_run {
         println!("Mode: Dry run (no files will be written)");
-    }
-    if analysis_only {
-        println!("Mode: Analysis only (no code generation)");
     }
     println!();
 
@@ -154,91 +139,6 @@ async fn generate_with_args(
         );
     }
     println!();
-
-    // Run query performance analysis
-    println!("Running query performance analysis...");
-    match automodel.analyze_all_queries(database_url).await {
-        Ok(analysis) => {
-            println!("✓ Query analysis completed successfully");
-            println!("Analysis Results:");
-            println!("================");
-
-            for result in &analysis.query_results {
-                println!("\nQuery: {}", result.query_name);
-
-                let status = if result.errors.iter().any(|e| e.contains("Analysis skipped")) {
-                    "⏭️  SKIPPED BY CONFIGURATION"
-                } else if !result.errors.is_empty() {
-                    "❌ ANALYSIS FAILED"
-                } else if result.has_sequential_scan {
-                    "⚠️  SEQUENTIAL SCAN DETECTED"
-                } else {
-                    "✓ No sequential scans"
-                };
-
-                println!("  Status: {}", status);
-
-                if !result.warnings.is_empty() {
-                    println!("  Warnings:");
-                    for warning in &result.warnings {
-                        println!("    - {}", warning);
-                    }
-                }
-
-                if !result.errors.is_empty() {
-                    println!("  Errors:");
-                    for error in &result.errors {
-                        println!("    - {}", error);
-                    }
-                }
-            }
-
-            let total_queries = analysis.query_results.len();
-            let skipped_queries = analysis
-                .query_results
-                .iter()
-                .filter(|r| r.errors.iter().any(|e| e.contains("Analysis skipped")))
-                .count();
-            let failed_queries = analysis
-                .query_results
-                .iter()
-                .filter(|r| {
-                    !r.errors.is_empty() && !r.errors.iter().any(|e| e.contains("Analysis skipped"))
-                })
-                .count();
-            let analyzed_queries = total_queries - skipped_queries - failed_queries;
-            let queries_with_seq_scan = analysis
-                .query_results
-                .iter()
-                .filter(|r| r.has_sequential_scan)
-                .count();
-
-            println!("\nSummary:");
-            println!("========");
-            println!("Total queries: {}", total_queries);
-            println!("Successfully analyzed: {}", analyzed_queries);
-            println!("Skipped by configuration: {}", skipped_queries);
-            println!("Failed analysis: {}", failed_queries);
-            println!("Queries with sequential scans: {}", queries_with_seq_scan);
-
-            if queries_with_seq_scan > 0 {
-                println!("⚠️  Consider adding indexes for queries with sequential scans");
-            } else if analyzed_queries > 0 {
-                println!("✓ All analyzed queries appear to be using indexes efficiently");
-            }
-        }
-        Err(e) => {
-            println!("❌ Query analysis failed: {}", e);
-            println!("Note: Analysis requires a live database connection");
-        }
-    }
-    println!();
-
-    // If analysis-only mode, exit here
-    if analysis_only {
-        println!("Analysis complete. Skipping code generation.");
-        return Ok(());
-    }
 
     // Get modules for modular generation
     let modules = automodel.get_modules();

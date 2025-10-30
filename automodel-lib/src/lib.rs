@@ -767,43 +767,4 @@ impl AutoModel {
         Ok(())
     }
 
-    /// Analyze all queries for performance issues
-    pub async fn analyze_all_queries(&self, database_url: &str) -> Result<QueryAnalysisResults> {
-        let mut query_results = Vec::new();
-
-        for query in &self.queries {
-            // Check if analysis should be performed for this specific query
-            if !self.should_analyze_query(query) {
-                // Skip analysis for this query - add a result indicating it was skipped
-                query_results.push(QueryAnalysisResult {
-                    query_name: query.name.clone(),
-                    has_sequential_scan: false,
-                    warnings: Vec::new(),
-                    errors: vec!["Analysis skipped (disabled by configuration)".to_string()],
-                });
-                continue;
-            }
-
-            match Self::analyze_query_performance(database_url, &query.sql, &query.name).await {
-                Ok(analysis) => {
-                    query_results.push(QueryAnalysisResult {
-                        query_name: query.name.clone(),
-                        has_sequential_scan: analysis.has_sequential_scan,
-                        warnings: analysis.warnings,
-                        errors: Vec::new(),
-                    });
-                }
-                Err(e) => {
-                    query_results.push(QueryAnalysisResult {
-                        query_name: query.name.clone(),
-                        has_sequential_scan: false,
-                        warnings: Vec::new(),
-                        errors: vec![format!("Analysis failed: {}", e)],
-                    });
-                }
-            }
-        }
-
-        Ok(QueryAnalysisResults { query_results })
-    }
 }

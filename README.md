@@ -52,10 +52,7 @@ cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries
 #### Query Performance Analysis
 
 ```bash
-# Run query analysis only (no code generation)
-cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml --analysis-only
-
-# Analysis is also performed automatically during code generation (if analysis is enabled in the queries.yaml configuration file)
+# Analysis is performed automatically during code generation (if analysis is enabled in the queries.yaml configuration file)
 cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml
 ```
 
@@ -473,7 +470,6 @@ pub async fn find_users_complex(
 - `-o, --output <FILE>` - Custom output file path
 - `-m, --module <NAME>` - Module name for generated code
 - `--dry-run` - Preview generated code without writing files
-- `--analysis-only` - Run query performance analysis only, skip code generation
 
 
 ## Examples
