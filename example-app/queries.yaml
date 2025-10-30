@@ -3,7 +3,7 @@ defaults:
   telemetry:
     level: debug           # none, info, debug, trace
     include_sql: true      # Include SQL queries in spans by default
-  ensure_indexes: false     # Enable query analysis to test conditional syntax handling - test11129779999
+  ensure_indexes: true     # Enable query analysis to test conditional syntax handling - test
 
 queries:
   - name: get_current_time
