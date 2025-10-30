@@ -38,17 +38,13 @@ automodel generate -d postgresql://localhost/mydb -f queries.yaml
 
 # Custom output file
 automodel generate -d postgresql://localhost/mydb -f queries.yaml -o src/database.rs
-
-# Dry run (preview without writing files)
-automodel generate -d postgresql://localhost/mydb -f queries.yaml --dry-run
 ```
 
 **Options:**
 - `-d, --database-url <URL>` - PostgreSQL database URL (required)
 - `-f, --file <FILE>` - YAML file containing query definitions (required)  
-- `-o, --output <FILE>` - Output file for generated code (optional, defaults to `generated.rs`)
+- `-o, --output <FILE>` - Output file for generated code (optional, defaults to `generated`)
 - `-m, --module <NAME>` - Root module name for generated code (optional)
-- `--dry-run` - Generate code but don't write to file (optional)
 
 ## 📄 Query Definition Format
 

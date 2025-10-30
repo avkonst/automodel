@@ -12,16 +12,8 @@ async fn main() -> Result<()> {
             generate_command(sub_matches).await?;
         }
         _ => {
-            // Default to generate command for backward compatibility
-            if let (Some(database_url), Some(yaml_file)) = (
-                matches.get_one::<String>("database-url"),
-                matches.get_one::<String>("yaml-file"),
-            ) {
-                generate_with_args(database_url, yaml_file, &matches).await?;
-            } else {
-                build_cli().print_help()?;
-                std::process::exit(1);
-            }
+            build_cli().print_help()?;
+            std::process::exit(1);
         }
     }
 
@@ -33,24 +25,8 @@ fn build_cli() -> Command {
         .version("0.1.0")
         .author("AutoModel Team")
         .about("Generate typed Rust functions from YAML-defined SQL queries")
-        .subcommand_required(false)
-        .arg_required_else_help(false)
-        .arg(
-            Arg::new("database-url")
-                .short('d')
-                .long("database-url")
-                .value_name("URL")
-                .help("PostgreSQL database connection URL")
-                .required(false),
-        )
-        .arg(
-            Arg::new("yaml-file")
-                .short('f')
-                .long("file")
-                .value_name("FILE")
-                .help("YAML file containing query definitions")
-                .required(false),
-        )
+        .subcommand_required(true)
+        .arg_required_else_help(true)
         .subcommand(
             Command::new("generate")
                 .about("Generate Rust code from YAML queries")
@@ -83,12 +59,6 @@ fn build_cli() -> Command {
                         .long("module")
                         .value_name("NAME")
                         .help("Module name for generated code"),
-                )
-                .arg(
-                    Arg::new("dry-run")
-                        .long("dry-run")
-                        .help("Generate code but don't write to file")
-                        .action(clap::ArgAction::SetTrue),
                 ),
         )
 }
@@ -111,15 +81,10 @@ async fn generate_with_args(
         anyhow::bail!("YAML file '{}' does not exist", yaml_path.display());
     }
 
-    let dry_run = matches.get_flag("dry-run");
-
     println!("AutoModel Code Generator");
     println!("=======================");
     println!("Database URL: {}", database_url);
     println!("YAML file: {}", yaml_path.display());
-    if dry_run {
-        println!("Mode: Dry run (no files will be written)");
-    }
     println!();
 
     // Create AutoModel instance and load queries from YAML file
@@ -147,11 +112,11 @@ async fn generate_with_args(
     let output_path = if let Some(output) = matches.get_one::<String>("output") {
         PathBuf::from(output)
     } else {
-        // Default to yaml filename with _generated suffix as directory
+        // Default to generated directory
         "generated".into()
     };
 
-    // If modules exist, generate modular structure like generate_at_build_time
+    // Check if we should generate modular structure or single file
     if !modules.is_empty() {
         println!(
             "Generating modular structure with {} modules: {}",
@@ -159,102 +124,26 @@ async fn generate_with_args(
             modules.join(", ")
         );
 
-        if !dry_run {
-            // Create output directory
-            tokio::fs::create_dir_all(&output_path).await?;
-        }
-
-        // Calculate hash of YAML file for proper file headers
-        let yaml_hash = AutoModel::calculate_file_hash(yaml_file)?;
-
-        // Generate code for queries without a module (main mod.rs content)
-        println!("Generating main module code...");
-        let main_module_code = automodel
-            .generate_code_for_module(database_url, None)
+        // Use the new generate_to_directory method to reuse logic
+        automodel
+            .generate_to_directory(database_url, output_path.to_str().unwrap(), yaml_file)
             .await?;
 
-        let mut mod_declarations = Vec::new();
-
-        // Generate separate files for each named module
-        for module in &modules {
-            println!("Generating module: {}", module);
-            let module_code = automodel
-                .generate_code_for_module_with_hash(database_url, Some(module), Some(yaml_hash))
-                .await?;
-
-            if dry_run {
-                println!("\n--- Module: {} ---", module);
-                println!("{}", module_code);
-            } else {
-                let module_file = output_path.join(format!("{}.rs", module));
-                tokio::fs::write(&module_file, &module_code).await?;
-                println!("  ✓ Generated: {}", module_file.display());
-            }
-
-            mod_declarations.push(format!("pub mod {};", module));
-        }
-
-        // Create the main mod.rs file
-        let mut mod_content = String::new();
-
-        // Add hash comment at the top for consistency with build-time generation
-        mod_content.push_str(&format!("// AUTOMODEL_HASH: {}\n", yaml_hash));
-        mod_content.push_str(
-            "// This file was automatically generated by AutoModel. Do not edit manually.\n\n",
+        println!("✓ Modular code generation complete!");
+        println!("Generated in directory: {}", output_path.display());
+        println!("Include in your Rust project with:");
+        println!(
+            "  mod {};",
+            output_path.file_name().unwrap().to_str().unwrap()
         );
-
-        // Add module declarations first
-        if !mod_declarations.is_empty() {
-            for declaration in mod_declarations {
-                mod_content.push_str(&declaration);
-                mod_content.push('\n');
-            }
-            mod_content.push('\n');
-        }
-
-        // Add the main module code (functions without a specific module)
-        let trimmed_main_code = main_module_code.trim();
-        if !trimmed_main_code.is_empty()
-            && trimmed_main_code
-                .lines()
-                .any(|line| !line.starts_with("//") && !line.trim().is_empty())
-        {
-            mod_content.push_str(&main_module_code);
-        }
-
-        if dry_run {
-            println!("\n--- mod.rs ---");
-            println!("{}", mod_content);
-        } else {
-            let mod_file = output_path.join("mod.rs");
-            tokio::fs::write(&mod_file, &mod_content).await?;
-            println!("  ✓ Generated: {}", mod_file.display());
-        }
-
-        if !dry_run {
-            println!("\n✓ Modular code generation complete!");
-            println!("Generated in directory: {}", output_path.display());
-            println!("Include in your Rust project with:");
-            println!(
-                "  mod {};",
-                output_path.file_name().unwrap().to_str().unwrap()
-            );
-        }
     } else {
-        // No modules, generate single file like before
+        // No modules, generate single file
         println!("No modules defined, generating single file...");
 
-        // Generate Rust code
         println!("Connecting to database and generating code...");
         let code = automodel.generate_code(database_url).await?;
 
         println!("✓ Successfully generated Rust code");
-
-        if dry_run {
-            println!("\nGenerated code (dry run):");
-            println!("{}", code);
-            return Ok(());
-        }
 
         // Use output_path but as a file (add .rs extension if it's a directory name)
         let output_file = if output_path.extension().is_none() {
