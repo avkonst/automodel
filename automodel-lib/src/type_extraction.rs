@@ -451,24 +451,18 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
     };
 
     let mut chars = sql.chars().peekable();
-    let mut current_pos = 0;
 
     while let Some(ch) = chars.next() {
-        current_pos += ch.len_utf8();
-
         if ch == '$' {
             if let Some(&'[') = chars.peek() {
                 // Found start of conditional block
                 chars.next(); // consume '['
-                current_pos += 1;
 
-                let block_start = current_pos;
                 let mut block_content = String::new();
                 let mut bracket_count = 1; // We already consumed one '['
 
                 // Read until we find the matching ']'
                 while let Some(inner_ch) = chars.next() {
-                    current_pos += inner_ch.len_utf8();
 
                     if inner_ch == '[' {
                         bracket_count += 1;
@@ -477,7 +471,6 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
                         bracket_count -= 1;
                         if bracket_count == 0 {
                             // Found the end of this conditional block
-                            let block_end = current_pos - 1;
 
                             // Extract parameters from this block
                             let block_params = parse_parameter_names_from_sql(&block_content);
@@ -486,8 +479,6 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
                             result.conditional_blocks.push(ConditionalBlock {
                                 sql_content: block_content.clone(),
                                 parameters: block_params.clone(),
-                                start_pos: block_start,
-                                end_pos: block_end,
                             });
 
                             // Add parameters to our global list
@@ -506,11 +497,9 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
             } else if let Some(&'{') = chars.peek() {
                 // Found regular parameter ${param}
                 chars.next(); // consume '{'
-                current_pos += 1;
                 let mut param_name = String::new();
 
                 while let Some(inner_ch) = chars.next() {
-                    current_pos += inner_ch.len_utf8();
                     if inner_ch == '}' {
                         if !param_name.is_empty() {
                             result.all_parameters.push(param_name.clone());

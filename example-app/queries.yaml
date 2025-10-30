@@ -6,7 +6,7 @@ telemetry:
 queries:
   - name: get_current_time
     sql: "SELECT NOW() as current_time"
-    description: "Get the current timestamp"
+    description: "Get the current server timestamp"
     module: "admin"
     expect: "exactly_one"
 
