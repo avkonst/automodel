@@ -34,8 +34,7 @@ pub struct QueryAnalysisResults {
 /// Main entry point for the automodel library
 pub struct AutoModel {
     queries: Vec<QueryDefinition>,
-    telemetry: Option<TelemetryConfig>,
-    analysis: Option<AnalysisConfig>,
+    defaults: Option<DefaultsConfig>,
 }
 
 impl AutoModel {
@@ -440,8 +439,8 @@ impl AutoModel {
         }
 
         // Fall back to global setting
-        if let Some(ref global_analysis) = self.analysis {
-            return global_analysis.analyze_queries;
+        if let Some(ref defaults) = self.defaults {
+            return defaults.analyze_queries;
         }
 
         // Default is false (no analysis)
@@ -488,8 +487,7 @@ impl AutoModel {
 
         Ok(Self {
             queries: config.queries,
-            telemetry: config.telemetry,
-            analysis: config.analysis,
+            defaults: config.defaults,
         })
     }
 
@@ -589,7 +587,7 @@ impl AutoModel {
         // Generate functions without enum definitions (since they're already at the top)
         for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
             let function_code =
-                generate_function_code_without_enums(query, type_info, self.telemetry.as_ref())?;
+                generate_function_code_without_enums(query, type_info, self.defaults.as_ref())?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
         }
@@ -766,5 +764,4 @@ impl AutoModel {
 
         Ok(())
     }
-
 }

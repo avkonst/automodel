@@ -1,10 +1,7 @@
-# Global telemetry configuration 
-telemetry:
-  level: debug              # none, info, debug, trace
+# Global defaults
+defaults:
+  telemetry_level: debug    # none, info, debug, trace
   include_sql: true         # Include SQL queries in spans by default
-
-# Query analysis configuration
-analysis:
   analyze_queries: true     # Enable query analysis to test conditional syntax handling - test6
 
 queries:

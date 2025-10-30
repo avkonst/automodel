@@ -35,16 +35,30 @@ impl Default for TelemetryLevel {
     }
 }
 
-/// OpenTelemetry configuration
+/// Default configuration for telemetry and analysis
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TelemetryConfig {
+pub struct DefaultsConfig {
     /// Global telemetry level
     #[serde(default)]
-    pub level: TelemetryLevel,
+    pub telemetry_level: TelemetryLevel,
     /// Whether to include SQL queries as fields in spans by default
     /// Defaults to false
     #[serde(default)]
     pub include_sql: bool,
+    /// Whether to analyze query performance and warn about sequential scans
+    /// Defaults to false
+    #[serde(default)]
+    pub analyze_queries: bool,
+}
+
+impl Default for DefaultsConfig {
+    fn default() -> Self {
+        Self {
+            telemetry_level: TelemetryLevel::None,
+            include_sql: false,
+            analyze_queries: false,
+        }
+    }
 }
 
 impl Default for ExpectedResult {
@@ -95,32 +109,13 @@ pub struct QueryTelemetryConfig {
     pub include_sql: Option<bool>,
 }
 
-/// Query performance analysis configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AnalysisConfig {
-    /// Whether to analyze query performance and warn about sequential scans
-    /// Defaults to false
-    #[serde(default)]
-    pub analyze_queries: bool,
-}
-
-impl Default for AnalysisConfig {
-    fn default() -> Self {
-        Self {
-            analyze_queries: false,
-        }
-    }
-}
-
 /// Root structure for the YAML file containing multiple queries
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     /// List of SQL queries
     pub queries: Vec<QueryDefinition>,
-    /// Global telemetry configuration
-    pub telemetry: Option<TelemetryConfig>,
-    /// Query analysis configuration
-    pub analysis: Option<AnalysisConfig>,
+    /// Default configuration for telemetry and analysis
+    pub defaults: Option<DefaultsConfig>,
 }
 
 impl Config {
@@ -128,8 +123,7 @@ impl Config {
     pub fn new() -> Self {
         Self {
             queries: Vec::new(),
-            telemetry: None,
-            analysis: None,
+            defaults: None,
         }
     }
 }

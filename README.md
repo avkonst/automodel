@@ -140,13 +140,10 @@ AutoModel uses YAML files to define SQL queries and their associated metadata. H
 ### Root Configuration Structure
 
 ```yaml
-# Global telemetry configuration (optional)
-telemetry:
-  level: debug              # Global telemetry level
+# Default configuration for telemetry and analysis (optional)
+defaults:
+  telemetry_level: debug    # Global telemetry level
   include_sql: true         # Include SQL in spans globally
-
-# Global query analysis configuration (optional)
-analysis:
   analyze_queries: true     # Enable query performance analysis globally
 
 # List of query definitions
@@ -156,14 +153,15 @@ queries:
     # ... other query options
 ```
 
-### Global Telemetry Configuration
+### Default Configuration
 
-The `telemetry` section configures OpenTelemetry instrumentation for all queries:
+The `defaults` section configures global settings for telemetry and analysis:
 
 ```yaml
-telemetry:
-  level: debug              # none | info | debug | trace (default: none)
+defaults:
+  telemetry_level: debug    # none | info | debug | trace (default: none)
   include_sql: true         # true | false (default: false)
+  analyze_queries: true     # true | false (default: false)
 ```
 
 **Telemetry Levels:**
@@ -172,20 +170,9 @@ telemetry:
 - `debug` - Include SQL query in span (if include_sql is true)
 - `trace` - Include both SQL query and parameters in span
 
-### Global Query Analysis Configuration
-
-The `analysis` section configures query performance analysis using PostgreSQL EXPLAIN:
-
-```yaml
-analysis:
-  analyze_queries: true     # true | false (default: false)
-```
-
 **Query Analysis Features:**
 - **Sequential scan detection**: Automatically detects queries that perform full table scans
-- **Performance warnings**: Identifies queries that might benefit from indexing
-- **PostgreSQL EXPLAIN integration**: Uses EXPLAIN to analyze query execution plans
-- **Type-aware analysis**: Handles all PostgreSQL types including custom enums and numeric types
+- **Warnings during build**: Identifies queries that might benefit from indexing
 
 ### Query Configuration
 
@@ -322,11 +309,9 @@ queries:
 
 ```yaml
 # Global configuration
-telemetry:
-  level: debug
+defaults:
+  telemetry_level: debug
   include_sql: false
-
-analysis:
   analyze_queries: true           # Enable query performance analysis
 
 queries:

@@ -1,4 +1,4 @@
-use crate::config::{ExpectedResult, QueryDefinition, TelemetryConfig, TelemetryLevel};
+use crate::config::{DefaultsConfig, ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
     generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
@@ -10,7 +10,7 @@ fn generate_tracing_attribute(
     query: &QueryDefinition,
     param_names: &[String],
     telemetry_level: &TelemetryLevel,
-    global_telemetry: Option<&TelemetryConfig>,
+    global_defaults: Option<&DefaultsConfig>,
 ) -> String {
     use std::collections::HashSet;
 
@@ -91,13 +91,13 @@ fn generate_tracing_attribute(
             include_sql
         } else {
             // Fall back to global configuration
-            global_telemetry
+            global_defaults
                 .map(|config| config.include_sql)
                 .unwrap_or(false)
         }
     } else {
         // No query telemetry, use global configuration
-        global_telemetry
+        global_defaults
             .map(|config| config.include_sql)
             .unwrap_or(false)
     };
@@ -151,7 +151,7 @@ fn generate_indented_raw_string_literal(sql: &str) -> String {
 /// Determine the effective telemetry level for a query
 fn determine_telemetry_level(
     query: &QueryDefinition,
-    global_telemetry: Option<&TelemetryConfig>,
+    global_defaults: Option<&DefaultsConfig>,
 ) -> TelemetryLevel {
     // Query-specific telemetry overrides global settings
     if let Some(query_telemetry) = &query.telemetry {
@@ -161,8 +161,8 @@ fn determine_telemetry_level(
     }
 
     // Fall back to global telemetry level
-    global_telemetry
-        .map(|config| config.level.clone())
+    global_defaults
+        .map(|config| config.telemetry_level.clone())
         .unwrap_or(TelemetryLevel::None)
 }
 
@@ -171,7 +171,7 @@ fn determine_telemetry_level(
 pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
-    global_telemetry: Option<&TelemetryConfig>,
+    global_defaults: Option<&DefaultsConfig>,
 ) -> Result<String> {
     let mut code = String::new();
 
@@ -200,12 +200,12 @@ pub fn generate_function_code_without_enums(
         .collect();
 
     // Determine effective telemetry configuration and generate attribute
-    let effective_telemetry_level = determine_telemetry_level(query, global_telemetry);
+    let effective_telemetry_level = determine_telemetry_level(query, global_defaults);
     let tracing_attribute = generate_tracing_attribute(
         query,
         &clean_param_names,
         &effective_telemetry_level,
-        global_telemetry,
+        global_defaults,
     );
     code.push_str(&tracing_attribute);
 
