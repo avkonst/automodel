@@ -1,4 +1,3 @@
-use sqlx::Row;
 
 #[derive(Debug, Clone)]
 pub struct GetUserActivitySummaryResult {
@@ -13,46 +12,19 @@ pub struct GetUserActivitySummaryResult {
 }
 
 /// Complex CTE query combining recent users with aggregate statistics
-/// Generated from SQL:
-/// WITH recent_users AS (
-/// SELECT id, name, email, created_at,
-/// ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank
-/// FROM users
-/// WHERE created_at > NOW() - INTERVAL '30 days'
-/// ),
-/// user_stats AS (
-/// SELECT
-/// COUNT(*) as total_users,
-/// COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,
-/// AVG(age)::float8 as avg_age
-/// FROM users
-/// )
-/// SELECT
-/// ru.id,
-/// ru.name,
-/// ru.email,
-/// ru.created_at,
-/// ru.rank,
-/// us.total_users,
-/// us.weekly_users,
-/// us.avg_age
-/// FROM recent_users ru
-/// CROSS JOIN user_stats us
-/// WHERE ru.rank <= 10
-/// ORDER BY ru.rank
 pub async fn get_user_activity_summary(pool: &sqlx::PgPool) -> Result<Vec<GetUserActivitySummaryResult>, sqlx::Error> {
-    let mut query = sqlx::query("WITH recent_users AS (\n  SELECT id, name, email, created_at,\n         ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank\n  FROM users \n  WHERE created_at > NOW() - INTERVAL '30 days'\n),\nuser_stats AS (\n  SELECT \n    COUNT(*) as total_users,\n    COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,\n    AVG(age)::float8 as avg_age\n  FROM users\n)\nSELECT \n  ru.id,\n  ru.name, \n  ru.email,\n  ru.created_at,\n  ru.rank,\n  us.total_users,\n  us.weekly_users,\n  us.avg_age\nFROM recent_users ru\nCROSS JOIN user_stats us\nWHERE ru.rank <= 10\nORDER BY ru.rank\n");
+    let query = sqlx::query("WITH recent_users AS (\n  SELECT id, name, email, created_at,\n         ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank\n  FROM users \n  WHERE created_at > NOW() - INTERVAL '30 days'\n),\nuser_stats AS (\n  SELECT \n    COUNT(*) as total_users,\n    COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,\n    AVG(age)::float8 as avg_age\n  FROM users\n)\nSELECT \n  ru.id,\n  ru.name, \n  ru.email,\n  ru.created_at,\n  ru.rank,\n  us.total_users,\n  us.weekly_users,\n  us.avg_age\nFROM recent_users ru\nCROSS JOIN user_stats us\nWHERE ru.rank <= 10\nORDER BY ru.rank\n");
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetUserActivitySummaryResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        rank: row.try_get::<Option<i64>, _>("rank")?,
-        total_users: row.try_get::<Option<i64>, _>("total_users")?,
-        weekly_users: row.try_get::<Option<i64>, _>("weekly_users")?,
-        avg_age: row.try_get::<Option<f64>, _>("avg_age")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        rank: sqlx::Row::try_get::<Option<i64>, _>(row, "rank")?,
+        total_users: sqlx::Row::try_get::<Option<i64>, _>(row, "total_users")?,
+        weekly_users: sqlx::Row::try_get::<Option<i64>, _>(row, "weekly_users")?,
+        avg_age: sqlx::Row::try_get::<Option<f64>, _>(row, "avg_age")?,
     })
     }).collect();
     result
@@ -70,58 +42,18 @@ pub struct GetHierarchicalUserDataResult {
 }
 
 /// Recursive CTE to build user hierarchy with referral relationships
-/// Generated from SQL:
-/// WITH RECURSIVE user_hierarchy AS (
-/// -- Base case: users without referrers (or top-level users)
-/// SELECT
-/// id,
-/// name,
-/// email,
-/// NULL::integer as referrer_id,
-/// 1 as level,
-/// ARRAY[id] as path
-/// FROM users
-/// WHERE referrer_id IS NULL
-/// 
-/// UNION ALL
-/// 
-/// -- Recursive case: users with referrers
-/// SELECT
-/// u.id,
-/// u.name,
-/// u.email,
-/// u.referrer_id,
-/// uh.level + 1,
-/// uh.path || u.id
-/// FROM users u
-/// INNER JOIN user_hierarchy uh ON u.referrer_id = uh.id
-/// WHERE u.id != ALL(uh.path) -- Prevent cycles
-/// AND uh.level < 5 -- Limit depth
-/// )
-/// SELECT
-/// uh.id,
-/// uh.name,
-/// uh.email,
-/// uh.referrer_id,
-/// uh.level,
-/// uh.path,
-/// COUNT(referrals.id) as direct_referrals_count
-/// FROM user_hierarchy uh
-/// LEFT JOIN users referrals ON referrals.referrer_id = uh.id
-/// GROUP BY uh.id, uh.name, uh.email, uh.referrer_id, uh.level, uh.path
-/// ORDER BY uh.level, uh.name
 pub async fn get_hierarchical_user_data(pool: &sqlx::PgPool) -> Result<Vec<GetHierarchicalUserDataResult>, sqlx::Error> {
-    let mut query = sqlx::query("WITH RECURSIVE user_hierarchy AS (\n  -- Base case: users without referrers (or top-level users)\n  SELECT \n    id, \n    name, \n    email, \n    NULL::integer as referrer_id,\n    1 as level,\n    ARRAY[id] as path\n  FROM users \n  WHERE referrer_id IS NULL\n  \n  UNION ALL\n  \n  -- Recursive case: users with referrers\n  SELECT \n    u.id,\n    u.name,\n    u.email,\n    u.referrer_id,\n    uh.level + 1,\n    uh.path || u.id\n  FROM users u\n  INNER JOIN user_hierarchy uh ON u.referrer_id = uh.id\n  WHERE u.id != ALL(uh.path) -- Prevent cycles\n  AND uh.level < 5 -- Limit depth\n)\nSELECT \n  uh.id,\n  uh.name,\n  uh.email,\n  uh.referrer_id,\n  uh.level,\n  uh.path,\n  COUNT(referrals.id) as direct_referrals_count\nFROM user_hierarchy uh\nLEFT JOIN users referrals ON referrals.referrer_id = uh.id\nGROUP BY uh.id, uh.name, uh.email, uh.referrer_id, uh.level, uh.path\nORDER BY uh.level, uh.name\n");
+    let query = sqlx::query("WITH RECURSIVE user_hierarchy AS (\n  -- Base case: users without referrers (or top-level users)\n  SELECT \n    id, \n    name, \n    email, \n    NULL::integer as referrer_id,\n    1 as level,\n    ARRAY[id] as path\n  FROM users \n  WHERE referrer_id IS NULL\n  \n  UNION ALL\n  \n  -- Recursive case: users with referrers\n  SELECT \n    u.id,\n    u.name,\n    u.email,\n    u.referrer_id,\n    uh.level + 1,\n    uh.path || u.id\n  FROM users u\n  INNER JOIN user_hierarchy uh ON u.referrer_id = uh.id\n  WHERE u.id != ALL(uh.path) -- Prevent cycles\n  AND uh.level < 5 -- Limit depth\n)\nSELECT \n  uh.id,\n  uh.name,\n  uh.email,\n  uh.referrer_id,\n  uh.level,\n  uh.path,\n  COUNT(referrals.id) as direct_referrals_count\nFROM user_hierarchy uh\nLEFT JOIN users referrals ON referrals.referrer_id = uh.id\nGROUP BY uh.id, uh.name, uh.email, uh.referrer_id, uh.level, uh.path\nORDER BY uh.level, uh.name\n");
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetHierarchicalUserDataResult {
-        id: row.try_get::<Option<i32>, _>("id")?,
-        name: row.try_get::<Option<String>, _>("name")?,
-        email: row.try_get::<Option<String>, _>("email")?,
-        referrer_id: row.try_get::<Option<i32>, _>("referrer_id")?,
-        level: row.try_get::<Option<i32>, _>("level")?,
-        path: row.try_get::<Option</* Unknown type: _int4 */ String>, _>("path")?,
-        direct_referrals_count: row.try_get::<Option<i64>, _>("direct_referrals_count")?,
+        id: sqlx::Row::try_get::<Option<i32>, _>(row, "id")?,
+        name: sqlx::Row::try_get::<Option<String>, _>(row, "name")?,
+        email: sqlx::Row::try_get::<Option<String>, _>(row, "email")?,
+        referrer_id: sqlx::Row::try_get::<Option<i32>, _>(row, "referrer_id")?,
+        level: sqlx::Row::try_get::<Option<i32>, _>(row, "level")?,
+        path: sqlx::Row::try_get::<Option</* Unknown type: _int4 */ String>, _>(row, "path")?,
+        direct_referrals_count: sqlx::Row::try_get::<Option<i64>, _>(row, "direct_referrals_count")?,
     })
     }).collect();
     result
@@ -145,53 +77,27 @@ pub struct GetUserActivityWithPostsResult {
 }
 
 /// Complex JOIN query with temporal filtering across multiple tables
-/// Generated from SQL:
-/// SELECT
-/// u.id as user_id,
-/// u.name,
-/// u.email,
-/// u.created_at as user_created_at,
-/// u.updated_at as user_updated_at,
-/// p.id as post_id,
-/// p.title,
-/// p.content,
-/// p.created_at as post_created_at,
-/// p.published_at,
-/// c.comment_count,
-/// EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,
-/// DATE_TRUNC('day', p.created_at) as post_date
-/// FROM users u
-/// INNER JOIN posts p ON u.id = p.author_id
-/// LEFT JOIN (
-/// SELECT post_id, COUNT(*) as comment_count
-/// FROM comments
-/// GROUP BY post_id
-/// ) c ON p.id = c.post_id
-/// WHERE u.created_at > ${since}
-/// AND p.published_at IS NOT NULL
-/// AND p.created_at BETWEEN ${start_date} AND ${end_date}
-/// ORDER BY p.created_at DESC, u.name
 pub async fn get_user_activity_with_posts(pool: &sqlx::PgPool, since: chrono::DateTime<chrono::Utc>, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetUserActivityWithPostsResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT \n  u.id as user_id,\n  u.name,\n  u.email,\n  u.created_at as user_created_at,\n  u.updated_at as user_updated_at,\n  p.id as post_id,\n  p.title,\n  p.content,\n  p.created_at as post_created_at,\n  p.published_at,\n  c.comment_count,\n  EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,\n  DATE_TRUNC('day', p.created_at) as post_date\nFROM users u\nINNER JOIN posts p ON u.id = p.author_id\nLEFT JOIN (\n  SELECT post_id, COUNT(*) as comment_count\n  FROM comments \n  GROUP BY post_id\n) c ON p.id = c.post_id\nWHERE u.created_at > $1\n  AND p.published_at IS NOT NULL\n  AND p.created_at BETWEEN $2 AND $3\nORDER BY p.created_at DESC, u.name\n");
-    query = query.bind(since);
-    query = query.bind(start_date);
-    query = query.bind(end_date);
+    let query = sqlx::query("SELECT \n  u.id as user_id,\n  u.name,\n  u.email,\n  u.created_at as user_created_at,\n  u.updated_at as user_updated_at,\n  p.id as post_id,\n  p.title,\n  p.content,\n  p.created_at as post_created_at,\n  p.published_at,\n  c.comment_count,\n  EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,\n  DATE_TRUNC('day', p.created_at) as post_date\nFROM users u\nINNER JOIN posts p ON u.id = p.author_id\nLEFT JOIN (\n  SELECT post_id, COUNT(*) as comment_count\n  FROM comments \n  GROUP BY post_id\n) c ON p.id = c.post_id\nWHERE u.created_at > $1\n  AND p.published_at IS NOT NULL\n  AND p.created_at BETWEEN $2 AND $3\nORDER BY p.created_at DESC, u.name\n");
+    let query = query.bind(since);
+    let query = query.bind(start_date);
+    let query = query.bind(end_date);
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetUserActivityWithPostsResult {
-        user_id: row.try_get::<i32, _>("user_id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        user_created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("user_created_at")?,
-        user_updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("user_updated_at")?,
-        post_id: row.try_get::<i32, _>("post_id")?,
-        title: row.try_get::<String, _>("title")?,
-        content: row.try_get::<Option<String>, _>("content")?,
-        post_created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("post_created_at")?,
-        published_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("published_at")?,
-        comment_count: row.try_get::<Option<i64>, _>("comment_count")?,
-        hours_since_post: row.try_get::<Option<f64>, _>("hours_since_post")?,
-        post_date: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("post_date")?,
+        user_id: sqlx::Row::try_get::<i32, _>(row, "user_id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        user_created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "user_created_at")?,
+        user_updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "user_updated_at")?,
+        post_id: sqlx::Row::try_get::<i32, _>(row, "post_id")?,
+        title: sqlx::Row::try_get::<String, _>(row, "title")?,
+        content: sqlx::Row::try_get::<Option<String>, _>(row, "content")?,
+        post_created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "post_created_at")?,
+        published_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "published_at")?,
+        comment_count: sqlx::Row::try_get::<Option<i64>, _>(row, "comment_count")?,
+        hours_since_post: sqlx::Row::try_get::<Option<f64>, _>(row, "hours_since_post")?,
+        post_date: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "post_date")?,
     })
     }).collect();
     result
@@ -216,71 +122,27 @@ pub struct GetUserEngagementMetricsResult {
 }
 
 /// Complex multi-CTE query calculating user engagement metrics with temporal analysis
-/// Generated from SQL:
-/// WITH user_activity AS (
-/// SELECT
-/// u.id,
-/// u.name,
-/// u.email,
-/// u.created_at,
-/// COUNT(DISTINCT p.id) as post_count,
-/// COUNT(DISTINCT c.id) as comment_count,
-/// MAX(p.created_at) as last_post_date,
-/// MAX(c.created_at) as last_comment_date,
-/// AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours
-/// FROM users u
-/// LEFT JOIN posts p ON u.id = p.author_id
-/// AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
-/// LEFT JOIN comments c ON u.id = c.author_id
-/// AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
-/// GROUP BY u.id, u.name, u.email, u.created_at
-/// ),
-/// engagement_scores AS (
-/// SELECT
-/// *,
-/// (post_count * 3 + comment_count) as engagement_score,
-/// CASE
-/// WHEN last_post_date > NOW() - INTERVAL '7 days' OR
-/// last_comment_date > NOW() - INTERVAL '7 days' THEN 'active'
-/// WHEN last_post_date > NOW() - INTERVAL '30 days' OR
-/// last_comment_date > NOW() - INTERVAL '30 days' THEN 'semi_active'
-/// ELSE 'inactive'
-/// END as activity_status,
-/// EXTRACT(EPOCH FROM (NOW() - GREATEST(
-/// COALESCE(last_post_date, '1970-01-01'::timestamp),
-/// COALESCE(last_comment_date, '1970-01-01'::timestamp)
-/// )))::float8/86400 as days_since_last_activity
-/// FROM user_activity
-/// )
-/// SELECT
-/// es.*,
-/// RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,
-/// PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile
-/// FROM engagement_scores es
-/// WHERE engagement_score > ${min_engagement_score}
-/// ORDER BY engagement_score DESC, name
-/// LIMIT ${limit_results}
 pub async fn get_user_engagement_metrics(pool: &sqlx::PgPool, min_engagement_score: i64, limit_results: i64) -> Result<Vec<GetUserEngagementMetricsResult>, sqlx::Error> {
-    let mut query = sqlx::query("WITH user_activity AS (\n  SELECT \n    u.id,\n    u.name,\n    u.email,\n    u.created_at,\n    COUNT(DISTINCT p.id) as post_count,\n    COUNT(DISTINCT c.id) as comment_count,\n    MAX(p.created_at) as last_post_date,\n    MAX(c.created_at) as last_comment_date,\n    AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours\n  FROM users u\n  LEFT JOIN posts p ON u.id = p.author_id \n    AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'\n  LEFT JOIN comments c ON u.id = c.author_id \n    AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'\n  GROUP BY u.id, u.name, u.email, u.created_at\n),\nengagement_scores AS (\n  SELECT \n    *,\n    (post_count * 3 + comment_count) as engagement_score,\n    CASE \n      WHEN last_post_date > NOW() - INTERVAL '7 days' OR \n           last_comment_date > NOW() - INTERVAL '7 days' THEN 'active'\n      WHEN last_post_date > NOW() - INTERVAL '30 days' OR \n           last_comment_date > NOW() - INTERVAL '30 days' THEN 'semi_active'\n      ELSE 'inactive'\n    END as activity_status,\n    EXTRACT(EPOCH FROM (NOW() - GREATEST(\n      COALESCE(last_post_date, '1970-01-01'::timestamp), \n      COALESCE(last_comment_date, '1970-01-01'::timestamp)\n    )))::float8/86400 as days_since_last_activity\n  FROM user_activity\n)\nSELECT \n  es.*,\n  RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,\n  PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile\nFROM engagement_scores es\nWHERE engagement_score > $1\nORDER BY engagement_score DESC, name\nLIMIT $2\n");
-    query = query.bind(min_engagement_score);
-    query = query.bind(limit_results);
+    let query = sqlx::query("WITH user_activity AS (\n  SELECT \n    u.id,\n    u.name,\n    u.email,\n    u.created_at,\n    COUNT(DISTINCT p.id) as post_count,\n    COUNT(DISTINCT c.id) as comment_count,\n    MAX(p.created_at) as last_post_date,\n    MAX(c.created_at) as last_comment_date,\n    AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours\n  FROM users u\n  LEFT JOIN posts p ON u.id = p.author_id \n    AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'\n  LEFT JOIN comments c ON u.id = c.author_id \n    AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'\n  GROUP BY u.id, u.name, u.email, u.created_at\n),\nengagement_scores AS (\n  SELECT \n    *,\n    (post_count * 3 + comment_count) as engagement_score,\n    CASE \n      WHEN last_post_date > NOW() - INTERVAL '7 days' OR \n           last_comment_date > NOW() - INTERVAL '7 days' THEN 'active'\n      WHEN last_post_date > NOW() - INTERVAL '30 days' OR \n           last_comment_date > NOW() - INTERVAL '30 days' THEN 'semi_active'\n      ELSE 'inactive'\n    END as activity_status,\n    EXTRACT(EPOCH FROM (NOW() - GREATEST(\n      COALESCE(last_post_date, '1970-01-01'::timestamp), \n      COALESCE(last_comment_date, '1970-01-01'::timestamp)\n    )))::float8/86400 as days_since_last_activity\n  FROM user_activity\n)\nSELECT \n  es.*,\n  RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,\n  PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile\nFROM engagement_scores es\nWHERE engagement_score > $1\nORDER BY engagement_score DESC, name\nLIMIT $2\n");
+    let query = query.bind(min_engagement_score);
+    let query = query.bind(limit_results);
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetUserEngagementMetricsResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        post_count: row.try_get::<Option<i64>, _>("post_count")?,
-        comment_count: row.try_get::<Option<i64>, _>("comment_count")?,
-        last_post_date: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_post_date")?,
-        last_comment_date: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_comment_date")?,
-        avg_publish_delay_hours: row.try_get::<Option<f64>, _>("avg_publish_delay_hours")?,
-        engagement_score: row.try_get::<Option<i64>, _>("engagement_score")?,
-        activity_status: row.try_get::<Option<String>, _>("activity_status")?,
-        days_since_last_activity: row.try_get::<Option<f64>, _>("days_since_last_activity")?,
-        engagement_rank: row.try_get::<Option<i64>, _>("engagement_rank")?,
-        engagement_percentile: row.try_get::<Option<f64>, _>("engagement_percentile")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        post_count: sqlx::Row::try_get::<Option<i64>, _>(row, "post_count")?,
+        comment_count: sqlx::Row::try_get::<Option<i64>, _>(row, "comment_count")?,
+        last_post_date: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "last_post_date")?,
+        last_comment_date: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "last_comment_date")?,
+        avg_publish_delay_hours: sqlx::Row::try_get::<Option<f64>, _>(row, "avg_publish_delay_hours")?,
+        engagement_score: sqlx::Row::try_get::<Option<i64>, _>(row, "engagement_score")?,
+        activity_status: sqlx::Row::try_get::<Option<String>, _>(row, "activity_status")?,
+        days_since_last_activity: sqlx::Row::try_get::<Option<f64>, _>(row, "days_since_last_activity")?,
+        engagement_rank: sqlx::Row::try_get::<Option<i64>, _>(row, "engagement_rank")?,
+        engagement_percentile: sqlx::Row::try_get::<Option<f64>, _>(row, "engagement_percentile")?,
     })
     }).collect();
     result
@@ -300,44 +162,23 @@ pub struct GetTimeSeriesUserRegistrationsResult {
 }
 
 /// Time series analysis of user registrations with age demographics
-/// Generated from SQL:
-/// WITH time_series AS (
-/// SELECT
-/// DATE_TRUNC('day', created_at) as period_start,
-/// COUNT(*) as registrations_count,
-/// COUNT(*) FILTER (WHERE age BETWEEN 18 AND 30) as young_adult_count,
-/// COUNT(*) FILTER (WHERE age BETWEEN 31 AND 50) as middle_aged_count,
-/// COUNT(*) FILTER (WHERE age > 50) as senior_count,
-/// AVG(age) as avg_age,
-/// MIN(created_at) as first_registration,
-/// MAX(created_at) as last_registration
-/// FROM users
-/// WHERE created_at BETWEEN ${start_date} AND ${end_date}
-/// GROUP BY DATE_TRUNC('day', created_at)
-/// HAVING COUNT(*) >= ${min_registrations}
-/// )
-/// SELECT
-/// *,
-/// EXTRACT(EPOCH FROM (last_registration - first_registration))::float8/3600 as period_span_hours
-/// FROM time_series
-/// ORDER BY period_start DESC
 pub async fn get_time_series_user_registrations(pool: &sqlx::PgPool, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>, min_registrations: i64) -> Result<Vec<GetTimeSeriesUserRegistrationsResult>, sqlx::Error> {
-    let mut query = sqlx::query("WITH time_series AS (\n  SELECT \n    DATE_TRUNC('day', created_at) as period_start,\n    COUNT(*) as registrations_count,\n    COUNT(*) FILTER (WHERE age BETWEEN 18 AND 30) as young_adult_count,\n    COUNT(*) FILTER (WHERE age BETWEEN 31 AND 50) as middle_aged_count, \n    COUNT(*) FILTER (WHERE age > 50) as senior_count,\n    AVG(age) as avg_age,\n    MIN(created_at) as first_registration,\n    MAX(created_at) as last_registration\n  FROM users\n  WHERE created_at BETWEEN $1 AND $2\n  GROUP BY DATE_TRUNC('day', created_at)\n  HAVING COUNT(*) >= $3\n)\nSELECT \n  *,\n  EXTRACT(EPOCH FROM (last_registration - first_registration))::float8/3600 as period_span_hours\nFROM time_series\nORDER BY period_start DESC\n");
-    query = query.bind(start_date);
-    query = query.bind(end_date);
-    query = query.bind(min_registrations);
+    let query = sqlx::query("WITH time_series AS (\n  SELECT \n    DATE_TRUNC('day', created_at) as period_start,\n    COUNT(*) as registrations_count,\n    COUNT(*) FILTER (WHERE age BETWEEN 18 AND 30) as young_adult_count,\n    COUNT(*) FILTER (WHERE age BETWEEN 31 AND 50) as middle_aged_count, \n    COUNT(*) FILTER (WHERE age > 50) as senior_count,\n    AVG(age) as avg_age,\n    MIN(created_at) as first_registration,\n    MAX(created_at) as last_registration\n  FROM users\n  WHERE created_at BETWEEN $1 AND $2\n  GROUP BY DATE_TRUNC('day', created_at)\n  HAVING COUNT(*) >= $3\n)\nSELECT \n  *,\n  EXTRACT(EPOCH FROM (last_registration - first_registration))::float8/3600 as period_span_hours\nFROM time_series\nORDER BY period_start DESC\n");
+    let query = query.bind(start_date);
+    let query = query.bind(end_date);
+    let query = query.bind(min_registrations);
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetTimeSeriesUserRegistrationsResult {
-        period_start: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("period_start")?,
-        registrations_count: row.try_get::<Option<i64>, _>("registrations_count")?,
-        young_adult_count: row.try_get::<Option<i64>, _>("young_adult_count")?,
-        middle_aged_count: row.try_get::<Option<i64>, _>("middle_aged_count")?,
-        senior_count: row.try_get::<Option<i64>, _>("senior_count")?,
-        avg_age: row.try_get::<Option<rust_decimal::Decimal>, _>("avg_age")?,
-        first_registration: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("first_registration")?,
-        last_registration: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_registration")?,
-        period_span_hours: row.try_get::<Option<f64>, _>("period_span_hours")?,
+        period_start: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "period_start")?,
+        registrations_count: sqlx::Row::try_get::<Option<i64>, _>(row, "registrations_count")?,
+        young_adult_count: sqlx::Row::try_get::<Option<i64>, _>(row, "young_adult_count")?,
+        middle_aged_count: sqlx::Row::try_get::<Option<i64>, _>(row, "middle_aged_count")?,
+        senior_count: sqlx::Row::try_get::<Option<i64>, _>(row, "senior_count")?,
+        avg_age: sqlx::Row::try_get::<Option<rust_decimal::Decimal>, _>(row, "avg_age")?,
+        first_registration: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "first_registration")?,
+        last_registration: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "last_registration")?,
+        period_span_hours: sqlx::Row::try_get::<Option<f64>, _>(row, "period_span_hours")?,
     })
     }).collect();
     result
@@ -360,47 +201,29 @@ pub struct GetUsersWithTimezoneInfoResult {
 }
 
 /// Users with comprehensive timezone and temporal information
-/// Generated from SQL:
-/// SELECT
-/// id,
-/// name,
-/// email,
-/// created_at,
-/// created_at AT TIME ZONE 'UTC' AT TIME ZONE ${user_timezone} as created_at_user_tz,
-/// updated_at,
-/// updated_at AT TIME ZONE 'UTC' AT TIME ZONE ${user_timezone} as updated_at_user_tz,
-/// AGE(NOW(), created_at) as account_age,
-/// EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 as account_age_days,
-/// DATE_PART('dow', created_at) as created_day_of_week,
-/// DATE_PART('hour', created_at) as created_hour,
-/// TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at
-/// FROM users
-/// WHERE created_at BETWEEN ${start_date} AND ${end_date}
-/// AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN ${min_age_days} AND ${max_age_days}
-/// ORDER BY created_at DESC
 pub async fn get_users_with_timezone_info(pool: &sqlx::PgPool, user_timezone: String, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>, min_age_days: rust_decimal::Decimal, max_age_days: rust_decimal::Decimal) -> Result<Vec<GetUsersWithTimezoneInfoResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT \n  id,\n  name,\n  email,\n  created_at,\n  created_at AT TIME ZONE 'UTC' AT TIME ZONE $1 as created_at_user_tz,\n  updated_at,\n  updated_at AT TIME ZONE 'UTC' AT TIME ZONE $2 as updated_at_user_tz,\n  AGE(NOW(), created_at) as account_age,\n  EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 as account_age_days,\n  DATE_PART('dow', created_at) as created_day_of_week,\n  DATE_PART('hour', created_at) as created_hour,\n  TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at\nFROM users \nWHERE created_at BETWEEN $3 AND $4\n  AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN $5 AND $6\nORDER BY created_at DESC\n");
-    query = query.bind(&user_timezone);
-    query = query.bind(&user_timezone);
-    query = query.bind(start_date);
-    query = query.bind(end_date);
-    query = query.bind(min_age_days);
-    query = query.bind(max_age_days);
+    let query = sqlx::query("SELECT \n  id,\n  name,\n  email,\n  created_at,\n  created_at AT TIME ZONE 'UTC' AT TIME ZONE $1 as created_at_user_tz,\n  updated_at,\n  updated_at AT TIME ZONE 'UTC' AT TIME ZONE $2 as updated_at_user_tz,\n  AGE(NOW(), created_at) as account_age,\n  EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 as account_age_days,\n  DATE_PART('dow', created_at) as created_day_of_week,\n  DATE_PART('hour', created_at) as created_hour,\n  TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at\nFROM users \nWHERE created_at BETWEEN $3 AND $4\n  AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN $5 AND $6\nORDER BY created_at DESC\n");
+    let query = query.bind(&user_timezone);
+    let query = query.bind(&user_timezone);
+    let query = query.bind(start_date);
+    let query = query.bind(end_date);
+    let query = query.bind(min_age_days);
+    let query = query.bind(max_age_days);
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetUsersWithTimezoneInfoResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        created_at_user_tz: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at_user_tz")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
-        updated_at_user_tz: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at_user_tz")?,
-        account_age: row.try_get::<Option</* Unknown type: interval */ String>, _>("account_age")?,
-        account_age_days: row.try_get::<Option<rust_decimal::Decimal>, _>("account_age_days")?,
-        created_day_of_week: row.try_get::<Option<f64>, _>("created_day_of_week")?,
-        created_hour: row.try_get::<Option<f64>, _>("created_hour")?,
-        formatted_created_at: row.try_get::<Option<String>, _>("formatted_created_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        created_at_user_tz: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at_user_tz")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
+        updated_at_user_tz: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at_user_tz")?,
+        account_age: sqlx::Row::try_get::<Option</* Unknown type: interval */ String>, _>(row, "account_age")?,
+        account_age_days: sqlx::Row::try_get::<Option<rust_decimal::Decimal>, _>(row, "account_age_days")?,
+        created_day_of_week: sqlx::Row::try_get::<Option<f64>, _>(row, "created_day_of_week")?,
+        created_hour: sqlx::Row::try_get::<Option<f64>, _>(row, "created_hour")?,
+        formatted_created_at: sqlx::Row::try_get::<Option<String>, _>(row, "formatted_created_at")?,
     })
     }).collect();
     result

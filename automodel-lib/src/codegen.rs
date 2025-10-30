@@ -5,66 +5,7 @@ use crate::type_extraction::{
 };
 use anyhow::Result;
 
-/// Generate a JSON wrapper helper for custom types
-pub fn generate_json_wrapper_helper() -> String {
-    r#"
-// JSON wrapper for custom types that implement Serialize/Deserialize
-struct JsonWrapper<T>(T);
 
-impl<T> JsonWrapper<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
-    fn new(value: T) -> Self {
-        Self(value)
-    }
-    
-    fn into_inner(self) -> T {
-        self.0
-    }
-}
-
-impl<T> FromSql<'_> for JsonWrapper<T>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    fn from_sql(ty: &Type, raw: &[u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
-        let json_value = serde_json::Value::from_sql(ty, raw)?;
-        let value = T::deserialize(json_value)?;
-        Ok(JsonWrapper(value))
-    }
-
-    fn accepts(ty: &Type) -> bool {
-        matches!(*ty, Type::JSON | Type::JSONB)
-    }
-}
-
-impl<T> ToSql for JsonWrapper<T>
-where
-    T: Serialize + std::fmt::Debug,
-{
-    fn to_sql(&self, ty: &Type, out: &mut bytes::BytesMut) -> Result<tokio_postgres::types::IsNull, Box<dyn Error + Sync + Send>> {
-        let json_value = serde_json::to_value(&self.0)?;
-        json_value.to_sql(ty, out)
-    }
-
-    fn accepts(ty: &Type) -> bool {
-        matches!(*ty, Type::JSON | Type::JSONB)
-    }
-
-    tokio_postgres::types::to_sql_checked!();
-}
-
-impl<T> std::fmt::Debug for JsonWrapper<T>
-where
-    T: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("JsonWrapper").field(&self.0).finish()
-    }
-}
-"#.to_string()
-}
 
 /// Generate Rust function code for a SQL query without enum definitions
 /// (assumes enums are already defined elsewhere in the module)
@@ -81,18 +22,8 @@ pub fn generate_function_code_without_enums(
     }
 
     // Generate function documentation
-    let sql_lines: Vec<&str> = query.sql.lines().collect();
     if let Some(description) = &query.description {
         code.push_str(&format!("/// {}\n", description));
-    }
-
-    if sql_lines.len() == 1 {
-        code.push_str(&format!("/// Generated from SQL: {}\n", sql_lines[0]));
-    } else {
-        code.push_str("/// Generated from SQL:\n");
-        for line in sql_lines {
-            code.push_str(&format!("/// {}\n", line.trim()));
-        }
     }
 
     // Generate function signature
@@ -164,16 +95,16 @@ fn generate_function_body(
 
     // Build the SQLx query with parameter bindings
     body.push_str(&format!(
-        "    let mut query = sqlx::query(\"{}\");\n",
+        "    let query = sqlx::query(\"{}\");\n",
         escape_sql_string(&converted_sql)
     ));
 
-    // Add parameter bindings
+    // Add parameter bindings using method chaining
     if !type_info.input_types.is_empty() {
         if param_names.is_empty() {
             // Fallback to generic param names
             for i in 1..=type_info.input_types.len() {
-                body.push_str(&format!("    query = query.bind(param_{});\n", i));
+                body.push_str(&format!("    let query = query.bind(param_{});\n", i));
             }
         } else {
             // Use meaningful parameter names from SQL
@@ -187,9 +118,9 @@ fn generate_function_body(
                 // Use reference for String parameters to avoid move issues
                 let param_type = &type_info.input_types[i].rust_type;
                 if param_type == "String" {
-                    body.push_str(&format!("    query = query.bind(&{});\n", clean_name));
+                    body.push_str(&format!("    let query = query.bind(&{});\n", clean_name));
                 } else {
-                    body.push_str(&format!("    query = query.bind({});\n", clean_name));
+                    body.push_str(&format!("    let query = query.bind({});\n", clean_name));
                 }
             }
         }
@@ -315,12 +246,12 @@ fn generate_sqlx_value_extraction(output_col: &OutputColumn, _index: usize) -> S
         let inner_type = &output_col.rust_type.rust_type;
         if output_col.rust_type.is_nullable {
             format!(
-                "row.try_get::<Option<serde_json::Value>, _>(\"{}\")?.map(|v| serde_json::from_value::<{}>(v)).transpose()?",
+                "sqlx::Row::try_get::<Option<serde_json::Value>, _>(&row, \"{}\")?.map(|v| serde_json::from_value::<{}>(v)).transpose()?",
                 column_name, inner_type
             )
         } else {
             format!(
-                "serde_json::from_value::<{}>(row.try_get::<serde_json::Value, _>(\"{}\")?)?,",
+                "serde_json::from_value::<{}>(sqlx::Row::try_get::<serde_json::Value, _>(&row, \"{}\")?)?,",
                 inner_type, column_name
             )
         }
@@ -328,12 +259,12 @@ fn generate_sqlx_value_extraction(output_col: &OutputColumn, _index: usize) -> S
         // For standard types, extract directly
         if output_col.rust_type.is_nullable {
             format!(
-                "row.try_get::<Option<{}>, _>(\"{}\")?",
+                "sqlx::Row::try_get::<Option<{}>, _>(&row, \"{}\")?",
                 output_col.rust_type.rust_type, column_name
             )
         } else {
             format!(
-                "row.try_get::<{}, _>(\"{}\")?",
+                "sqlx::Row::try_get::<{}, _>(&row, \"{}\")?",
                 output_col.rust_type.rust_type, column_name
             )
         }

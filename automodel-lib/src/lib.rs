@@ -51,16 +51,7 @@ impl AutoModel {
             return Ok(generated_code);
         }
 
-        // Check if any query in this module has custom type mappings
-        let has_custom_types = module_queries.iter().any(|q| q.types.is_some());
-
-        // Add imports first - SQLx Row is always needed for generated functions
-        generated_code.push_str("use sqlx::Row;\n");
-        if has_custom_types {
-            generated_code.push_str("use serde::{Serialize, Deserialize};\n");
-            generated_code.push_str("use sqlx::{FromRow, Type};\n");
-            generated_code.push_str("use std::error::Error;\n");
-        }
+        // No imports needed - we use full paths in generated code
         generated_code.push_str("\n");
 
         // Collect type information for all queries in this module
@@ -95,11 +86,6 @@ impl AutoModel {
             let function_code = generate_function_code_without_enums(query, type_info)?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
-        }
-
-        // Add JSON wrapper helper at the end if we have custom field type mappings
-        if has_custom_types {
-            generated_code.push_str(&generate_json_wrapper_helper());
         }
 
         Ok(generated_code)

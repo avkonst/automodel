@@ -1,4 +1,3 @@
-use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserStatus {
@@ -64,24 +63,20 @@ pub struct InsertUserResult {
 }
 
 /// Insert a new user with all fields and return the created user
-/// Generated from SQL:
-/// INSERT INTO users (name, email, age, profile)
-/// VALUES (${name}, ${email}, ${age}, ${profile})
-/// RETURNING id, name, email, age, created_at
 pub async fn insert_user(pool: &sqlx::PgPool, name: String, email: String, age: i32, profile: serde_json::Value) -> Result<InsertUserResult, sqlx::Error> {
-    let mut query = sqlx::query("INSERT INTO users (name, email, age, profile)\nVALUES ($1, $2, $3, $4)\nRETURNING id, name, email, age, created_at\n");
-    query = query.bind(&name);
-    query = query.bind(&email);
-    query = query.bind(age);
-    query = query.bind(profile);
+    let query = sqlx::query("INSERT INTO users (name, email, age, profile)\nVALUES ($1, $2, $3, $4)\nRETURNING id, name, email, age, created_at\n");
+    let query = query.bind(&name);
+    let query = query.bind(&email);
+    let query = query.bind(age);
+    let query = query.bind(profile);
     let row = query.fetch_one(pool).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(InsertUserResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
     })
     })();
     result
@@ -99,19 +94,18 @@ pub struct GetAllUsersResult {
 }
 
 /// Get all users with all their fields
-/// Generated from SQL: SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC
 pub async fn get_all_users(pool: &sqlx::PgPool) -> Result<Vec<GetAllUsersResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC");
+    let query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC");
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetAllUsersResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
     })
     }).collect();
     result
@@ -129,22 +123,21 @@ pub struct FindUserByEmailResult {
 }
 
 /// Find a user by their email address
-/// Generated from SQL: SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = ${email}
 pub async fn find_user_by_email(pool: &sqlx::PgPool, email: String) -> Result<Option<FindUserByEmailResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = $1");
-    query = query.bind(&email);
+    let query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = $1");
+    let query = query.bind(&email);
     let row = query.fetch_optional(pool).await?;
     match row {
         Some(row) => {
             let result: Result<_, sqlx::Error> = (|| {
                 Ok(FindUserByEmailResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
     })
             })();
             result.map(Some)
@@ -164,20 +157,19 @@ pub struct UpdateUserProfileResult {
 }
 
 /// Update a user's profile by their ID
-/// Generated from SQL: UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at
 pub async fn update_user_profile(pool: &sqlx::PgPool, profile: serde_json::Value, user_id: i32) -> Result<UpdateUserProfileResult, sqlx::Error> {
-    let mut query = sqlx::query("UPDATE users SET profile = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, age, profile, updated_at");
-    query = query.bind(profile);
-    query = query.bind(user_id);
+    let query = sqlx::query("UPDATE users SET profile = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, age, profile, updated_at");
+    let query = query.bind(profile);
+    let query = query.bind(user_id);
     let row = query.fetch_one(pool).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(UpdateUserProfileResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
     })
     })();
     result
@@ -192,19 +184,18 @@ pub struct FindUsersByNameAndAgeResult {
 }
 
 /// Find users by name pattern with optional minimum age filter
-/// Generated from SQL: SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})
 pub async fn find_users_by_name_and_age(pool: &sqlx::PgPool, name_pattern: String, min_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email, age FROM users WHERE name ILIKE $1 AND ($2::integer IS NULL OR age >= $3)");
-    query = query.bind(&name_pattern);
-    query = query.bind(min_age);
-    query = query.bind(min_age);
+    let query = sqlx::query("SELECT id, name, email, age FROM users WHERE name ILIKE $1 AND ($2::integer IS NULL OR age >= $3)");
+    let query = query.bind(&name_pattern);
+    let query = query.bind(min_age);
+    let query = query.bind(min_age);
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(FindUsersByNameAndAgeResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
     })
     }).collect();
     result
@@ -222,23 +213,22 @@ pub struct GetRecentUsersResult {
 }
 
 /// Get users created after a specific timestamp - expects at least one user
-/// Generated from SQL: SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > ${since} ORDER BY created_at DESC
 pub async fn get_recent_users(pool: &sqlx::PgPool, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > $1 ORDER BY created_at DESC");
-    query = query.bind(since);
+    let query = sqlx::query("SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > $1 ORDER BY created_at DESC");
+    let query = query.bind(since);
     let rows = query.fetch_all(pool).await?;
     if rows.is_empty() {
         return Err(sqlx::Error::RowNotFound);
     }
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetRecentUsersResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
     })
     }).collect();
     result
@@ -255,23 +245,22 @@ pub struct GetActiveUsersByAgeRangeResult {
 }
 
 /// Get active users within an age range - must return at least one user or fails
-/// Generated from SQL: SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN ${min_age} AND ${max_age} AND updated_at > NOW() - INTERVAL '30 days'
 pub async fn get_active_users_by_age_range(pool: &sqlx::PgPool, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN $1 AND $2 AND updated_at > NOW() - INTERVAL '30 days'");
-    query = query.bind(min_age);
-    query = query.bind(max_age);
+    let query = sqlx::query("SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN $1 AND $2 AND updated_at > NOW() - INTERVAL '30 days'");
+    let query = query.bind(min_age);
+    let query = query.bind(max_age);
     let rows = query.fetch_all(pool).await?;
     if rows.is_empty() {
         return Err(sqlx::Error::RowNotFound);
     }
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetActiveUsersByAgeRangeResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
     })
     }).collect();
     result
@@ -285,19 +274,18 @@ pub struct SearchUsersByNamePatternResult {
 }
 
 /// Search users by name pattern - expects at least one match
-/// Generated from SQL: SELECT id, name, email FROM users WHERE name ILIKE ${pattern} ORDER BY name
 pub async fn search_users_by_name_pattern(pool: &sqlx::PgPool, pattern: String) -> Result<Vec<SearchUsersByNamePatternResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email FROM users WHERE name ILIKE $1 ORDER BY name");
-    query = query.bind(&pattern);
+    let query = sqlx::query("SELECT id, name, email FROM users WHERE name ILIKE $1 ORDER BY name");
+    let query = query.bind(&pattern);
     let rows = query.fetch_all(pool).await?;
     if rows.is_empty() {
         return Err(sqlx::Error::RowNotFound);
     }
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(SearchUsersByNamePatternResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
     })
     }).collect();
     result
@@ -312,17 +300,16 @@ pub struct GetUsersByStatusResult {
 }
 
 /// Get users by their status (enum parameter and enum output)
-/// Generated from SQL: SELECT id, name, email, status FROM users WHERE status = ${user_status} ORDER BY name
 pub async fn get_users_by_status(pool: &sqlx::PgPool, user_status: UserStatus) -> Result<Vec<GetUsersByStatusResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT id, name, email, status FROM users WHERE status = $1 ORDER BY name");
-    query = query.bind(user_status);
+    let query = sqlx::query("SELECT id, name, email, status FROM users WHERE status = $1 ORDER BY name");
+    let query = query.bind(user_status);
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetUsersByStatusResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        status: row.try_get::<Option<UserStatus>, _>("status")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        status: sqlx::Row::try_get::<Option<UserStatus>, _>(row, "status")?,
     })
     }).collect();
     result
@@ -335,28 +322,26 @@ pub struct UpdateUserStatusResult {
 }
 
 /// Update user status and return the new status
-/// Generated from SQL: UPDATE users SET status = ${new_status} WHERE id = ${user_id} RETURNING id, status
 pub async fn update_user_status(pool: &sqlx::PgPool, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusResult, sqlx::Error> {
-    let mut query = sqlx::query("UPDATE users SET status = $1 WHERE id = $2 RETURNING id, status");
-    query = query.bind(new_status);
-    query = query.bind(user_id);
+    let query = sqlx::query("UPDATE users SET status = $1 WHERE id = $2 RETURNING id, status");
+    let query = query.bind(new_status);
+    let query = query.bind(user_id);
     let row = query.fetch_one(pool).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(UpdateUserStatusResult {
-        id: row.try_get::<i32, _>("id")?,
-        status: row.try_get::<Option<UserStatus>, _>("status")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        status: sqlx::Row::try_get::<Option<UserStatus>, _>(row, "status")?,
     })
     })();
     result
 }
 
 /// Get all possible user statuses currently in use
-/// Generated from SQL: SELECT DISTINCT status FROM users ORDER BY status
 pub async fn get_all_user_statuses(pool: &sqlx::PgPool) -> Result<Vec<Option<UserStatus>>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT DISTINCT status FROM users ORDER BY status");
+    let query = sqlx::query("SELECT DISTINCT status FROM users ORDER BY status");
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
-        Ok(row.try_get::<Option<UserStatus>, _>("status")?)
+        Ok(sqlx::Row::try_get::<Option<UserStatus>, _>(row, "status")?)
     }).collect();
     result
 }
@@ -375,21 +360,20 @@ pub struct GetAllUsersWithStarResult {
 }
 
 /// Get all users using SELECT * to fetch all columns
-/// Generated from SQL: SELECT * FROM users ORDER BY created_at DESC
 pub async fn get_all_users_with_star(pool: &sqlx::PgPool) -> Result<Vec<GetAllUsersWithStarResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT * FROM users ORDER BY created_at DESC");
+    let query = sqlx::query("SELECT * FROM users ORDER BY created_at DESC");
     let rows = query.fetch_all(pool).await?;
     let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
         Ok(GetAllUsersWithStarResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
-        status: row.try_get::<Option<UserStatus>, _>("status")?,
-        referrer_id: row.try_get::<Option<i32>, _>("referrer_id")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
+        status: sqlx::Row::try_get::<Option<UserStatus>, _>(row, "status")?,
+        referrer_id: sqlx::Row::try_get::<Option<i32>, _>(row, "referrer_id")?,
     })
     }).collect();
     result
@@ -409,24 +393,23 @@ pub struct GetUserByIdWithStarResult {
 }
 
 /// Get a single user by ID using SELECT * to fetch all columns
-/// Generated from SQL: SELECT * FROM users WHERE id = ${user_id}
 pub async fn get_user_by_id_with_star(pool: &sqlx::PgPool, user_id: i32) -> Result<Option<GetUserByIdWithStarResult>, sqlx::Error> {
-    let mut query = sqlx::query("SELECT * FROM users WHERE id = $1");
-    query = query.bind(user_id);
+    let query = sqlx::query("SELECT * FROM users WHERE id = $1");
+    let query = query.bind(user_id);
     let row = query.fetch_optional(pool).await?;
     match row {
         Some(row) => {
             let result: Result<_, sqlx::Error> = (|| {
                 Ok(GetUserByIdWithStarResult {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-        updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
-        status: row.try_get::<Option<UserStatus>, _>("status")?,
-        referrer_id: row.try_get::<Option<i32>, _>("referrer_id")?,
+        id: sqlx::Row::try_get::<i32, _>(row, "id")?,
+        name: sqlx::Row::try_get::<String, _>(row, "name")?,
+        email: sqlx::Row::try_get::<String, _>(row, "email")?,
+        age: sqlx::Row::try_get::<Option<i32>, _>(row, "age")?,
+        profile: sqlx::Row::try_get::<Option<serde_json::Value>, _>(row, "profile")?,
+        created_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "created_at")?,
+        updated_at: sqlx::Row::try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(row, "updated_at")?,
+        status: sqlx::Row::try_get::<Option<UserStatus>, _>(row, "status")?,
+        referrer_id: sqlx::Row::try_get::<Option<i32>, _>(row, "referrer_id")?,
     })
             })();
             result.map(Some)
