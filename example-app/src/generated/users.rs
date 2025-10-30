@@ -64,12 +64,12 @@ pub struct InsertUserResult {
 }
 
 /// Insert a new user with all fields and return the created user
-pub async fn insert_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: i32, profile: serde_json::Value) -> Result<InsertUserResult, sqlx::Error> {
+pub async fn insert_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: i32, profile: crate::models::UserProfile) -> Result<InsertUserResult, sqlx::Error> {
     let query = sqlx::query("INSERT INTO users (name, email, age, profile)\nVALUES ($1, $2, $3, $4)\nRETURNING id, name, email, age, created_at\n");
     let query = query.bind(&name);
     let query = query.bind(&email);
     let query = query.bind(age);
-    let query = query.bind(profile);
+    let query = query.bind(serde_json::to_value(&profile).map_err(|e| sqlx::Error::Encode(Box::new(e)))?);
     let row = query.fetch_one(executor).await?;
     let result: Result<_, sqlx::Error> = (|| {
         Ok(InsertUserResult {
@@ -164,9 +164,9 @@ pub struct UpdateUserProfileResult {
 }
 
 /// Update a user's profile by their ID
-pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: serde_json::Value, user_id: i32) -> Result<UpdateUserProfileResult, sqlx::Error> {
+pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileResult, sqlx::Error> {
     let query = sqlx::query("UPDATE users SET profile = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, age, profile, updated_at");
-    let query = query.bind(profile);
+    let query = query.bind(serde_json::to_value(&profile).map_err(|e| sqlx::Error::Encode(Box::new(e)))?);
     let query = query.bind(user_id);
     let row = query.fetch_one(executor).await?;
     let result: Result<_, sqlx::Error> = (|| {

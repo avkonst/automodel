@@ -116,9 +116,18 @@ fn generate_function_body(
                     name.clone()
                 };
 
-                // Use reference for String parameters to avoid move issues
-                let param_type = &type_info.input_types[i].rust_type;
-                if param_type == "String" {
+                let rust_type_info = &type_info.input_types[i];
+                let param_type = &rust_type_info.rust_type;
+                
+                // Check if this is a custom type that needs JSON serialization
+                if rust_type_info.needs_json_wrapper {
+                    // For custom types, serialize to JSON before binding
+                    body.push_str(&format!(
+                        "    let query = query.bind(serde_json::to_value(&{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?);\n", 
+                        clean_name
+                    ));
+                } else if param_type == "String" {
+                    // Use reference for String parameters to avoid move issues
                     body.push_str(&format!("    let query = query.bind(&{});\n", clean_name));
                 } else {
                     body.push_str(&format!("    let query = query.bind({});\n", clean_name));

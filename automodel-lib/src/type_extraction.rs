@@ -74,7 +74,7 @@ pub async fn extract_query_types(
     })?;
 
     // Extract types
-    let input_types = extract_input_types(&client, &statement, &param_names).await?;
+    let input_types = extract_input_types(&client, &statement, &param_names, field_type_mappings).await?;
     let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
 
     Ok(QueryTypeInfo {
@@ -88,6 +88,7 @@ async fn extract_input_types(
     client: &tokio_postgres::Client,
     statement: &Statement,
     param_names: &[String],
+    field_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<Vec<RustType>> {
     let params = statement.params();
     let mut input_types = Vec::new();
@@ -97,10 +98,40 @@ async fn extract_input_types(
         let param_name = param_names.get(i).map(|s| s.as_str()).unwrap_or("");
         let is_optional_param = param_name.ends_with('?');
 
+        // Get clean parameter name (without ? suffix)
+        let clean_param_name = if is_optional_param {
+            &param_name[..param_name.len() - 1]
+        } else {
+            param_name
+        };
+
         let mut rust_type = pg_type_to_rust_type(client, param_type, false).await?; // Always get base type
 
-        // If it's an optional parameter, mark it as nullable
-        if is_optional_param {
+        // Check if there's a custom type mapping for this parameter
+        if let Some(mappings) = field_type_mappings {
+            // Look for any mapping that ends with the parameter name
+            let custom_type = mappings
+                .iter()
+                .find(|(key, _)| {
+                    // Match patterns like "table.field" or just "field"
+                    key.ends_with(&format!(".{}", clean_param_name)) || key == &clean_param_name
+                })
+                .map(|(_, rust_type_name)| rust_type_name.clone());
+
+            if let Some(custom_type) = custom_type {
+                rust_type = RustType {
+                    rust_type: custom_type,
+                    is_nullable: is_optional_param,
+                    needs_json_wrapper: true, // Custom input parameters need JSON serialization
+                    enum_variants: None,
+                    pg_type_name: None,
+                };
+            } else if is_optional_param {
+                // If it's an optional parameter but no custom type, mark as nullable
+                rust_type.is_nullable = true;
+            }
+        } else if is_optional_param {
+            // If no mappings and it's optional parameter, mark as nullable
             rust_type.is_nullable = true;
         }
 
