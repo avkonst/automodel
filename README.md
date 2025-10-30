@@ -164,6 +164,7 @@ defaults:
     level: debug           # none | info | debug | trace (default: none)
     include_sql: true      # true | false (default: false)
   ensure_indexes: true     # true | false (default: false)
+  module: "database"       # Default module for queries without explicit module (optional)
 ```
 
 **Telemetry Levels:**
