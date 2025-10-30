@@ -247,12 +247,17 @@ fn generate_sqlx_value_extraction(output_col: &OutputColumn, _index: usize) -> S
         let inner_type = &output_col.rust_type.rust_type;
         if output_col.rust_type.is_nullable {
             format!(
-                "row.try_get::<Option<serde_json::Value>, _>(\"{}\")?.map(|v| serde_json::from_value::<{}>(v)).transpose()?",
+                "row.try_get::<Option<serde_json::Value>, _>(\"{}\")?
+            .map(|v| serde_json::from_value::<{}>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?",
                 column_name, inner_type
             )
         } else {
             format!(
-                "serde_json::from_value::<{}>(row.try_get::<serde_json::Value, _>(\"{}\")?)?,",
+                "serde_json::from_value::<{}>(
+            row.try_get::<serde_json::Value, _>(\"{}\")?)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e)))?",
                 inner_type, column_name
             )
         }

@@ -26,24 +26,32 @@ queries:
     description: "Insert a new user with all fields and return the created user"
     module: "users"
     expect: "exactly_one"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: get_all_users
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"
     description: "Get all users with all their fields"
     module: "users"
     expect: "multiple"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: find_user_by_email
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = ${email}"
     description: "Find a user by their email address"
     module: "users"
     expect: "possible_one"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: update_user_profile
     sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at"
     description: "Update a user's profile by their ID"
     module: "users"
     expect: "exactly_one"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: find_users_by_name_and_age
     sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})"
@@ -56,12 +64,16 @@ queries:
     description: "Get users created after a specific timestamp - expects at least one user"
     module: "users"
     expect: "at_least_one"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: get_active_users_by_age_range
     sql: "SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN ${min_age} AND ${max_age} AND updated_at > NOW() - INTERVAL '30 days'"
     description: "Get active users within an age range - must return at least one user or fails"
     module: "users"
     expect: "at_least_one"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: search_users_by_name_pattern
     sql: "SELECT id, name, email FROM users WHERE name ILIKE ${pattern} ORDER BY name"
@@ -94,12 +106,16 @@ queries:
     description: "Get all users using SELECT * to fetch all columns"
     module: "users"
     expect: "multiple"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   - name: get_user_by_id_with_star
     sql: "SELECT * FROM users WHERE id = ${user_id}"
     description: "Get a single user by ID using SELECT * to fetch all columns"
     module: "users"
     expect: "possible_one"
+    types:
+      "users.profile": "crate::models::UserProfile"
 
   # Complex queries with CTEs (Common Table Expressions)
   - name: get_user_activity_summary
@@ -310,9 +326,4 @@ queries:
     module: "analytics"
     expect: "multiple"
 
-# Field-specific type mappings for JSON/JSONB fields
-# This demonstrates how you would map specific fields to custom Rust types
-# Schema names can be included: "schema.table.field" or just "table.field"
-types:
-  "test.test_data": "crate::models::TestData"
-  "users.profile": "crate::models::UserProfile"
+

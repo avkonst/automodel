@@ -89,7 +89,7 @@ pub struct GetAllUsersResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -104,7 +104,10 @@ pub async fn get_all_users(executor: impl sqlx::Executor<'_, Database = sqlx::Po
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
     })
@@ -118,7 +121,7 @@ pub struct FindUserByEmailResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -136,7 +139,10 @@ pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sql
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
     })
@@ -153,7 +159,7 @@ pub struct UpdateUserProfileResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -169,7 +175,10 @@ pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sq
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
     })
     })();
@@ -208,7 +217,7 @@ pub struct GetRecentUsersResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -227,7 +236,10 @@ pub async fn get_recent_users(executor: impl sqlx::Executor<'_, Database = sqlx:
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
     })
@@ -241,7 +253,7 @@ pub struct GetActiveUsersByAgeRangeResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -260,7 +272,10 @@ pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Dat
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
     })
     }).collect();
@@ -353,7 +368,7 @@ pub struct GetAllUsersWithStarResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     pub status: Option<UserStatus>,
@@ -370,7 +385,10 @@ pub async fn get_all_users_with_star(executor: impl sqlx::Executor<'_, Database 
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
         status: row.try_get::<Option<UserStatus>, _>("status")?,
@@ -386,7 +404,7 @@ pub struct GetUserByIdWithStarResult {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<serde_json::Value>,
+    pub profile: Option<crate::models::UserProfile>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     pub status: Option<UserStatus>,
@@ -406,7 +424,10 @@ pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
+            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
+            .transpose()?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
         status: row.try_get::<Option<UserStatus>, _>("status")?,
