@@ -118,7 +118,7 @@ fn generate_function_body(
 
                 let rust_type_info = &type_info.input_types[i];
                 let param_type = &rust_type_info.rust_type;
-                
+
                 // Check if this is a custom type that needs JSON serialization
                 if rust_type_info.needs_json_wrapper {
                     // For custom types, serialize to JSON before binding

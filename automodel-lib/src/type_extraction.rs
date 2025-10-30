@@ -74,7 +74,8 @@ pub async fn extract_query_types(
     })?;
 
     // Extract types
-    let input_types = extract_input_types(&client, &statement, &param_names, field_type_mappings).await?;
+    let input_types =
+        extract_input_types(&client, &statement, &param_names, field_type_mappings).await?;
     let output_types = extract_output_types(&client, &statement, field_type_mappings).await?;
 
     Ok(QueryTypeInfo {
