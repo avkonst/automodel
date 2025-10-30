@@ -51,15 +51,18 @@ impl AutoModel {
             return Ok(generated_code);
         }
 
-        // No imports needed - we use full paths in generated code
-        generated_code.push_str("\n");
-
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
         for query in &module_queries {
             let type_info =
                 extract_query_types(database_url, &query.sql, query.types.as_ref()).await?;
             type_infos.push(type_info);
+        }
+
+        // Check if any query has output types (needs Row trait for try_get method)
+        let needs_row_import = type_infos.iter().any(|ti| !ti.output_types.is_empty());
+        if needs_row_import {
+            generated_code.push_str("use sqlx::Row;\n\n");
         }
 
         // Extract and generate all unique enum types for this module

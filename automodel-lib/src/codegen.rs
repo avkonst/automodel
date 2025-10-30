@@ -5,8 +5,6 @@ use crate::type_extraction::{
 };
 use anyhow::Result;
 
-
-
 /// Generate Rust function code for a SQL query without enum definitions
 /// (assumes enums are already defined elsewhere in the module)
 pub fn generate_function_code_without_enums(
@@ -246,12 +244,12 @@ fn generate_sqlx_value_extraction(output_col: &OutputColumn, _index: usize) -> S
         let inner_type = &output_col.rust_type.rust_type;
         if output_col.rust_type.is_nullable {
             format!(
-                "sqlx::Row::try_get::<Option<serde_json::Value>, _>(&row, \"{}\")?.map(|v| serde_json::from_value::<{}>(v)).transpose()?",
+                "row.try_get::<Option<serde_json::Value>, _>(\"{}\")?.map(|v| serde_json::from_value::<{}>(v)).transpose()?",
                 column_name, inner_type
             )
         } else {
             format!(
-                "serde_json::from_value::<{}>(sqlx::Row::try_get::<serde_json::Value, _>(&row, \"{}\")?)?,",
+                "serde_json::from_value::<{}>(row.try_get::<serde_json::Value, _>(\"{}\")?)?,",
                 inner_type, column_name
             )
         }
@@ -259,12 +257,12 @@ fn generate_sqlx_value_extraction(output_col: &OutputColumn, _index: usize) -> S
         // For standard types, extract directly
         if output_col.rust_type.is_nullable {
             format!(
-                "sqlx::Row::try_get::<Option<{}>, _>(&row, \"{}\")?",
+                "row.try_get::<Option<{}>, _>(\"{}\")?",
                 output_col.rust_type.rust_type, column_name
             )
         } else {
             format!(
-                "sqlx::Row::try_get::<{}, _>(&row, \"{}\")?",
+                "row.try_get::<{}, _>(\"{}\")?",
                 output_col.rust_type.rust_type, column_name
             )
         }
