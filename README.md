@@ -16,10 +16,11 @@ This is a Cargo workspace with three main components:
 - 🔌 Connect to PostgreSQL databases  
 - 🔍 Automatically extract input and output types from prepared statements
 - 🛠️ Generate Rust functions with proper type signatures at build time
-- ✅ Support for all common PostgreSQL types
+- ✅ Support for all common PostgreSQL types including custom enums
 - 🏗️ Generate result structs for multi-column queries
 - ⚡ Build-time code generation with automatic regeneration when YAML changes
 - 🎯 Advanced CLI with dry-run and flexible output options
+- 📊 Built-in query performance analysis with sequential scan detection
 
 ## Quick Start
 
@@ -46,6 +47,16 @@ cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries
 
 # Dry run (see generated code without writing files)
 cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml --dry-run
+```
+
+#### Query Performance Analysis
+
+```bash
+# Run query analysis only (no code generation)
+cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml --analysis-only
+
+# Analysis is also performed automatically during code generation (if analysis is enabled in the queries.yaml configuration file)
+cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml
 ```
 
 #### CLI Help
@@ -137,6 +148,10 @@ telemetry:
   level: debug              # Global telemetry level
   include_sql: true         # Include SQL in spans globally
 
+# Global query analysis configuration (optional)
+analysis:
+  analyze_queries: true     # Enable query performance analysis globally
+
 # List of query definitions
 queries:
   - name: query_name
@@ -159,6 +174,21 @@ telemetry:
 - `info` - Basic span creation with function name
 - `debug` - Include SQL query in span (if include_sql is true)
 - `trace` - Include both SQL query and parameters in span
+
+### Global Query Analysis Configuration
+
+The `analysis` section configures query performance analysis using PostgreSQL EXPLAIN:
+
+```yaml
+analysis:
+  analyze_queries: true     # true | false (default: false)
+```
+
+**Query Analysis Features:**
+- **Sequential scan detection**: Automatically detects queries that perform full table scans
+- **Performance warnings**: Identifies queries that might benefit from indexing
+- **PostgreSQL EXPLAIN integration**: Uses EXPLAIN to analyze query execution plans
+- **Type-aware analysis**: Handles all PostgreSQL types including custom enums and numeric types
 
 ### Query Configuration
 
@@ -196,6 +226,9 @@ Each query in the `queries` array supports these options:
     level: trace                          # Override global telemetry level
     include_params: ["id", "name"]       # Specific parameters to include in spans
     include_sql: false                    # Override global SQL inclusion
+  
+  # Per-query analysis configuration
+  analyze_query: true                     # Override global analysis setting for this query
 ```
 
 ### Expected Result Types
@@ -264,6 +297,14 @@ telemetry:
   include_sql: true               # true | false
 ```
 
+### Per-Query Analysis Configuration
+
+Override global analysis settings for specific queries:
+
+```yaml
+analyze_query: true               # true | false - Enable/disable analysis for this query
+```
+
 ### Module Organization
 
 Organize generated functions into modules:
@@ -288,6 +329,9 @@ telemetry:
   level: debug
   include_sql: false
 
+analysis:
+  analyze_queries: true           # Enable query performance analysis
+
 queries:
   # Simple query with custom type
   - name: get_user_profile
@@ -301,6 +345,7 @@ queries:
       level: trace
       include_params: ["user_id"]
       include_sql: true
+    analyze_query: true           # Enable analysis for this specific query
   
   # Query with optional parameter
   - name: search_posts
@@ -311,6 +356,13 @@ queries:
     types:
       "category": "PostCategory"
       "metadata": "crate::models::PostMetadata"
+    analyze_query: true           # Check for sequential scans on posts table
+  
+  - name: create_sessions_table
+    sql: "CREATE TABLE IF NOT EXISTS sessions (id UUID PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW())"
+    description: "Create sessions table"
+    module: "setup"
+    analyze_query: false # force DDL query to be skipped from analysis
   
   # Bulk operation with minimal telemetry
   - name: cleanup_old_sessions
@@ -425,6 +477,7 @@ pub async fn find_users_complex(
 - `-o, --output <FILE>` - Custom output file path
 - `-m, --module <NAME>` - Module name for generated code
 - `--dry-run` - Preview generated code without writing files
+- `--analysis-only` - Run query performance analysis only, skip code generation
 
 ## Build-time vs Runtime Code Generation
 
