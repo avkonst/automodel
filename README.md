@@ -142,8 +142,9 @@ AutoModel uses YAML files to define SQL queries and their associated metadata. H
 ```yaml
 # Default configuration for telemetry and analysis (optional)
 defaults:
-  telemetry_level: debug    # Global telemetry level
-  include_sql: true         # Include SQL in spans globally
+  telemetry:
+    level: debug           # Global telemetry level
+    include_sql: true      # Include SQL in spans globally
   ensure_indexes: true     # Enable query performance analysis globally
 
 # List of query definitions
@@ -159,8 +160,9 @@ The `defaults` section configures global settings for telemetry and analysis:
 
 ```yaml
 defaults:
-  telemetry_level: debug    # none | info | debug | trace (default: none)
-  include_sql: true         # true | false (default: false)
+  telemetry:
+    level: debug           # none | info | debug | trace (default: none)
+    include_sql: true      # true | false (default: false)
   ensure_indexes: true     # true | false (default: false)
 ```
 
@@ -310,8 +312,9 @@ queries:
 ```yaml
 # Global configuration
 defaults:
-  telemetry_level: debug
-  include_sql: false
+  telemetry:
+    level: debug
+    include_sql: false
   ensure_indexes: true           # Enable query performance analysis
 
 queries:
