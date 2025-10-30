@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 use tokio_postgres::types::Type as PgType;
 use tokio_postgres::{NoTls, Statement};
+
+// Global cache for enum type information to avoid repeated database queries
+static ENUM_CACHE: OnceLock<Mutex<HashMap<u32, Option<EnumTypeInfo>>>> = OnceLock::new();
 
 /// Information about a SQL query's input and output types
 #[derive(Debug, Clone)]
@@ -216,12 +221,23 @@ async fn get_column_nullability(
     Ok(nullability)
 }
 
-/// Get enum type information from PostgreSQL system catalogs
+/// Get enum type information from PostgreSQL system catalogs with caching
 pub async fn get_enum_type_info(
     client: &tokio_postgres::Client,
     type_oid: u32,
 ) -> Result<Option<EnumTypeInfo>> {
-    // Query pg_enum to get enum values for a specific type
+    // Initialize cache if not already done
+    let cache = ENUM_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    
+    // Check cache first
+    {
+        let cache_lock = cache.lock().await;
+        if let Some(cached_result) = cache_lock.get(&type_oid) {
+            return Ok(cached_result.clone());
+        }
+    }
+
+    // Not in cache, query the database
     let rows = client
         .query(
             r#"
@@ -235,17 +251,25 @@ pub async fn get_enum_type_info(
         )
         .await?;
 
-    if let Some(row) = rows.first() {
+    let result = if let Some(row) = rows.first() {
         let type_name: String = row.get(0);
         let enum_values: Vec<String> = row.get(1);
 
-        Ok(Some(EnumTypeInfo {
+        Some(EnumTypeInfo {
             type_name,
             variants: enum_values,
-        }))
+        })
     } else {
-        Ok(None)
+        None
+    };
+
+    // Cache the result
+    {
+        let mut cache_lock = cache.lock().await;
+        cache_lock.insert(type_oid, result.clone());
     }
+
+    Ok(result)
 }
 
 /// Extract output column types from a prepared statement
@@ -305,19 +329,6 @@ async fn pg_type_to_rust_type(
     pg_type: &PgType,
     is_nullable: bool,
 ) -> Result<RustType> {
-    // Check if this is an enum type by trying to get enum info
-    if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
-        let enum_name = to_pascal_case(&enum_info.type_name);
-
-        return Ok(RustType {
-            rust_type: enum_name, // Store base enum type without Option<>
-            is_nullable,
-            needs_json_wrapper: false,
-            enum_variants: Some(enum_info.variants),
-            pg_type_name: Some(enum_info.type_name),
-        });
-    }
-
     let base_type = match *pg_type {
         PgType::BOOL => "bool",
         PgType::CHAR => "i8",
@@ -338,6 +349,19 @@ async fn pg_type_to_rust_type(
         PgType::INET => "std::net::IpAddr",
         PgType::NUMERIC => "rust_decimal::Decimal",
         _ => {
+                // Check if this is an enum type by trying to get enum info
+            if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
+                let enum_name = to_pascal_case(&enum_info.type_name);
+
+                return Ok(RustType {
+                    rust_type: enum_name, // Store base enum type without Option<>
+                    is_nullable,
+                    needs_json_wrapper: false,
+                    enum_variants: Some(enum_info.variants),
+                    pg_type_name: Some(enum_info.type_name),
+                });
+            }
+
             // For unknown types, use a generic approach
             return Ok(RustType {
                 rust_type: format!("/* Unknown type: {} */ String", pg_type.name()),

@@ -524,7 +524,7 @@ impl AutoModel {
         if module_queries.is_empty() {
             return Ok(generated_code);
         }
-
+        
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
         for query in &module_queries {
