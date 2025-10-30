@@ -125,8 +125,203 @@ async fn example(client: &Client) -> Result<(), tokio_postgres::Error> {
 }
 ```
 
-## Configuration options
+## Configuration Options
 
+AutoModel uses YAML files to define SQL queries and their associated metadata. Here's a comprehensive guide to all configuration options:
+
+### Root Configuration Structure
+
+```yaml
+# Global telemetry configuration (optional)
+telemetry:
+  level: debug              # Global telemetry level
+  include_sql: true         # Include SQL in spans globally
+
+# List of query definitions
+queries:
+  - name: query_name
+    sql: "SELECT ..."
+    # ... other query options
+```
+
+### Global Telemetry Configuration
+
+The `telemetry` section configures OpenTelemetry instrumentation for all queries:
+
+```yaml
+telemetry:
+  level: debug              # none | info | debug | trace (default: none)
+  include_sql: true         # true | false (default: false)
+```
+
+**Telemetry Levels:**
+- `none` - No instrumentation
+- `info` - Basic span creation with function name
+- `debug` - Include SQL query in span (if include_sql is true)
+- `trace` - Include both SQL query and parameters in span
+
+### Query Configuration
+
+Each query in the `queries` array supports these options:
+
+#### Required Fields
+
+```yaml
+- name: get_user_by_id                    # Function name (must be valid Rust identifier)
+  sql: "SELECT id, name FROM users WHERE id = ${id}"  # SQL query with named parameters
+```
+
+#### Optional Fields
+
+```yaml
+- name: get_user_by_id
+  sql: "SELECT id, name FROM users WHERE id = ${id}"
+  
+  # Optional description (becomes function documentation)
+  description: "Retrieve a user by their ID"
+  
+  # Optional module name (generates code in separate module)
+  module: "users"                         # Must be valid Rust module name
+  
+  # Expected result behavior (default: exactly_one)
+  expect: "exactly_one"                   # exactly_one | possible_one | at_least_one | multiple
+  
+  # Custom type mappings for fields
+  types:
+    "profile": "crate::models::UserProfile"     # Input/output field type override
+    "users.profile": "crate::models::UserProfile"  # Table-qualified field override
+  
+  # Per-query telemetry configuration
+  telemetry:
+    level: trace                          # Override global telemetry level
+    include_params: ["id", "name"]       # Specific parameters to include in spans
+    include_sql: false                    # Override global SQL inclusion
+```
+
+### Expected Result Types
+
+Controls how the query is executed and what it returns:
+
+```yaml
+expect: "exactly_one"    # fetch_one() -> Result<T, Error> - Fails if 0 or >1 rows
+expect: "possible_one"   # fetch_optional() -> Result<Option<T>, Error> - 0 or 1 row
+expect: "at_least_one"   # fetch_all() -> Result<Vec<T>, Error> - Fails if 0 rows
+expect: "multiple"       # fetch_all() -> Result<Vec<T>, Error> - 0 or more rows (default for collections)
+```
+
+### Custom Type Mappings
+
+Override PostgreSQL-to-Rust type mappings for specific fields:
+
+```yaml
+types:
+  # For input parameters and output fields with this name
+  "profile": "crate::models::UserProfile"
+  
+  # For output fields from specific table (when using JOINs)
+  "users.profile": "crate::models::UserProfile"
+  "posts.metadata": "crate::models::PostMetadata"
+  
+  # Custom enum types
+  "status": "UserStatus"
+  "category": "crate::enums::Category"
+```
+
+**Note:** Custom types must implement appropriate serialization traits:
+- **Input parameters:** `serde::Serialize` (for JSON serialization)
+- **Output fields:** `serde::Deserialize` (for JSON deserialization)
+
+### Named Parameters
+
+Use `${parameter_name}` syntax in SQL queries:
+
+```yaml
+sql: "SELECT * FROM users WHERE id = ${user_id} AND status = ${status}"
+```
+
+**Optional Parameters:**
+Add `?` suffix for optional parameters that become `Option<T>`:
+
+```yaml
+sql: "SELECT * FROM posts WHERE user_id = ${user_id} AND (${category?} IS NULL OR category = ${category?})"
+```
+
+### Per-Query Telemetry Configuration
+
+Override global telemetry settings for specific queries:
+
+```yaml
+telemetry:
+  # Override global level for this query
+  level: trace                    # none | info | debug | trace
+  
+  # Specify which parameters to include in spans
+  include_params: ["user_id", "email"]   # Only these parameters will be logged
+  include_params: []                      # Empty array = skip all parameters
+  # If not specified, all parameters are skipped by default
+  
+  # Override SQL inclusion for this query
+  include_sql: true               # true | false
+```
+
+### Module Organization
+
+Organize generated functions into modules:
+
+```yaml
+queries:
+  - name: get_user
+    module: "users"               # Generated in src/generated/users.rs
+    
+  - name: get_post  
+    module: "posts"               # Generated in src/generated/posts.rs
+    
+  - name: health_check
+    # No module specified          # Generated in src/generated/mod.rs
+```
+
+### Complete Example
+
+```yaml
+# Global configuration
+telemetry:
+  level: debug
+  include_sql: false
+
+queries:
+  # Simple query with custom type
+  - name: get_user_profile
+    sql: "SELECT id, name, profile FROM users WHERE id = ${user_id}"
+    description: "Get user profile with custom JSON type"
+    module: "users"
+    expect: "possible_one"
+    types:
+      "profile": "crate::models::UserProfile"
+    telemetry:
+      level: trace
+      include_params: ["user_id"]
+      include_sql: true
+  
+  # Query with optional parameter
+  - name: search_posts
+    sql: "SELECT * FROM posts WHERE user_id = ${user_id} AND (${category?} IS NULL OR category = ${category?})"
+    description: "Search posts with optional category filter"
+    module: "posts"
+    expect: "multiple"
+    types:
+      "category": "PostCategory"
+      "metadata": "crate::models::PostMetadata"
+  
+  # Bulk operation with minimal telemetry
+  - name: cleanup_old_sessions
+    sql: "DELETE FROM sessions WHERE created_at < ${cutoff_date}"
+    description: "Remove sessions older than cutoff date"
+    module: "admin" 
+    expect: "exactly_one"
+    telemetry:
+      include_params: []          # Skip all parameters for privacy
+      include_sql: false
+```
 
 ## CLI Features
 
