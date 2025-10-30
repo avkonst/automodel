@@ -14,6 +14,7 @@ use std::path::Path;
 /// Main entry point for the automodel library
 pub struct AutoModel {
     queries: Vec<QueryDefinition>,
+    telemetry: Option<TelemetryConfig>,
 }
 
 impl AutoModel {
@@ -23,6 +24,7 @@ impl AutoModel {
 
         Ok(Self {
             queries: config.queries,
+            telemetry: config.telemetry,
         })
     }
 
@@ -86,7 +88,8 @@ impl AutoModel {
 
         // Generate functions without enum definitions (since they're already at the top)
         for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
-            let function_code = generate_function_code_without_enums(query, type_info)?;
+            let function_code =
+                generate_function_code_without_enums(query, type_info, self.telemetry.as_ref())?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
         }

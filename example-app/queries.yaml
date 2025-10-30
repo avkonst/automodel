@@ -1,3 +1,8 @@
+# Global telemetry configuration 
+telemetry:
+  level: debug              # none, info, debug, trace
+  include_sql: true         # Include SQL queries in spans by default
+
 queries:
   - name: get_current_time
     sql: "SELECT NOW() as current_time"
@@ -27,8 +32,10 @@ queries:
     module: "users"
     expect: "exactly_one"
     types:
-      "users.profile": "crate::models::UserProfile"
       "profile": "crate::models::UserProfile"
+    telemetry:
+      level: trace                    # Override global level to trace
+      include_params: ["name", "email", "age"]  # Include these params in span
 
   - name: get_all_users
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"
@@ -44,7 +51,10 @@ queries:
     module: "users"
     expect: "possible_one"
     types:
-      "users.profile": "crate::models::UserProfile"
+      "profile": "crate::models::UserProfile"
+    telemetry:
+      include_params: ["email"]       # Only include email parameter in span
+      include_sql: false              # Disable SQL logging for this query
 
   - name: update_user_profile
     sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at"
@@ -54,6 +64,8 @@ queries:
     types:
       "users.profile": "crate::models::UserProfile"
       "profile": "crate::models::UserProfile"
+    telemetry:
+      include_params: []              # Empty list means skip all parameters
 
   - name: find_users_by_name_and_age
     sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})"

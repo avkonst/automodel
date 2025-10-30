@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { workspace = true }
 rust_decimal = { workspace = true, features = ["db-postgres", "serde"] }
+tracing = "0.1"
 
 [build-dependencies]
 automodel = { path = "../automodel-lib" }

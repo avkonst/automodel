@@ -1,9 +1,118 @@
-use crate::config::{ExpectedResult, QueryDefinition};
+use crate::config::{ExpectedResult, QueryDefinition, TelemetryConfig, TelemetryLevel};
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
     generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use anyhow::Result;
+
+/// Generate tracing::instrument attribute for a function
+fn generate_tracing_attribute(
+    query: &QueryDefinition,
+    param_names: &[String],
+    telemetry_level: &TelemetryLevel,
+    global_telemetry: Option<&TelemetryConfig>,
+) -> String {
+    use std::collections::HashSet;
+
+    if *telemetry_level == TelemetryLevel::None {
+        return String::new();
+    }
+
+    let mut attributes = Vec::new();
+
+    // No need for explicit span name - tracing::instrument will use the function name automatically
+
+    // Add instrumentation level
+    let level = match telemetry_level {
+        TelemetryLevel::Info => "info",
+        TelemetryLevel::Debug => "debug",
+        TelemetryLevel::Trace => "trace",
+        TelemetryLevel::None => unreachable!(),
+    };
+    attributes.push(format!("level = \"{}\"", level));
+
+    // Determine parameter skipping strategy
+    let mut skip_params = HashSet::new();
+    skip_params.insert("executor".to_string());
+
+    // Parameter inclusion logic (independent of telemetry level)
+    if let Some(query_telemetry) = &query.telemetry {
+        if let Some(include_params) = &query_telemetry.include_params {
+            if include_params.is_empty() {
+                // Empty include_params list means skip all parameters
+                skip_params.extend(param_names.iter().cloned());
+            } else {
+                let included: Vec<String> = include_params
+                    .iter()
+                    .filter(|param| param_names.contains(param))
+                    .cloned()
+                    .collect();
+
+                if !included.is_empty() {
+                    // Skip parameters not in the include list
+                    for param in param_names {
+                        if !included.contains(param) {
+                            skip_params.insert(param.clone());
+                        }
+                    }
+                } else {
+                    // No valid included parameters, skip all
+                    skip_params.extend(param_names.iter().cloned());
+                }
+            }
+        } else {
+            // No include_params specified, skip all parameters
+            skip_params.extend(param_names.iter().cloned());
+        }
+    } else {
+        // No query telemetry, skip all parameters
+        skip_params.extend(param_names.iter().cloned());
+    }
+
+    // Check if we should use skip_all (all params including query params are skipped)
+    let total_params = param_names.len() + 1; // +1 for executor
+    let should_use_skip_all = param_names.len() > 0 && skip_params.len() == total_params;
+
+    // Generate skip attribute
+    if should_use_skip_all {
+        attributes.push("skip_all".to_string());
+    } else if skip_params.len() > 1 {
+        // More than just executor
+        let mut skip_vec: Vec<_> = skip_params.into_iter().collect();
+        skip_vec.sort(); // Sort for consistent output
+        attributes.push(format!("skip({})", skip_vec.join(", ")));
+    } else {
+        attributes.push("skip(executor)".to_string());
+    }
+
+    // Determine whether to include SQL based on configuration (default false)
+    let should_include_sql = if let Some(query_telemetry) = &query.telemetry {
+        if let Some(include_sql) = query_telemetry.include_sql {
+            include_sql
+        } else {
+            // Fall back to global configuration
+            global_telemetry
+                .map(|config| config.include_sql)
+                .unwrap_or(false)
+        }
+    } else {
+        // No query telemetry, use global configuration
+        global_telemetry
+            .map(|config| config.include_sql)
+            .unwrap_or(false)
+    };
+
+    if should_include_sql {
+        let escaped_sql = query
+            .sql
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        attributes.push(format!("fields(sql = \"{}\")", escaped_sql));
+    }
+
+    format!("#[tracing::instrument({})]\n", attributes.join(", "))
+}
 
 /// Generate an indented raw string literal with proper formatting
 fn generate_indented_raw_string_literal(sql: &str) -> String {
@@ -39,11 +148,30 @@ fn generate_indented_raw_string_literal(sql: &str) -> String {
     )
 }
 
+/// Determine the effective telemetry level for a query
+fn determine_telemetry_level(
+    query: &QueryDefinition,
+    global_telemetry: Option<&TelemetryConfig>,
+) -> TelemetryLevel {
+    // Query-specific telemetry overrides global settings
+    if let Some(query_telemetry) = &query.telemetry {
+        if let Some(level) = &query_telemetry.level {
+            return level.clone();
+        }
+    }
+
+    // Fall back to global telemetry level
+    global_telemetry
+        .map(|config| config.level.clone())
+        .unwrap_or(TelemetryLevel::None)
+}
+
 /// Generate Rust function code for a SQL query without enum definitions
 /// (assumes enums are already defined elsewhere in the module)
 pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
+    global_telemetry: Option<&TelemetryConfig>,
 ) -> Result<String> {
     let mut code = String::new();
 
@@ -58,7 +186,6 @@ pub fn generate_function_code_without_enums(
         code.push_str(&format!("/// {}\n", description));
     }
 
-    // Generate function signature
     // Extract clean parameter names directly from the SQL for function signature
     let original_param_names = parse_parameter_names_from_sql(&query.sql);
     let clean_param_names: Vec<String> = original_param_names
@@ -71,6 +198,16 @@ pub fn generate_function_code_without_enums(
             }
         })
         .collect();
+
+    // Determine effective telemetry configuration and generate attribute
+    let effective_telemetry_level = determine_telemetry_level(query, global_telemetry);
+    let tracing_attribute = generate_tracing_attribute(
+        query,
+        &clean_param_names,
+        &effective_telemetry_level,
+        global_telemetry,
+    );
+    code.push_str(&tracing_attribute);
 
     let input_params = generate_input_params_with_names(&type_info.input_types, &clean_param_names);
     let base_return_type = if type_info.output_types.len() > 1 {

@@ -91,16 +91,8 @@ use automodel::AutoModel;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=queries.yaml");
-    
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://localhost/mydb".to_string());
-    
-    let mut automodel = AutoModel::new(database_url);
-    automodel.load_queries_from_file("queries.yaml").await?;
-    let generated_code = automodel.generate_code().await?;
-    
-    std::fs::write("src/generated.rs", generated_code)?;
+    AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
+
     Ok(())
 }
 ```
@@ -110,11 +102,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```yaml
 queries:
   - name: get_user_by_id
-    sql: "SELECT id, name, email FROM users WHERE id = $1"
+    sql: "SELECT id, name, email FROM users WHERE id = ${id}"
     description: "Retrieve a user by their ID"
     
   - name: create_user
-    sql: "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id"
+    sql: "INSERT INTO users (name, email) VALUES (${name}, ${email}) RETURNING id"
     description: "Create a new user and return the generated ID"
 ```
 
@@ -133,11 +125,13 @@ async fn example(client: &Client) -> Result<(), tokio_postgres::Error> {
 }
 ```
 
+## Configuration options
+
+
 ## CLI Features
 
 ### Commands
 
-- **`validate`** - Validate YAML syntax, query names, and optionally SQL queries
 - **`generate`** - Generate Rust code from YAML definitions
 
 ### CLI Options
@@ -171,9 +165,8 @@ async fn example(client: &Client) -> Result<(), tokio_postgres::Error> {
 
 The `examples/` directory contains:
 
-- `user_queries.yaml` - Sample query definitions
-- `schema.sql` - Database schema for testing  
-- `basic_usage.rs` - Direct library usage example
+- `queries.yaml` - Sample query definitions
+- `schema.sql` - Database schema for testing
 
 ## Workspace Commands
 
@@ -193,35 +186,6 @@ cargo run -p example-app
 # Check specific package
 cargo check -p automodel-lib
 cargo check -p automodel-cli
-```
-
-## Generated Code Example
-
-From this YAML:
-```yaml
-queries:
-  - name: get_user
-    sql: "SELECT id, name, email FROM users WHERE id = $1"
-```
-
-You get this Rust code:
-```rust
-#[derive(Debug, Clone)]
-pub struct GetUserResult {
-    pub id: i32,
-    pub name: String, 
-    pub email: String,
-}
-
-pub async fn get_user(client: &tokio_postgres::Client, param_1: i32) -> Result<GetUserResult, tokio_postgres::Error> {
-    let stmt = client.prepare("SELECT id, name, email FROM users WHERE id = $1").await?;
-    let row = client.query_one(&stmt, &[&param_1]).await?;
-    Ok(GetUserResult {
-        id: row.get::<_, i32>(0),
-        name: row.get::<_, String>(1), 
-        email: row.get::<_, String>(2),
-    })
-}
 ```
 
 ## Supported PostgreSQL Types

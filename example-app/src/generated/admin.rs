@@ -1,6 +1,7 @@
 use sqlx::Row;
 
 /// Get the current timestamp
+#[tracing::instrument(level = "debug", skip(executor), fields(sql = "SELECT NOW() as current_time"))]
 pub async fn get_current_time(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT NOW() as current_time"
@@ -10,6 +11,7 @@ pub async fn get_current_time(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Get PostgreSQL version
+#[tracing::instrument(level = "debug", skip(executor), fields(sql = "SELECT version() as pg_version"))]
 pub async fn get_version(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Option<String>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT version() as pg_version"

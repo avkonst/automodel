@@ -64,6 +64,7 @@ pub struct InsertUserItem {
 }
 
 /// Insert a new user with all fields and return the created user
+#[tracing::instrument(level = "trace", skip(executor, profile), fields(sql = "INSERT INTO users (name, email, age, profile)\nVALUES (${name}, ${email}, ${age}, ${profile})\nRETURNING id, name, email, age, created_at\n"))]
 pub async fn insert_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: i32, profile: crate::models::UserProfile) -> Result<InsertUserItem, sqlx::Error> {
     let query = sqlx::query(
         r"INSERT INTO users (name, email, age, profile)
@@ -99,6 +100,7 @@ pub struct GetAllUsersItem {
 }
 
 /// Get all users with all their fields
+#[tracing::instrument(level = "debug", skip(executor), fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"))]
 pub async fn get_all_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"
@@ -127,12 +129,13 @@ pub struct FindUserByEmailItem {
     pub name: String,
     pub email: String,
     pub age: Option<i32>,
-    pub profile: Option<crate::models::UserProfile>,
+    pub profile: Option<serde_json::Value>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Find a user by their email address
+#[tracing::instrument(level = "debug", skip(executor))]
 pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<FindUserByEmailItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = $1"
@@ -147,10 +150,7 @@ pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sql
         name: row.try_get::<String, _>("name")?,
         email: row.try_get::<String, _>("email")?,
         age: row.try_get::<Option<i32>, _>("age")?,
-        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?
-            .map(|v| serde_json::from_value::<crate::models::UserProfile>(v)
-            .map_err(|e| sqlx::Error::Decode(Box::new(e))))
-            .transpose()?,
+        profile: row.try_get::<Option<serde_json::Value>, _>("profile")?,
         created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         updated_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("updated_at")?,
     })
@@ -172,6 +172,7 @@ pub struct UpdateUserProfileItem {
 }
 
 /// Update a user's profile by their ID
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at"))]
 pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileItem, sqlx::Error> {
     let query = sqlx::query(
         r"UPDATE users SET profile = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, age, profile, updated_at"
@@ -204,6 +205,7 @@ pub struct FindUsersByNameAndAgeItem {
 }
 
 /// Find users by name pattern with optional minimum age filter
+#[tracing::instrument(level = "debug", skip(executor, min_age, name_pattern), fields(sql = "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} AND (${min_age?}::integer IS NULL OR age >= ${min_age?})"))]
 pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email, age FROM users WHERE name ILIKE $1 AND ($2::integer IS NULL OR age >= $3)"
@@ -235,6 +237,7 @@ pub struct GetRecentUsersItem {
 }
 
 /// Get users created after a specific timestamp - expects at least one user
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > ${since} ORDER BY created_at DESC"))]
 pub async fn get_recent_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE created_at > $1 ORDER BY created_at DESC"
@@ -272,6 +275,7 @@ pub struct GetActiveUsersByAgeRangeItem {
 }
 
 /// Get active users within an age range - must return at least one user or fails
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN ${min_age} AND ${max_age} AND updated_at > NOW() - INTERVAL '30 days'"))]
 pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at FROM users WHERE age BETWEEN $1 AND $2 AND updated_at > NOW() - INTERVAL '30 days'"
@@ -306,6 +310,7 @@ pub struct SearchUsersByNamePatternItem {
 }
 
 /// Search users by name pattern - expects at least one match
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email FROM users WHERE name ILIKE ${pattern} ORDER BY name"))]
 pub async fn search_users_by_name_pattern(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<SearchUsersByNamePatternItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email FROM users WHERE name ILIKE $1 ORDER BY name"
@@ -334,6 +339,7 @@ pub struct GetUsersByStatusItem {
 }
 
 /// Get users by their status (enum parameter and enum output)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, status FROM users WHERE status = ${user_status} ORDER BY name"))]
 pub async fn get_users_by_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_status: UserStatus) -> Result<Vec<GetUsersByStatusItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT id, name, email, status FROM users WHERE status = $1 ORDER BY name"
@@ -358,6 +364,7 @@ pub struct UpdateUserStatusItem {
 }
 
 /// Update user status and return the new status
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users SET status = ${new_status} WHERE id = ${user_id} RETURNING id, status"))]
 pub async fn update_user_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusItem, sqlx::Error> {
     let query = sqlx::query(
         r"UPDATE users SET status = $1 WHERE id = $2 RETURNING id, status"
@@ -375,6 +382,7 @@ pub async fn update_user_status(executor: impl sqlx::Executor<'_, Database = sql
 }
 
 /// Get all possible user statuses currently in use
+#[tracing::instrument(level = "debug", skip(executor), fields(sql = "SELECT DISTINCT status FROM users ORDER BY status"))]
 pub async fn get_all_user_statuses(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<Option<UserStatus>>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT DISTINCT status FROM users ORDER BY status"
@@ -400,6 +408,7 @@ pub struct GetAllUsersWithStarItem {
 }
 
 /// Get all users using SELECT * to fetch all columns
+#[tracing::instrument(level = "debug", skip(executor), fields(sql = "SELECT * FROM users ORDER BY created_at DESC"))]
 pub async fn get_all_users_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersWithStarItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT * FROM users ORDER BY created_at DESC"
@@ -438,6 +447,7 @@ pub struct GetUserByIdWithStarItem {
 }
 
 /// Get a single user by ID using SELECT * to fetch all columns
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * FROM users WHERE id = ${user_id}"))]
 pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserByIdWithStarItem>, sqlx::Error> {
     let query = sqlx::query(
         r"SELECT * FROM users WHERE id = $1"
