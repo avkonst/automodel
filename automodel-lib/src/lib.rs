@@ -37,26 +37,6 @@ pub struct AutoModel {
 }
 
 impl AutoModel {
-    /// Calculate SHA-256 hash of a file's contents
-    pub fn calculate_file_hash<P: AsRef<Path>>(file_path: P) -> Result<u64, std::io::Error> {
-        use sha2::{Digest, Sha256};
-        use std::fs;
-
-        let contents = fs::read(file_path)?;
-        let mut hasher = Sha256::new();
-        hasher.update(&contents);
-        let result = hasher.finalize();
-
-        // Convert first 8 bytes of SHA-256 to u64 for a stable hash
-        let hash_bytes = &result[0..8];
-        let mut hash_u64 = 0u64;
-        for (i, &byte) in hash_bytes.iter().enumerate() {
-            hash_u64 |= (byte as u64) << (i * 8);
-        }
-
-        Ok(hash_u64)
-    }
-
     /// Clean up generated files for modules that no longer exist in the YAML config
     fn cleanup_unused_module_files(
         output_path: &std::path::Path,
@@ -478,15 +458,35 @@ impl AutoModel {
             }
         }
 
+        /// Calculate SHA-256 hash of a file's contents
+        pub fn calculate_file_hash<P: AsRef<Path>>(file_path: P) -> Result<u64, std::io::Error> {
+            use sha2::{Digest, Sha256};
+            use std::fs;
+
+            let contents = fs::read(file_path)?;
+            let mut hasher = Sha256::new();
+            hasher.update(&contents);
+            let result = hasher.finalize();
+
+            // Convert first 8 bytes of SHA-256 to u64 for a stable hash
+            let hash_bytes = &result[0..8];
+            let mut hash_u64 = 0u64;
+            for (i, &byte) in hash_bytes.iter().enumerate() {
+                hash_u64 |= (byte as u64) << (i * 8);
+            }
+
+            Ok(hash_u64)
+        }
+
         Ok(Self {
             queries: config.queries,
-            file_hash: Self::calculate_file_hash(&path).unwrap_or(0),
+            file_hash: calculate_file_hash(&path).unwrap_or(0),
         })
     }
 
     /// Generate Rust code for queries in a specific module
     /// If module is None, generates code for queries without a module specified
-    pub async fn generate_code_for_module(
+    async fn generate_code_for_module(
         &self,
         database_url: &str,
         module: Option<&str>,
@@ -498,7 +498,7 @@ impl AutoModel {
     /// Generate Rust code for queries in a specific module with optional hash header
     /// If module is None, generates code for queries without a module specified
     /// If yaml_hash is provided, adds hash comment at the top for caching
-    pub async fn generate_code_for_module_with_hash(
+    async fn generate_code_for_module_with_hash(
         &self,
         database_url: &str,
         module: Option<&str>,
@@ -524,7 +524,7 @@ impl AutoModel {
         if module_queries.is_empty() {
             return Ok(generated_code);
         }
-        
+
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
         for query in &module_queries {
@@ -582,7 +582,7 @@ impl AutoModel {
     }
 
     /// Get all unique module names from the loaded queries
-    pub fn get_modules(&self) -> Vec<String> {
+    fn get_modules(&self) -> Vec<String> {
         let mut modules: Vec<String> = self
             .queries
             .iter()
@@ -592,11 +592,6 @@ impl AutoModel {
             .collect();
         modules.sort();
         modules
-    }
-
-    /// Get all loaded queries
-    pub fn queries(&self) -> &[QueryDefinition] {
-        &self.queries
     }
 
     /// Generate code to output directory with provided database URL
