@@ -46,6 +46,7 @@ pub struct DefaultsConfig {
     #[serde(default)]
     pub ensure_indexes: Option<bool>,
     /// Default module for queries without a module specified
+    /// If not specified, the function will be generated in queries.rs by default
     #[serde(default)]
     pub module: Option<String>,
 }
@@ -78,7 +79,7 @@ pub struct QueryDefinition {
     /// Optional description of what the query does
     pub description: Option<String>,
     /// Optional module name where this function should be generated
-    /// If not specified, the function will be generated in mod.rs
+    /// If not specified, the function will be generated in queries.rs by default
     /// Must be a valid Rust module name (alphanumeric + underscore, starting with letter/underscore)
     pub module: Option<String>,
     /// Expected result type - controls fetch method and error handling

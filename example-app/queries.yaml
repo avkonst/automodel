@@ -3,7 +3,7 @@ defaults:
   telemetry:
     level: debug           # none, info, debug, trace
     include_sql: true      # Include SQL queries in spans by default
-  ensure_indexes: true     # Enable query analysis to test conditional syntax handling - test6
+  ensure_indexes: false     # Enable query analysis to test conditional syntax handling - test11129779999
 
 queries:
   - name: get_current_time
@@ -24,7 +24,7 @@ queries:
     sql: "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())"
     description: "Create the users table with all necessary fields"
     module: "setup"
-    ensure_indexes: false
+    ensure_indexes: true
 
   - name: insert_user
     sql: |
