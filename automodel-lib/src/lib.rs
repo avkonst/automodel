@@ -143,21 +143,10 @@ impl AutoModel {
 
     /// Analyze query execution plan to detect potential performance issues
     async fn analyze_query_performance(
-        database_url: &str,
+        client: &tokio_postgres::Client,
         sql: &str,
         query_name: &str,
     ) -> Result<QueryAnalysis> {
-        use tokio_postgres::{connect, NoTls};
-
-        let (client, connection) = connect(database_url, NoTls).await?;
-
-        // Spawn the connection task
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Connection error: {}", e);
-            }
-        });
-
         let mut overall_analysis = QueryAnalysis {
             has_sequential_scan: false,
             warnings: Vec::new(),
@@ -180,7 +169,7 @@ impl AutoModel {
                 format!("{} (variant {})", query_name, i)
             };
 
-            match Self::analyze_single_query(&client, variant_sql, &variant_name).await {
+            match Self::analyze_single_query(client, variant_sql, &variant_name).await {
                 Ok(variant_analysis) => {
                     if variant_analysis.has_sequential_scan {
                         overall_analysis.has_sequential_scan = true;
@@ -206,16 +195,9 @@ impl AutoModel {
         sql: &str,
         query_name: &str,
     ) -> Result<QueryAnalysis> {
-        // Temporarily disable sequential scans to force index usage in analysis
-        // This helps detect queries that would benefit from indexes even with empty/small tables
-        client.execute("SET enable_seqscan = false", &[]).await?;
-        
         // Ensure we always reset the setting, even if analysis fails
         let result = Self::analyze_single_query_internal(client, sql, query_name).await;
-        
-        // Re-enable sequential scans (ignore errors since connection might be closing)
-        let _ = client.execute("SET enable_seqscan = true", &[]).await;
-        
+
         result
     }
 
@@ -398,7 +380,7 @@ impl AutoModel {
                 // PostgreSQL returns EXPLAIN as text lines
                 for row in rows {
                     let plan_line: String = row.get(0);
-                    
+
                     // Check for sequential scans
                     if plan_line.contains("Seq Scan") {
                         analysis.has_sequential_scan = true;
@@ -419,7 +401,7 @@ impl AutoModel {
                             );
                         }
                     }
-                    
+
                     // Also check for expensive operations that might indicate missing indexes
                     if plan_line.contains("Index Scan") && plan_line.contains("rows=") {
                         // This is good - index is being used
@@ -431,7 +413,7 @@ impl AutoModel {
                                 let after_on = &plan_line[on_pos + 4..];
                                 let table_name =
                                     after_on.split_whitespace().next().unwrap_or("unknown");
-                                
+
                                 println!(
                                     "cargo:info=Query '{}' uses filtering on table '{}' - verify appropriate indexes exist",
                                     query_name, table_name
@@ -528,23 +510,10 @@ impl AutoModel {
         })
     }
 
-    /// Generate Rust code for queries in a specific module
-    /// If module is None, generates code for queries without a module specified
-    async fn generate_code_for_module(
+    /// Internal implementation that uses an existing database connection
+    async fn generate_code_for_module_with_client(
         &self,
-        database_url: &str,
-        module: Option<&str>,
-    ) -> Result<String> {
-        self.generate_code_for_module_with_hash(database_url, module, None)
-            .await
-    }
-
-    /// Generate Rust code for queries in a specific module with optional hash header
-    /// If module is None, generates code for queries without a module specified
-    /// If yaml_hash is provided, adds hash comment at the top for caching
-    async fn generate_code_for_module_with_hash(
-        &self,
-        database_url: &str,
+        client: &tokio_postgres::Client,
         module: Option<&str>,
         yaml_hash: Option<u64>,
     ) -> Result<String> {
@@ -572,15 +541,14 @@ impl AutoModel {
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
         for query in &module_queries {
-            let type_info =
-                extract_query_types(database_url, &query.sql, query.types.as_ref()).await?;
+            let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
             type_infos.push(type_info);
 
             // Analyze query performance if enabled
             if query.ensure_indexes.unwrap_or(false) {
                 println!("cargo:info=Analyzing query '{}'", query.name);
                 let _analysis =
-                    Self::analyze_query_performance(database_url, &query.sql, &query.name).await?;
+                    Self::analyze_query_performance(client, &query.sql, &query.name).await?;
                 // Analysis warnings are printed in the analyze_query_performance function
             } else {
                 println!(
@@ -647,6 +615,7 @@ impl AutoModel {
     ) -> anyhow::Result<()> {
         use std::fs;
         use std::path::Path;
+        use tokio_postgres::{connect, NoTls};
 
         let output_path = Path::new(output_dir);
         let modules = self.get_modules();
@@ -657,15 +626,30 @@ impl AutoModel {
         // Calculate hash for consistency with build-time generation
         let yaml_hash = self.file_hash;
 
+        // Create database connection once for all operations
+        let (client, connection) = connect(database_url, NoTls).await?;
+        // Spawn the connection task
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+
+        // Temporarily disable sequential scans to force index usage in analysis
+        // This helps detect queries that would benefit from indexes even with empty/small tables
+        client.execute("SET enable_seqscan = false", &[]).await?;
+
         let mut mod_declarations = Vec::new();
 
         // Generate code for queries without a module (main mod.rs content)
-        let main_module_code = self.generate_code_for_module(database_url, None).await?;
+        let main_module_code = self
+            .generate_code_for_module_with_client(&client, None, None)
+            .await?;
 
         // Generate separate files for each named module
         for module in &modules {
             let module_code = self
-                .generate_code_for_module_with_hash(database_url, Some(module), Some(yaml_hash))
+                .generate_code_for_module_with_client(&client, Some(module), Some(yaml_hash))
                 .await?;
             let module_file = output_path.join(format!("{}.rs", module));
             fs::write(&module_file, &module_code)?;
@@ -789,18 +773,31 @@ impl AutoModel {
         // Create AutoModel instance and load queries from YAML file
         let automodel = AutoModel::new(yaml_file).await?;
 
+        // Create database connection once for all operations
+        use tokio_postgres::{connect, NoTls};
+        let (client, connection) = connect(&database_url, NoTls).await?;
+        // Spawn the connection task
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+        // Temporarily disable sequential scans to force index usage in analysis
+        // This helps detect queries that would benefit from indexes even with empty/small tables
+        client.execute("SET enable_seqscan = false", &[]).await?;
+
         let mut mod_declarations = Vec::new();
 
         // Generate code for queries without a module (main mod.rs content)
         // Don't add hash to main module code since we'll add it to mod.rs directly
         let main_module_code = automodel
-            .generate_code_for_module(&database_url, None)
+            .generate_code_for_module_with_client(&client, None, None)
             .await?;
 
         // Generate separate files for each named module
         for module in &modules {
             let module_code = automodel
-                .generate_code_for_module_with_hash(&database_url, Some(module), Some(yaml_hash))
+                .generate_code_for_module_with_client(&client, Some(module), Some(yaml_hash))
                 .await?;
             let module_file = output_path.join(format!("{}.rs", module));
             fs::write(&module_file, &module_code)?;

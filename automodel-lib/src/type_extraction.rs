@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tokio::sync::Mutex;
 use tokio_postgres::types::Type as PgType;
-use tokio_postgres::{NoTls, Statement};
+use tokio_postgres::Statement;
 
 // Global cache for enum type information to avoid repeated database queries
 static ENUM_CACHE: OnceLock<Mutex<HashMap<u32, Option<EnumTypeInfo>>>> = OnceLock::new();
@@ -74,22 +74,10 @@ pub struct ParsedSql {
 
 /// Extract type information from a prepared SQL statement
 pub async fn extract_query_types(
-    database_url: &str,
+    client: &tokio_postgres::Client,
     sql: &str,
     field_type_mappings: Option<&HashMap<String, String>>,
 ) -> Result<QueryTypeInfo> {
-    // Create database connection
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .with_context(|| format!("Failed to connect to database: {}", database_url))?;
-
-    // Spawn the connection in the background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Database connection error: {}", e);
-        }
-    });
-
     // Parse SQL to handle conditional blocks
     let parsed_sql = parse_sql_with_conditionals(sql);
 
@@ -228,7 +216,7 @@ pub async fn get_enum_type_info(
 ) -> Result<Option<EnumTypeInfo>> {
     // Initialize cache if not already done
     let cache = ENUM_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    
+
     // Check cache first
     {
         let cache_lock = cache.lock().await;
@@ -349,7 +337,7 @@ async fn pg_type_to_rust_type(
         PgType::INET => "std::net::IpAddr",
         PgType::NUMERIC => "rust_decimal::Decimal",
         _ => {
-                // Check if this is an enum type by trying to get enum info
+            // Check if this is an enum type by trying to get enum info
             if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
                 let enum_name = to_pascal_case(&enum_info.type_name);
 
