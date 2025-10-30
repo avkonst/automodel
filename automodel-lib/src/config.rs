@@ -76,6 +76,10 @@ pub struct QueryDefinition {
     pub types: Option<HashMap<String, String>>,
     /// Optional telemetry configuration for this query
     pub telemetry: Option<QueryTelemetryConfig>,
+    /// Whether to analyze this query's performance (overrides global setting)
+    /// Defaults to None (use global setting)
+    #[serde(default)]
+    pub analyze_query: Option<bool>,
 }
 
 /// Per-query telemetry configuration
@@ -91,6 +95,23 @@ pub struct QueryTelemetryConfig {
     pub include_sql: Option<bool>,
 }
 
+/// Query performance analysis configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AnalysisConfig {
+    /// Whether to analyze query performance and warn about sequential scans
+    /// Defaults to false
+    #[serde(default)]
+    pub analyze_queries: bool,
+}
+
+impl Default for AnalysisConfig {
+    fn default() -> Self {
+        Self {
+            analyze_queries: false,
+        }
+    }
+}
+
 /// Root structure for the YAML file containing multiple queries
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -98,6 +119,8 @@ pub struct Config {
     pub queries: Vec<QueryDefinition>,
     /// Global telemetry configuration
     pub telemetry: Option<TelemetryConfig>,
+    /// Query analysis configuration
+    pub analysis: Option<AnalysisConfig>,
 }
 
 impl Config {
@@ -106,6 +129,7 @@ impl Config {
         Self {
             queries: Vec::new(),
             telemetry: None,
+            analysis: None,
         }
     }
 }

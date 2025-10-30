@@ -217,7 +217,7 @@ async fn get_column_nullability(
 }
 
 /// Get enum type information from PostgreSQL system catalogs
-async fn get_enum_type_info(
+pub async fn get_enum_type_info(
     client: &tokio_postgres::Client,
     type_oid: u32,
 ) -> Result<Option<EnumTypeInfo>> {
@@ -463,7 +463,6 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
 
                 // Read until we find the matching ']'
                 while let Some(inner_ch) = chars.next() {
-
                     if inner_ch == '[' {
                         bracket_count += 1;
                         block_content.push(inner_ch);
