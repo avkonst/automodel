@@ -5,6 +5,40 @@ use crate::type_extraction::{
 };
 use anyhow::Result;
 
+/// Generate an indented raw string literal with proper formatting
+fn generate_indented_raw_string_literal(sql: &str) -> String {
+    // Find a delimiter that doesn't appear in the SQL
+    let mut delimiter_count = 0;
+    let delimiter = loop {
+        let delimiter = "#".repeat(delimiter_count);
+        let pattern = format!("\"{}\"", delimiter);
+        if !sql.contains(&pattern) {
+            break delimiter;
+        }
+        delimiter_count += 1;
+    };
+
+    // Add proper indentation to each line of SQL
+    let indented_sql = sql
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == 0 {
+                line.to_string() // First line doesn't need extra indentation
+            } else {
+                format!("        {}", line) // Subsequent lines get 8 spaces of indentation
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "        r{delimiter}\"{indented_sql}\"{delimiter}",
+        delimiter = delimiter,
+        indented_sql = indented_sql
+    )
+}
+
 /// Generate Rust function code for a SQL query without enum definitions
 /// (assumes enums are already defined elsewhere in the module)
 pub fn generate_function_code_without_enums(
@@ -40,7 +74,7 @@ pub fn generate_function_code_without_enums(
 
     let input_params = generate_input_params_with_names(&type_info.input_types, &clean_param_names);
     let base_return_type = if type_info.output_types.len() > 1 {
-        format!("{}Result", to_pascal_case(&query.name))
+        format!("{}Item", to_pascal_case(&query.name))
     } else {
         generate_return_type(type_info.output_types.first())
     };
@@ -95,9 +129,10 @@ fn generate_function_body(
     let (converted_sql, param_names) = convert_named_params_to_positional(&query.sql);
 
     // Build the SQLx query with parameter bindings
+    let raw_string = generate_indented_raw_string_literal(&converted_sql);
     body.push_str(&format!(
-        "    let query = sqlx::query(\"{}\");\n",
-        escape_sql_string(&converted_sql)
+        "    let query = sqlx::query(\n{}\n    );\n",
+        raw_string
     ));
 
     // Add parameter bindings using method chaining
@@ -298,15 +333,6 @@ fn generate_sqlx_struct_creation(struct_name: &str, output_types: &[OutputColumn
 
     creation.push_str("    }");
     creation
-}
-
-/// Escape SQL string for inclusion in Rust code
-fn escape_sql_string(sql: &str) -> String {
-    sql.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
 }
 
 /// Convert string to PascalCase

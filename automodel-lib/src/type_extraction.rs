@@ -607,7 +607,7 @@ pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -
         return None;
     }
 
-    let struct_name = format!("{}Result", to_pascal_case(query_name));
+    let struct_name = format!("{}Item", to_pascal_case(query_name));
     let mut struct_def = format!("#[derive(Debug, Clone)]\npub struct {} {{\n", struct_name);
 
     for col in output_types {
