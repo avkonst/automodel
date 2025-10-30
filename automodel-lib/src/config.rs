@@ -16,7 +16,7 @@ pub enum ExpectedResult {
 }
 
 /// OpenTelemetry instrumentation level
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TelemetryLevel {
     /// No instrumentation
@@ -36,29 +36,27 @@ impl Default for TelemetryLevel {
 }
 
 /// Default configuration for telemetry and analysis
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct DefaultsConfig {
-    /// Global telemetry level
+    /// Global telemetry defaults
     #[serde(default)]
-    pub telemetry_level: TelemetryLevel,
-    /// Whether to include SQL queries as fields in spans by default
-    /// Defaults to false
-    #[serde(default)]
-    pub include_sql: bool,
+    pub telemetry: DefaultsTelemetryConfig,
     /// Whether to analyze query performance and warn about sequential scans
     /// Defaults to false
     #[serde(default)]
-    pub analyze_queries: bool,
+    pub ensure_indexes: Option<bool>,
 }
 
-impl Default for DefaultsConfig {
-    fn default() -> Self {
-        Self {
-            telemetry_level: TelemetryLevel::None,
-            include_sql: false,
-            analyze_queries: false,
-        }
-    }
+/// Default configuration for telemetry and analysis
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DefaultsTelemetryConfig {
+    /// Global telemetry level
+    #[serde(default)]
+    pub level: Option<TelemetryLevel>,
+    /// Whether to include SQL queries as fields in spans by default
+    /// Defaults to false
+    #[serde(default)]
+    pub include_sql: Option<bool>,
 }
 
 impl Default for ExpectedResult {
@@ -93,43 +91,32 @@ pub struct QueryDefinition {
     /// Whether to analyze this query's performance (overrides global setting)
     /// Defaults to None (use global setting)
     #[serde(default)]
-    pub analyze_query: Option<bool>,
+    pub ensure_indexes: Option<bool>,
 }
 
 /// Per-query telemetry configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct QueryTelemetryConfig {
     /// Override global telemetry level for this query
+    #[serde(default)]
     pub level: Option<TelemetryLevel>,
     /// List of input parameter names to include in the span
     /// If not specified or empty, all parameters will be skipped (skip_all)
+    #[serde(default)]
     pub include_params: Option<Vec<String>>,
     /// Whether to include the SQL query as a field in the span
     /// Defaults to false
+    #[serde(default)]
     pub include_sql: Option<bool>,
 }
 
 /// Root structure for the YAML file containing multiple queries
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     /// List of SQL queries
+    #[serde(default)]
     pub queries: Vec<QueryDefinition>,
     /// Default configuration for telemetry and analysis
-    pub defaults: Option<DefaultsConfig>,
-}
-
-impl Config {
-    /// Create a new empty query configuration
-    pub fn new() -> Self {
-        Self {
-            queries: Vec::new(),
-            defaults: None,
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self::new()
-    }
+    #[serde(default)]
+    pub defaults: DefaultsConfig,
 }

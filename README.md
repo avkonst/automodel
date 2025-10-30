@@ -144,7 +144,7 @@ AutoModel uses YAML files to define SQL queries and their associated metadata. H
 defaults:
   telemetry_level: debug    # Global telemetry level
   include_sql: true         # Include SQL in spans globally
-  analyze_queries: true     # Enable query performance analysis globally
+  ensure_indexes: true     # Enable query performance analysis globally
 
 # List of query definitions
 queries:
@@ -161,7 +161,7 @@ The `defaults` section configures global settings for telemetry and analysis:
 defaults:
   telemetry_level: debug    # none | info | debug | trace (default: none)
   include_sql: true         # true | false (default: false)
-  analyze_queries: true     # true | false (default: false)
+  ensure_indexes: true     # true | false (default: false)
 ```
 
 **Telemetry Levels:**
@@ -212,7 +212,7 @@ Each query in the `queries` array supports these options:
     include_sql: false                    # Override global SQL inclusion
   
   # Per-query analysis configuration
-  analyze_query: true                     # Override global analysis setting for this query
+  ensure_indexes: true                     # Override global analysis setting for this query
 ```
 
 ### Expected Result Types
@@ -286,7 +286,7 @@ telemetry:
 Override global analysis settings for specific queries:
 
 ```yaml
-analyze_query: true               # true | false - Enable/disable analysis for this query
+ensure_indexes: true               # true | false - Enable/disable analysis for this query
 ```
 
 ### Module Organization
@@ -312,7 +312,7 @@ queries:
 defaults:
   telemetry_level: debug
   include_sql: false
-  analyze_queries: true           # Enable query performance analysis
+  ensure_indexes: true           # Enable query performance analysis
 
 queries:
   # Simple query with custom type
@@ -327,7 +327,7 @@ queries:
       level: trace
       include_params: ["user_id"]
       include_sql: true
-    analyze_query: true           # Enable analysis for this specific query
+    ensure_indexes: true           # Enable analysis for this specific query
   
   # Query with optional parameter
   - name: search_posts
@@ -338,13 +338,13 @@ queries:
     types:
       "category": "PostCategory"
       "metadata": "crate::models::PostMetadata"
-    analyze_query: true           # Check for sequential scans on posts table
+    ensure_indexes: true           # Check for sequential scans on posts table
   
   - name: create_sessions_table
     sql: "CREATE TABLE IF NOT EXISTS sessions (id UUID PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW())"
     description: "Create sessions table"
     module: "setup"
-    analyze_query: false # force DDL query to be skipped from analysis
+    ensure_indexes: false # force DDL query to be skipped from analysis
   
   # Bulk operation with minimal telemetry
   - name: cleanup_old_sessions

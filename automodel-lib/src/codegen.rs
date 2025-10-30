@@ -1,4 +1,4 @@
-use crate::config::{DefaultsConfig, ExpectedResult, QueryDefinition, TelemetryLevel};
+use crate::config::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
     generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
@@ -6,15 +6,16 @@ use crate::type_extraction::{
 use anyhow::Result;
 
 /// Generate tracing::instrument attribute for a function
-fn generate_tracing_attribute(
-    query: &QueryDefinition,
-    param_names: &[String],
-    telemetry_level: &TelemetryLevel,
-    global_defaults: Option<&DefaultsConfig>,
-) -> String {
+fn generate_tracing_attribute(query: &QueryDefinition, param_names: &[String]) -> String {
     use std::collections::HashSet;
 
-    if *telemetry_level == TelemetryLevel::None {
+    let telemetry_level = query
+        .telemetry
+        .as_ref()
+        .and_then(|qt| qt.level.clone())
+        .unwrap_or_default();
+
+    if telemetry_level == TelemetryLevel::None {
         return String::new();
     }
 
@@ -82,25 +83,15 @@ fn generate_tracing_attribute(
         skip_vec.sort(); // Sort for consistent output
         attributes.push(format!("skip({})", skip_vec.join(", ")));
     } else {
-        attributes.push("skip(executor)".to_string());
+        attributes.push("skip_all".to_string());
     }
 
     // Determine whether to include SQL based on configuration (default false)
-    let should_include_sql = if let Some(query_telemetry) = &query.telemetry {
-        if let Some(include_sql) = query_telemetry.include_sql {
-            include_sql
-        } else {
-            // Fall back to global configuration
-            global_defaults
-                .map(|config| config.include_sql)
-                .unwrap_or(false)
-        }
-    } else {
-        // No query telemetry, use global configuration
-        global_defaults
-            .map(|config| config.include_sql)
-            .unwrap_or(false)
-    };
+    let should_include_sql = query
+        .telemetry
+        .as_ref()
+        .map(|i| i.include_sql.unwrap_or_default())
+        .unwrap_or_default();
 
     if should_include_sql {
         let escaped_sql = query
@@ -148,30 +139,11 @@ fn generate_indented_raw_string_literal(sql: &str) -> String {
     )
 }
 
-/// Determine the effective telemetry level for a query
-fn determine_telemetry_level(
-    query: &QueryDefinition,
-    global_defaults: Option<&DefaultsConfig>,
-) -> TelemetryLevel {
-    // Query-specific telemetry overrides global settings
-    if let Some(query_telemetry) = &query.telemetry {
-        if let Some(level) = &query_telemetry.level {
-            return level.clone();
-        }
-    }
-
-    // Fall back to global telemetry level
-    global_defaults
-        .map(|config| config.telemetry_level.clone())
-        .unwrap_or(TelemetryLevel::None)
-}
-
 /// Generate Rust function code for a SQL query without enum definitions
 /// (assumes enums are already defined elsewhere in the module)
 pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
-    global_defaults: Option<&DefaultsConfig>,
 ) -> Result<String> {
     let mut code = String::new();
 
@@ -199,14 +171,7 @@ pub fn generate_function_code_without_enums(
         })
         .collect();
 
-    // Determine effective telemetry configuration and generate attribute
-    let effective_telemetry_level = determine_telemetry_level(query, global_defaults);
-    let tracing_attribute = generate_tracing_attribute(
-        query,
-        &clean_param_names,
-        &effective_telemetry_level,
-        global_defaults,
-    );
+    let tracing_attribute = generate_tracing_attribute(query, &clean_param_names);
     code.push_str(&tracing_attribute);
 
     let input_params = generate_input_params_with_names(&type_info.input_types, &clean_param_names);
@@ -406,6 +371,7 @@ fn generate_conditional_function_body(
         body.push_str("    }\n\n");
     }
 
+    body.push_str("    #[allow(unused_assignments)]\n");
     body.push_str("    let mut param_counter = 1;\n");
 
     // Renumber base (non-conditional) parameters first
@@ -439,6 +405,8 @@ fn generate_conditional_function_body(
         body.push_str("    }\n");
     }
 
+    // Ensure param_counter is marked as used to avoid unused assignment warnings
+    body.push_str("    let _ = param_counter; // Suppress unused assignment warning\n");
     body.push_str("\n    let mut query = sqlx::query(&final_sql);\n\n");
 
     // Bind parameters in the order they will appear in the final SQL

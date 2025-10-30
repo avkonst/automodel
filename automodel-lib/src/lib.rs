@@ -14,7 +14,6 @@ use std::path::Path;
 #[derive(Debug)]
 struct QueryAnalysis {
     has_sequential_scan: bool,
-    cost_estimate: Option<f64>,
     warnings: Vec<String>,
 }
 
@@ -34,7 +33,6 @@ pub struct QueryAnalysisResults {
 /// Main entry point for the automodel library
 pub struct AutoModel {
     queries: Vec<QueryDefinition>,
-    defaults: Option<DefaultsConfig>,
 }
 
 impl AutoModel {
@@ -163,7 +161,7 @@ impl AutoModel {
     }
 
     /// Analyze query execution plan to detect potential performance issues
-    pub async fn analyze_query_performance(
+    async fn analyze_query_performance(
         database_url: &str,
         sql: &str,
         query_name: &str,
@@ -181,7 +179,6 @@ impl AutoModel {
 
         let mut overall_analysis = QueryAnalysis {
             has_sequential_scan: false,
-            cost_estimate: None,
             warnings: Vec::new(),
         };
 
@@ -237,7 +234,6 @@ impl AutoModel {
 
         let mut analysis = QueryAnalysis {
             has_sequential_scan: false,
-            cost_estimate: None,
             warnings: Vec::new(),
         };
 
@@ -304,9 +300,9 @@ impl AutoModel {
                                 &Type::BYTEA => Box::new(vec![0u8]),
                                 &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
                                 &Type::TIMESTAMPTZ => Box::new(chrono::Utc::now()),
-                                &Type::TIMESTAMP => Box::new(
-                                    chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
-                                ),
+                                &Type::TIMESTAMP => {
+                                    Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap())
+                                }
                                 &Type::DATE => {
                                     Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
                                 }
@@ -431,25 +427,9 @@ impl AutoModel {
         Ok(analysis)
     }
 
-    /// Check if query analysis should be performed for this query
-    fn should_analyze_query(&self, query: &QueryDefinition) -> bool {
-        // Check per-query setting first
-        if let Some(analyze_query) = query.analyze_query {
-            return analyze_query;
-        }
-
-        // Fall back to global setting
-        if let Some(ref defaults) = self.defaults {
-            return defaults.analyze_queries;
-        }
-
-        // Default is false (no analysis)
-        false
-    }
-
     /// Check if generated code is up to date by comparing file hash
-    fn is_generated_code_up_to_date<P: AsRef<Path>, Q: AsRef<Path>>(
-        yaml_path: P,
+    fn is_generated_code_up_to_date<Q: AsRef<Path>>(
+        yaml_hash: u64,
         generated_file: Q,
     ) -> Result<bool> {
         use std::fs;
@@ -460,11 +440,7 @@ impl AutoModel {
         }
 
         // Calculate current YAML hash
-        let yaml_path_str = yaml_path
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("YAML path contains invalid UTF-8"))?;
-        let current_hash = Self::calculate_file_hash(yaml_path_str)?;
+        let current_hash = yaml_hash;
 
         // Read first line of generated file to check for hash comment
         let generated_content = fs::read_to_string(generated_file)?;
@@ -483,11 +459,26 @@ impl AutoModel {
 
     /// Create a new AutoModel instance by loading queries from a YAML file
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let config = parse_yaml_file(path).await?;
+        let mut config = parse_yaml_file(path).await?;
+        for query in &mut config.queries {
+            if query.telemetry.is_none() {
+                query.telemetry = Some(QueryTelemetryConfig::default());
+            }
+            if let Some(telemetry) = query.telemetry.as_mut() {
+                if telemetry.level.is_none() {
+                    telemetry.level = config.defaults.telemetry.level;
+                }
+                if telemetry.include_sql.is_none() {
+                    telemetry.include_sql = config.defaults.telemetry.include_sql;
+                }
+            }
+            if query.ensure_indexes.is_none() {
+                query.ensure_indexes = config.defaults.ensure_indexes;
+            }
+        }
 
         Ok(Self {
             queries: config.queries,
-            defaults: config.defaults,
         })
     }
 
@@ -545,8 +536,7 @@ impl AutoModel {
             type_infos.push(type_info);
 
             // Analyze query performance if enabled
-            let should_analyze = self.should_analyze_query(query);
-            if should_analyze {
+            if query.ensure_indexes.unwrap_or(false) {
                 println!("cargo:info=Analyzing query '{}'", query.name);
                 let _analysis =
                     Self::analyze_query_performance(database_url, &query.sql, &query.name).await?;
@@ -586,8 +576,7 @@ impl AutoModel {
 
         // Generate functions without enum definitions (since they're already at the top)
         for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
-            let function_code =
-                generate_function_code_without_enums(query, type_info, self.defaults.as_ref())?;
+            let function_code = generate_function_code_without_enums(query, type_info)?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
         }
@@ -673,7 +662,7 @@ impl AutoModel {
         // Check if generated code is up to date
         let mod_file_path = output_path.join("mod.rs");
         let code_up_to_date =
-            Self::is_generated_code_up_to_date(yaml_file, &mod_file_path).unwrap_or(false);
+            Self::is_generated_code_up_to_date(yaml_hash, &mod_file_path).unwrap_or(false);
 
         if code_up_to_date {
             println!("cargo:info=Generated code is up to date, skipping database connection");

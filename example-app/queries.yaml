@@ -1,8 +1,9 @@
 # Global defaults
 defaults:
-  telemetry_level: debug    # none, info, debug, trace
-  include_sql: true         # Include SQL queries in spans by default
-  analyze_queries: true     # Enable query analysis to test conditional syntax handling - test6
+  telemetry:
+    level: debug           # none, info, debug, trace
+    include_sql: true      # Include SQL queries in spans by default
+  ensure_indexes: true     # Enable query analysis to test conditional syntax handling - test6
 
 queries:
   - name: get_current_time
@@ -23,7 +24,7 @@ queries:
     sql: "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, age INTEGER, profile JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())"
     description: "Create the users table with all necessary fields"
     module: "setup"
-    analyze_query: false
+    ensure_indexes: false
 
   - name: insert_user
     sql: |
@@ -46,7 +47,7 @@ queries:
     expect: "multiple"
     types:
       "users.profile": "crate::models::UserProfile"
-    analyze_query: true             # Enable analysis for this query despite global setting
+    ensure_indexes: true             # Enable analysis for this query despite global setting
 
   - name: find_user_by_email
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users WHERE email = ${email}"
@@ -58,7 +59,7 @@ queries:
     telemetry:
       include_params: ["email"]       # Only include email parameter in span
       include_sql: false              # Disable SQL logging for this query
-    analyze_query: false            # Disable performance analysis for this specific query
+    ensure_indexes: false            # Disable performance analysis for this specific query
 
   - name: update_user_profile
     sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() WHERE id = ${user_id} RETURNING id, name, email, age, profile, updated_at"
