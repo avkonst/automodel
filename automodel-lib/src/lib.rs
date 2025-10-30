@@ -206,6 +206,25 @@ impl AutoModel {
         sql: &str,
         query_name: &str,
     ) -> Result<QueryAnalysis> {
+        // Temporarily disable sequential scans to force index usage in analysis
+        // This helps detect queries that would benefit from indexes even with empty/small tables
+        client.execute("SET enable_seqscan = false", &[]).await?;
+        
+        // Ensure we always reset the setting, even if analysis fails
+        let result = Self::analyze_single_query_internal(client, sql, query_name).await;
+        
+        // Re-enable sequential scans (ignore errors since connection might be closing)
+        let _ = client.execute("SET enable_seqscan = true", &[]).await;
+        
+        result
+    }
+
+    /// Internal query analysis implementation
+    async fn analyze_single_query_internal(
+        client: &tokio_postgres::Client,
+        sql: &str,
+        query_name: &str,
+    ) -> Result<QueryAnalysis> {
         // Convert named parameters ${param} to positional parameters $1, $2, etc.
         let (converted_sql, param_names) =
             crate::type_extraction::convert_named_params_to_positional(sql);
@@ -379,6 +398,8 @@ impl AutoModel {
                 // PostgreSQL returns EXPLAIN as text lines
                 for row in rows {
                     let plan_line: String = row.get(0);
+                    
+                    // Check for sequential scans
                     if plan_line.contains("Seq Scan") {
                         analysis.has_sequential_scan = true;
 
@@ -396,6 +417,26 @@ impl AutoModel {
                                 "cargo:warning=Query '{}' performs sequential scan on table '{}' - consider adding indexes",
                                 query_name, table_name
                             );
+                        }
+                    }
+                    
+                    // Also check for expensive operations that might indicate missing indexes
+                    if plan_line.contains("Index Scan") && plan_line.contains("rows=") {
+                        // This is good - index is being used
+                    } else if plan_line.contains("Filter:") || plan_line.contains("Sort") {
+                        // These operations on large tables might benefit from indexes
+                        // But only report if we haven't already flagged a sequential scan
+                        if !analysis.has_sequential_scan && plan_line.contains("Filter:") {
+                            if let Some(on_pos) = plan_line.find(" on ") {
+                                let after_on = &plan_line[on_pos + 4..];
+                                let table_name =
+                                    after_on.split_whitespace().next().unwrap_or("unknown");
+                                
+                                println!(
+                                    "cargo:info=Query '{}' uses filtering on table '{}' - verify appropriate indexes exist",
+                                    query_name, table_name
+                                );
+                            }
                         }
                     }
                 }
