@@ -467,10 +467,6 @@ pub async fn find_users_complex(
 
 ### CLI Options
 
-#### Validate Command
-- `-f, --file <FILE>` - YAML file to validate
-- `-d, --database-url <URL>` - (Optional) Database URL for SQL validation
-
 #### Generate Command
 - `-d, --database-url <URL>` - Database connection URL
 - `-f, --file <FILE>` - YAML file with query definitions
@@ -479,19 +475,6 @@ pub async fn find_users_complex(
 - `--dry-run` - Preview generated code without writing files
 - `--analysis-only` - Run query performance analysis only, skip code generation
 
-## Build-time vs Runtime Code Generation
-
-### Build-time (Recommended)
-- Code is generated during `cargo build`
-- Zero runtime overhead
-- Type-safe at compile time
-- Automatically regenerates when YAML changes
-- Works even if database is unavailable at runtime
-
-### Runtime
-- Use the library directly in your application
-- Requires database connection at startup
-- More flexible for dynamic scenarios
 
 ## Examples
 
