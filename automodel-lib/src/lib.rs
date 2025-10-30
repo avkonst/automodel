@@ -33,11 +33,12 @@ pub struct QueryAnalysisResults {
 /// Main entry point for the automodel library
 pub struct AutoModel {
     queries: Vec<QueryDefinition>,
+    file_hash: u64,
 }
 
 impl AutoModel {
     /// Calculate SHA-256 hash of a file's contents
-    pub fn calculate_file_hash(file_path: &str) -> Result<u64, std::io::Error> {
+    pub fn calculate_file_hash<P: AsRef<Path>>(file_path: P) -> Result<u64, std::io::Error> {
         use sha2::{Digest, Sha256};
         use std::fs;
 
@@ -459,7 +460,7 @@ impl AutoModel {
 
     /// Create a new AutoModel instance by loading queries from a YAML file
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut config = parse_yaml_file(path).await?;
+        let mut config = parse_yaml_file(path.as_ref()).await?;
         for query in &mut config.queries {
             if query.telemetry.is_none() {
                 query.telemetry = Some(QueryTelemetryConfig::default());
@@ -479,12 +480,8 @@ impl AutoModel {
 
         Ok(Self {
             queries: config.queries,
+            file_hash: Self::calculate_file_hash(&path).unwrap_or(0),
         })
-    }
-
-    /// Generate Rust code for all loaded queries
-    pub async fn generate_code(&self, database_url: &str) -> Result<String> {
-        self.generate_code_for_module(database_url, None).await
     }
 
     /// Generate Rust code for queries in a specific module
@@ -602,44 +599,12 @@ impl AutoModel {
         &self.queries
     }
 
-    /// Build script helper for automatically generating code at build time.
-    ///
-    /// This function should be called from your build.rs script. It will:
-    /// - Check if AUTOMODEL_DATABASE_URL environment variable is set
-    /// - Calculate hash of YAML file and check if generated code is up to date
-    /// - If generated code is up to date, skip database connection entirely
-    /// - If not up to date and DATABASE_URL is set, regenerate code
-    /// - If not up to date and no DATABASE_URL, fail the build
-    /// - Organize functions into modules based on the `module` field in queries
-    /// - Generate separate .rs files for each module and a main mod.rs that includes them
-    /// - Add hash comments to generated files for future caching
-    ///
-    /// # Arguments
-    ///
-    /// * `yaml_file` - Path to the YAML file containing query definitions (relative to build.rs)
-    /// * `output_dir` - Path to the directory where module files will be written (relative to build.rs, typically "src/generated")
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// // build.rs
-    /// use automodel::AutoModel;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
-    ///     
-    ///     Ok(())
-    /// }
-    /// ```
-
     /// Generate code to output directory with provided database URL
     /// This is a CLI-friendly version that doesn't use environment variables
     pub async fn generate_to_directory(
         &self,
         database_url: &str,
         output_dir: &str,
-        yaml_file: &str,
     ) -> anyhow::Result<()> {
         use std::fs;
         use std::path::Path;
@@ -651,7 +616,7 @@ impl AutoModel {
         fs::create_dir_all(output_path)?;
 
         // Calculate hash for consistency with build-time generation
-        let yaml_hash = Self::calculate_file_hash(yaml_file).unwrap_or(0);
+        let yaml_hash = self.file_hash;
 
         let mut mod_declarations = Vec::new();
 
@@ -703,6 +668,36 @@ impl AutoModel {
         Ok(())
     }
 
+    /// Build script helper for automatically generating code at build time.
+    ///
+    /// This function should be called from your build.rs script. It will:
+    /// - Check if AUTOMODEL_DATABASE_URL environment variable is set
+    /// - Calculate hash of YAML file and check if generated code is up to date
+    /// - If generated code is up to date, skip database connection entirely
+    /// - If not up to date and DATABASE_URL is set, regenerate code
+    /// - If not up to date and no DATABASE_URL, fail the build
+    /// - Organize functions into modules based on the `module` field in queries
+    /// - Generate separate .rs files for each module and a main mod.rs that includes them
+    /// - Add hash comments to generated files for future caching
+    ///
+    /// # Arguments
+    ///
+    /// * `yaml_file` - Path to the YAML file containing query definitions (relative to build.rs)
+    /// * `output_dir` - Path to the directory where module files will be written (relative to build.rs, typically "src/generated")
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// // build.rs
+    /// use automodel::AutoModel;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn generate_at_build_time(
         yaml_file: &str,
         output_dir: &str,
@@ -716,11 +711,9 @@ impl AutoModel {
         // Tell cargo to rerun if the input YAML file changes
         println!("cargo:rerun-if-changed={}", yaml_file);
 
-        // Calculate hash of YAML file for caching
-        let yaml_hash = Self::calculate_file_hash(yaml_file)?;
-
         // Load current YAML to determine modules for cleanup (even if cached)
         let automodel_for_modules = AutoModel::new(yaml_file).await?;
+        let yaml_hash = automodel_for_modules.file_hash;
         let modules = automodel_for_modules.get_modules();
         let module_set: std::collections::HashSet<_> = modules.iter().collect();
 
