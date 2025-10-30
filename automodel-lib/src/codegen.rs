@@ -341,8 +341,6 @@ fn generate_conditional_function_body(
 ) -> Result<()> {
     use crate::type_extraction::parse_parameter_names_from_sql;
 
-    body.push_str("    // Build dynamic SQL with conditional parts\n");
-
     // Parse all parameters from the original SQL to get their order and types
     let all_params = parse_parameter_names_from_sql(&query.sql);
 
@@ -375,7 +373,6 @@ fn generate_conditional_function_body(
     }
 
     // Generate the SQL building code with complete parameter renumbering
-    body.push_str("    // Build the complete SQL with conditional blocks\n");
     body.push_str("    let mut final_sql = r\"");
     body.push_str(&sql_template);
     body.push_str("\".to_string();\n");
@@ -409,8 +406,6 @@ fn generate_conditional_function_body(
         body.push_str("    }\n\n");
     }
 
-    // Renumber all parameters sequentially in the final SQL
-    body.push_str("    // Renumber all parameters sequentially in the final SQL\n");
     body.push_str("    let mut param_counter = 1;\n");
 
     // Renumber base (non-conditional) parameters first

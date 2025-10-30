@@ -207,8 +207,6 @@ pub struct FindUsersByNameAndAgeItem {
 /// Find users by name pattern with optional minimum age filter (using conditional syntax)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} $[AND age >= ${min_age?}] AND name = ${name_exact} $[AND age <= ${max_age?}] ORDER BY name"))]
 pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>, name_exact: String, max_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, sqlx::Error> {
-    // Build dynamic SQL with conditional parts
-    // Build the complete SQL with conditional blocks
     let mut final_sql = r"SELECT id, name, email, age FROM users WHERE name ILIKE $1 $[AND age >= ${min_age?}] AND name = $2 $[AND age <= ${max_age?}] ORDER BY name".to_string();
     let mut included_params = Vec::new();
 
@@ -226,7 +224,6 @@ pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Databa
         final_sql = final_sql.replace(r"$[AND age <= ${max_age?}]", "");
     }
 
-    // Renumber all parameters sequentially in the final SQL
     let mut param_counter = 1;
     final_sql = final_sql.replace(r"${name_pattern}", &format!("${}", param_counter));
     param_counter += 1;
@@ -382,8 +379,6 @@ pub struct SearchUsersAdvancedItem {
 /// Advanced user search with multiple optional filters using conditional syntax
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] $[AND created_at >= ${since?}] ORDER BY created_at DESC"))]
 pub async fn search_users_advanced(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: Option<String>, min_age: Option<i32>, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<SearchUsersAdvancedItem>, sqlx::Error> {
-    // Build dynamic SQL with conditional parts
-    // Build the complete SQL with conditional blocks
     let mut final_sql = r"SELECT id, name, email, age, created_at FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] $[AND created_at >= ${since?}] ORDER BY created_at DESC".to_string();
     let mut included_params = Vec::new();
 
@@ -408,7 +403,6 @@ pub async fn search_users_advanced(executor: impl sqlx::Executor<'_, Database = 
         final_sql = final_sql.replace(r"$[AND created_at >= ${since?}]", "");
     }
 
-    // Renumber all parameters sequentially in the final SQL
     let mut param_counter = 1;
     if included_params.contains(&r"name_pattern") {
         final_sql = final_sql.replace(r"${name_pattern?}", &format!("${}", param_counter));

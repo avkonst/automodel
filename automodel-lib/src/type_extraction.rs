@@ -54,10 +54,6 @@ pub struct ConditionalBlock {
     pub sql_content: String,
     /// Parameters referenced within this conditional block
     pub parameters: Vec<String>,
-    /// Start position in the original SQL
-    pub start_pos: usize,
-    /// End position in the original SQL
-    pub end_pos: usize,
 }
 
 /// Parsed SQL with conditional blocks separated
