@@ -10,7 +10,7 @@ use std::env;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get database URL from environment
     let database_url =
-        env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test".to_string());
+        env::var("AUTOMODEL_DATABASE_URL").unwrap_or_else(|_| "postgresql://postgres:massword@localhost/postgres".to_string());
 
     println!("Example App - Using AutoModel Generated Functions");
     println!("==============================================");
@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("To run this example:");
             println!("1. Start a PostgreSQL database");
             println!("2. Run the schema.sql file to create tables");
-            println!("3. Set DATABASE_URL environment variable");
+            println!("3. Set AUTOMODEL_DATABASE_URL environment variable");
             println!("4. Run: cargo run");
         }
     }

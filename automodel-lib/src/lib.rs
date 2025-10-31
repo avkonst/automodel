@@ -143,14 +143,10 @@ impl AutoModel {
     /// Build script helper for automatically generating code at build time.
     ///
     /// This function should be called from your build.rs script. It will:
-    /// - Check if AUTOMODEL_DATABASE_URL environment variable is set
     /// - Calculate hash of YAML file and check if generated code is up to date
     /// - If generated code is up to date, skip database connection entirely
-    /// - If not up to date and DATABASE_URL is set, regenerate code
-    /// - If not up to date and no DATABASE_URL, fail the build
-    /// - Organize functions into modules based on the `module` field in queries
-    /// - Generate separate .rs files for each module and a main mod.rs that includes them
-    /// - Add hash comments to generated files for future caching
+    /// - If not up to date and AUTOMODEL_DATABASE_URL is set, regenerate code
+    /// - If not up to date and no AUTOMODEL_DATABASE_URL, fail the build
     ///
     /// # Arguments
     ///
@@ -202,11 +198,9 @@ impl AutoModel {
             return Ok(());
         }
 
-        // Check for database URL (try AUTOMODEL_DATABASE_URL first, then fall back to DATABASE_URL)
         let database_url = env::var("AUTOMODEL_DATABASE_URL")
-            .or_else(|_| env::var("DATABASE_URL"))
             .map_err(|_| {
-                println!("cargo:warning=AUTOMODEL_DATABASE_URL (or DATABASE_URL) environment variable must be set for code generation");
+                println!("cargo:warning=AUTOMODEL_DATABASE_URL environment variable must be set for code generation");
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "AUTOMODEL_DATABASE_URL environment variable not set")
             })?;
 
