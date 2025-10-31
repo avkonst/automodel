@@ -12,9 +12,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url =
         env::var("AUTOMODEL_DATABASE_URL").unwrap_or_else(|_| "postgresql://postgres:massword@localhost/postgres".to_string());
 
-    println!("Example App - Using AutoModel Generated Functions");
-    println!("==============================================");
-
     // Connect to database
     match connect_to_database(&database_url).await {
         Ok(pool) => {
@@ -25,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✗ Failed to connect to database: {}", e);
             println!("To run this example:");
             println!("1. Start a PostgreSQL database");
-            println!("2. Run the schema.sql file to create tables");
+            println!("2. Run the sql queries in the ./migrations to create necessary tables");
             println!("3. Set AUTOMODEL_DATABASE_URL environment variable");
             println!("4. Run: cargo run");
         }
@@ -41,23 +38,6 @@ async fn connect_to_database(database_url: &str) -> Result<PgPool, Box<dyn std::
 
 async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nRunning example queries...");
-
-    // Note: The actual generated functions would be used here
-    // For now, we'll show how they would be called with the new module structure:
-
-    println!("Generated functions organized by modules:");
-    println!("Admin module:");
-    println!("- generated::admin::get_current_time(client)");
-    println!("- generated::admin::get_version(client)");
-    println!("\nSetup module:");
-    println!("- generated::setup::create_users_table(client)");
-    println!("\nUsers module:");
-    println!("- generated::users::insert_user(client, name, email, age, profile)");
-    println!("- generated::users::get_all_users(client)");
-    println!("- generated::users::find_user_by_email(client, email)");
-    println!("- generated::users::update_user_profile(client, profile, user_id)");
-    println!("\nMain module (queries without module specified):");
-    println!("- generated::test_json_query(client, test_data)");
 
     // Example of how you would use the generated functions:
 
@@ -80,7 +60,7 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("\nTo see the actual generated code, check src/generated/ directory");
     println!("Functions are organized into modules: admin.rs, setup.rs, users.rs, and mod.rs");
-    println!("The code is regenerated automatically when queries.yaml changes!");
+    println!("The code is regenerated automatically when the build runs after queries.yaml changes!");
 
     Ok(())
 }
