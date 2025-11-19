@@ -5,7 +5,7 @@ edition = "2021"
 description = "Command-line interface for AutoModel - generate typed functions from YAML-defined SQL queries"
 license = "MIT"
 repository = "https://github.com/thepartly/automodel"
-keywords = ["sql", "postgresql", "codegen", "database", "yaml", "cli"]
+keywords = ["sql", "postgresql", "codegen", "database", "cli"]
 categories = ["command-line-utilities", "database", "development-tools"]
 readme = "../README.md"
 
