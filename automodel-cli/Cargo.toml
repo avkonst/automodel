@@ -1,12 +1,13 @@
 [package]
 name = "automodel-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Command-line interface for AutoModel - generate typed functions from YAML-defined SQL queries"
 license = "MIT"
-repository = "https://github.com/yourusername/automodel"
+repository = "https://github.com/thepartly/automodel"
 keywords = ["sql", "postgresql", "codegen", "database", "yaml", "cli"]
 categories = ["command-line-utilities", "database", "development-tools"]
+readme = "../README.md"
 
 [[bin]]
 name = "automodel"

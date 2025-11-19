@@ -1,12 +1,13 @@
 [package]
 name = "automodel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A Rust library for generating typed functions from YAML-defined SQL queries"
 license = "MIT"
-repository = "https://github.com/yourusername/automodel"
+repository = "https://github.com/thepartly/automodel"
 keywords = ["sql", "postgresql", "codegen", "database", "yaml"]
 categories = ["database", "development-tools"]
+readme = "../README.md"
 
 [dependencies]
 tokio = { workspace = true }
