@@ -17,6 +17,10 @@ sqlx = { version = "0.8", features = [
     "uuid",
     "json",
     "rust_decimal",
+    "bit-vec",
+    "ipnetwork",
+    "mac_address",
+    "ipnet",
 ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"

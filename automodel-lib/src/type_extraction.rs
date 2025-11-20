@@ -318,39 +318,174 @@ async fn pg_type_to_rust_type(
     is_nullable: bool,
 ) -> Result<RustType> {
     let base_type = match *pg_type {
+        // Boolean & Numeric Types
         PgType::BOOL => "bool",
+        PgType::BOOL_ARRAY => "Vec<bool>",
         PgType::CHAR => "i8",
+        PgType::CHAR_ARRAY => "Vec<i8>",
         PgType::INT2 => "i16",
+        PgType::INT2_ARRAY => "Vec<i16>",
         PgType::INT4 => "i32",
+        PgType::INT4_ARRAY => "Vec<i32>",
         PgType::INT8 => "i64",
-        PgType::OID => "u32",
+        PgType::INT8_ARRAY => "Vec<i64>",
         PgType::FLOAT4 => "f32",
+        PgType::FLOAT4_ARRAY => "Vec<f32>",
         PgType::FLOAT8 => "f64",
-        PgType::TEXT | PgType::VARCHAR | PgType::BPCHAR => "String",
-        PgType::BYTEA => "Vec<u8>",
-        PgType::TIMESTAMP => "chrono::NaiveDateTime",
-        PgType::TIMESTAMPTZ => "chrono::DateTime<chrono::Utc>",
-        PgType::DATE => "chrono::NaiveDate",
-        PgType::TIME => "chrono::NaiveTime",
-        PgType::UUID => "uuid::Uuid",
-        PgType::JSON | PgType::JSONB => "serde_json::Value",
-        PgType::INET => "std::net::IpAddr",
+        PgType::FLOAT8_ARRAY => "Vec<f64>",
         PgType::NUMERIC => "rust_decimal::Decimal",
+        PgType::NUMERIC_ARRAY => "Vec<rust_decimal::Decimal>",
+        PgType::REGPROC => "u32",
+        PgType::OID => "u32",
+        PgType::TID => "(u32, u32)",
+        PgType::XID => "u32",
+        PgType::CID => "u32",
+        PgType::XID8 => "u64",
+
+        // String & Text Types
+        PgType::NAME => "String",
+        PgType::NAME_ARRAY => "Vec<String>",
+        PgType::TEXT => "String",
+        PgType::TEXT_ARRAY => "Vec<String>",
+        PgType::BPCHAR => "String",
+        PgType::BPCHAR_ARRAY => "Vec<String>",
+        PgType::VARCHAR => "String",
+        PgType::VARCHAR_ARRAY => "Vec<String>",
+        PgType::XML => "String",
+        PgType::XML_ARRAY => "Vec<String>",
+        PgType::JSON => "serde_json::Value",
+        PgType::JSON_ARRAY => "Vec<serde_json::Value>",
+        PgType::JSONB => "serde_json::Value",
+        PgType::JSONB_ARRAY => "Vec<serde_json::Value>",
+        PgType::JSONPATH => "String",
+
+        // Binary & Bit Types
+        PgType::BYTEA => "Vec<u8>",
+        PgType::BYTEA_ARRAY => "Vec<Vec<u8>>",
+        PgType::BIT => "bit_vec::BitVec",
+        PgType::BIT_ARRAY => "Vec<bit_vec::BitVec>",
+        PgType::VARBIT => "bit_vec::BitVec",
+        PgType::VARBIT_ARRAY => "Vec<bit_vec::BitVec>",
+
+        // Date & Time Types
+        PgType::DATE => "chrono::NaiveDate",
+        PgType::DATE_ARRAY => "Vec<chrono::NaiveDate>",
+        PgType::TIME => "chrono::NaiveTime",
+        PgType::TIME_ARRAY => "Vec<chrono::NaiveTime>",
+        PgType::TIMESTAMP => "chrono::NaiveDateTime",
+        PgType::TIMESTAMP_ARRAY => "Vec<chrono::NaiveDateTime>",
+        PgType::TIMESTAMPTZ => "chrono::DateTime<chrono::Utc>",
+        PgType::TIMESTAMPTZ_ARRAY => "Vec<chrono::DateTime<chrono::Utc>>",
+        PgType::INTERVAL => "sqlx::postgres::types::PgInterval",
+        PgType::INTERVAL_ARRAY => "Vec<sqlx::postgres::types::PgInterval>",
+        PgType::TIMETZ => "sqlx::postgres::types::PgTimeTz",
+        PgType::TIMETZ_ARRAY => "Vec<sqlx::postgres::types::PgTimeTz>",
+
+        // Range Types
+        PgType::INT4_RANGE => "sqlx::postgres::types::PgRange<i32>",
+        PgType::INT4_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<i32>>",
+        PgType::INT8_RANGE => "sqlx::postgres::types::PgRange<i64>",
+        PgType::INT8_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<i64>>",
+        PgType::NUM_RANGE => "sqlx::postgres::types::PgRange<rust_decimal::Decimal>",
+        PgType::NUM_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<rust_decimal::Decimal>>",
+        PgType::TS_RANGE => "sqlx::postgres::types::PgRange<chrono::NaiveDateTime>",
+        PgType::TS_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<chrono::NaiveDateTime>>",
+        PgType::TSTZ_RANGE => "sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>",
+        PgType::TSTZ_RANGE_ARRAY => {
+            "Vec<sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>>"
+        }
+        PgType::DATE_RANGE => "sqlx::postgres::types::PgRange<chrono::NaiveDate>",
+        PgType::DATE_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<chrono::NaiveDate>>",
+
+        // Multirange Types - sqlx doesn't support multirange types natively, use JSON
+        PgType::INT4MULTI_RANGE => "serde_json::Value",
+        PgType::INT4MULTI_RANGE_ARRAY => "serde_json::Value",
+        PgType::INT8MULTI_RANGE => "serde_json::Value",
+        PgType::INT8MULTI_RANGE_ARRAY => "serde_json::Value",
+        PgType::NUMMULTI_RANGE => "serde_json::Value",
+        PgType::NUMMULTI_RANGE_ARRAY => "serde_json::Value",
+        PgType::TSMULTI_RANGE => "serde_json::Value",
+        PgType::TSMULTI_RANGE_ARRAY => "serde_json::Value",
+        PgType::TSTZMULTI_RANGE => "serde_json::Value",
+        PgType::TSTZMULTI_RANGE_ARRAY => "serde_json::Value",
+        PgType::DATEMULTI_RANGE => "serde_json::Value",
+        PgType::DATEMULTI_RANGE_ARRAY => "serde_json::Value",
+
+        // Network & Address Types
+        PgType::CIDR => "std::net::IpAddr",
+        PgType::CIDR_ARRAY => "Vec<std::net::IpAddr>",
+        PgType::INET => "std::net::IpAddr",
+        PgType::INET_ARRAY => "Vec<std::net::IpAddr>",
+        PgType::MACADDR => "mac_address::MacAddress",
+        PgType::MACADDR_ARRAY => "Vec<mac_address::MacAddress>",
+
+        // Geometric Types
+        PgType::POINT => "sqlx::postgres::types::PgPoint",
+        PgType::POINT_ARRAY => "Vec<sqlx::postgres::types::PgPoint>",
+        PgType::LSEG => "sqlx::postgres::types::PgLseg",
+        PgType::LSEG_ARRAY => "Vec<sqlx::postgres::types::PgLseg>",
+        PgType::PATH => "sqlx::postgres::types::PgPath",
+        PgType::PATH_ARRAY => "Vec<sqlx::postgres::types::PgPath>",
+        PgType::BOX => "sqlx::postgres::types::PgBox",
+        PgType::BOX_ARRAY => "Vec<sqlx::postgres::types::PgBox>",
+        PgType::POLYGON => "sqlx::postgres::types::PgPolygon",
+        PgType::POLYGON_ARRAY => "Vec<sqlx::postgres::types::PgPolygon>",
+        PgType::CIRCLE => "sqlx::postgres::types::PgCircle",
+        PgType::CIRCLE_ARRAY => "Vec<sqlx::postgres::types::PgCircle>",
+        PgType::LINE => "sqlx::postgres::types::PgLine",
+        PgType::LINE_ARRAY => "Vec<sqlx::postgres::types::PgLine>",
+
+        // Special & System Types
+        PgType::TSQUERY => "String",
+        PgType::TSQUERY_ARRAY => "Vec<String>",
+        PgType::REGCONFIG => "u32",
+        PgType::REGDICTIONARY => "u32",
+        PgType::REGNAMESPACE => "u32",
+        PgType::REGROLE => "u32",
+        PgType::REGCOLLATION => "u32",
+        PgType::ACLITEM => "String",
+        PgType::PG_NDISTINCT => "String",
+        PgType::PG_DEPENDENCIES => "String",
+        PgType::PG_BRIN_BLOOM_SUMMARY => "String",
+        PgType::PG_BRIN_MINMAX_MULTI_SUMMARY => "String",
+        PgType::PG_MCV_LIST => "String",
+        PgType::PG_SNAPSHOT => "String",
+        PgType::TXID_SNAPSHOT => "String",
+        PgType::UUID => "uuid::Uuid",
+        PgType::UUID_ARRAY => "Vec<uuid::Uuid>",
+
+        PgType::PG_LSN => "u64",
+        PgType::PG_LSN_ARRAY => "Vec<u64>",
+
+        // Pseudo-types, handlers, and unknowns: map to serde_json::Value
+        PgType::UNKNOWN
+        | PgType::RECORD
+        | PgType::ANY
+        | PgType::ANYARRAY
+        | PgType::VOID
+        | PgType::TRIGGER
+        | PgType::LANGUAGE_HANDLER
+        | PgType::INTERNAL
+        | PgType::ANYELEMENT
+        | PgType::RECORD_ARRAY
+        | PgType::ANYNONARRAY
+        | PgType::FDW_HANDLER
+        | PgType::TSM_HANDLER
+        | PgType::ANYENUM => "serde_json::Value",
+
+        // Enum types and fallback
         _ => {
             // Check if this is an enum type by trying to get enum info
             if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
                 let enum_name = to_pascal_case(&enum_info.type_name);
-
                 return Ok(RustType {
-                    rust_type: enum_name, // Store base enum type without Option<>
+                    rust_type: enum_name,
                     is_nullable,
                     needs_json_wrapper: false,
                     enum_variants: Some(enum_info.variants),
                     pg_type_name: Some(enum_info.type_name),
                 });
             }
-
-            // For unknown types, use a generic approach
             return Ok(RustType {
                 rust_type: format!("/* Unknown type: {} */ String", pg_type.name()),
                 is_nullable,
@@ -362,9 +497,9 @@ async fn pg_type_to_rust_type(
     };
 
     Ok(RustType {
-        rust_type: base_type.to_string(), // Store base type without Option<>
+        rust_type: base_type.to_string(),
         is_nullable,
-        needs_json_wrapper: false, // Standard types don't need JSON wrapper
+        needs_json_wrapper: false,
         enum_variants: None,
         pg_type_name: None,
     })

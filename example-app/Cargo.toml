@@ -12,6 +12,9 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { workspace = true }
 rust_decimal = { workspace = true, features = ["db-postgres", "serde"] }
 tracing = "0.1"
+bit-vec = { version = "0.6", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+mac_address = "1.1"
 
 [build-dependencies]
 automodel = { path = "../automodel-lib" }

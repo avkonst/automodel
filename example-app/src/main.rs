@@ -1,5 +1,4 @@
 #[allow(dead_code)]
-
 mod generated;
 mod models;
 
@@ -9,8 +8,8 @@ use std::env;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get database URL from environment
-    let database_url =
-        env::var("AUTOMODEL_DATABASE_URL").unwrap_or_else(|_| "postgresql://postgres:massword@localhost/postgres".to_string());
+    let database_url = env::var("AUTOMODEL_DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://postgres:massword@localhost/postgres".to_string());
 
     // Connect to database
     match connect_to_database(&database_url).await {
@@ -58,9 +57,216 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
         Ok(users) => println!("All users: {:?}", users),
         Err(e) => println!("Error listing users: {}", e),
     }
+
+    // Test all PostgreSQL types
+    println!("\n=== Testing All PostgreSQL Types ===");
+    test_all_types(pool).await?;
+
     println!("\nTo see the actual generated code, check src/generated/ directory");
     println!("Functions are organized into modules: admin.rs, setup.rs, users.rs, and mod.rs");
-    println!("The code is regenerated automatically when the build runs after queries.yaml changes!");
+    println!(
+        "The code is regenerated automatically when the build runs after queries.yaml changes!"
+    );
+
+    Ok(())
+}
+
+async fn test_all_types(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+    use rust_decimal::Decimal;
+    use sqlx::postgres::types::{PgInterval, PgRange, PgTimeTz};
+    use std::str::FromStr;
+    use uuid::Uuid;
+
+    println!("Inserting test row with all PostgreSQL types...");
+
+    // Prepare test data
+    let bool_col = true;
+    let char_col = "A".to_string(); // CHAR(1) in PostgreSQL
+    let int2_col: i16 = 32767;
+    let int4_col: i32 = 2147483647;
+    let int8_col: i64 = 9223372036854775807;
+    let float4_col: f32 = 3.14159;
+    let float8_col: f64 = 2.718281828459045;
+    let numeric_col = Decimal::from_str("12345.67")?;
+
+    let name_col = "test_name".to_string();
+    let text_col = "This is a test text".to_string();
+    let varchar_col = "varchar test".to_string();
+    let bpchar_col = "bpchar    ".to_string(); // Will be padded to 10 chars
+
+    let bytea_col = vec![0xDE, 0xAD, 0xBE, 0xEF];
+    // Bit types using bit_vec::BitVec
+    let mut bit_col = bit_vec::BitVec::from_elem(8, false);
+    bit_col.set(0, true);
+    bit_col.set(2, true);
+    bit_col.set(4, true);
+    bit_col.set(6, true);
+
+    let mut varbit_col = bit_vec::BitVec::from_elem(16, false);
+    varbit_col.set(0, true);
+    varbit_col.set(2, true);
+    varbit_col.set(4, true);
+    varbit_col.set(6, true);
+    varbit_col.set(8, true);
+    varbit_col.set(10, true);
+    varbit_col.set(12, true);
+    varbit_col.set(14, true);
+
+    let date_col = NaiveDate::from_ymd_opt(2025, 11, 20).unwrap();
+    let time_col = NaiveTime::from_hms_opt(14, 30, 0).unwrap();
+    let timestamp_col = NaiveDateTime::parse_from_str("2025-11-20 14:30:00", "%Y-%m-%d %H:%M:%S")?;
+    let timestamptz_col = Utc.with_ymd_and_hms(2025, 11, 20, 14, 30, 0).unwrap();
+    let interval_col = PgInterval {
+        months: 0,
+        days: 1,
+        microseconds: (2 * 3600 + 30 * 60) * 1_000_000,
+    };
+    let timetz_col = PgTimeTz {
+        time: NaiveTime::from_hms_opt(14, 30, 0).unwrap(),
+        offset: chrono::FixedOffset::east_opt(0).unwrap(),
+    };
+
+    // Range types
+    let int4_range_col =
+        PgRange::from((std::ops::Bound::Included(1), std::ops::Bound::Excluded(10)));
+    let int8_range_col = PgRange::from((
+        std::ops::Bound::Included(100i64),
+        std::ops::Bound::Included(200i64),
+    ));
+    let num_range_col = PgRange::from((
+        std::ops::Bound::Included(Decimal::from_str("0.5")?),
+        std::ops::Bound::Included(Decimal::from_str("99.9")?),
+    ));
+    let ts_range_col = PgRange::from((
+        std::ops::Bound::Included(
+            NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        ),
+        std::ops::Bound::Included(
+            NaiveDate::from_ymd_opt(2025, 12, 31)
+                .unwrap()
+                .and_hms_opt(23, 59, 59)
+                .unwrap(),
+        ),
+    ));
+    let tstz_range_col = PgRange::from((
+        std::ops::Bound::Included(Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+        std::ops::Bound::Included(Utc.with_ymd_and_hms(2025, 12, 31, 23, 59, 59).unwrap()),
+    ));
+    let date_range_col = PgRange::from((
+        std::ops::Bound::Included(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()),
+        std::ops::Bound::Included(NaiveDate::from_ymd_opt(2025, 12, 31).unwrap()),
+    ));
+
+    // Network types - using std::net::IpAddr as sqlx maps INET/CIDR to IpAddr with ipnet feature
+    let inet_col: std::net::IpAddr = "192.168.1.1".parse()?;
+    let cidr_col: std::net::IpAddr = "192.168.1.0".parse()?;
+    let macaddr_col = mac_address::MacAddress::new([0x08, 0x00, 0x2b, 0x01, 0x02, 0x03]);
+
+    // JSON types
+    let json_col = serde_json::json!({"key": "value", "number": 42});
+    let jsonb_col = serde_json::json!({"name": "test", "tags": ["tag1", "tag2"]});
+
+    // UUID
+    let uuid_col = Uuid::parse_str("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")?;
+
+    // Array types
+    let bool_array_col = vec![true, false, true];
+    let int4_array_col = vec![1, 2, 3, 4, 5];
+    let int8_array_col = vec![100i64, 200i64, 300i64];
+    let text_array_col = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+    let float8_array_col = vec![1.1, 2.2, 3.3];
+
+    // Range array types
+    let int4_range_array_col = vec![
+        PgRange::from((std::ops::Bound::Included(1), std::ops::Bound::Excluded(5))),
+        PgRange::from((std::ops::Bound::Included(10), std::ops::Bound::Excluded(20))),
+    ];
+    let date_range_array_col = vec![
+        PgRange::from((
+            std::ops::Bound::Included(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()),
+            std::ops::Bound::Included(NaiveDate::from_ymd_opt(2025, 1, 31).unwrap()),
+        )),
+        PgRange::from((
+            std::ops::Bound::Included(NaiveDate::from_ymd_opt(2025, 6, 1).unwrap()),
+            std::ops::Bound::Included(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap()),
+        )),
+    ];
+
+    // Insert the test row
+    let result = generated::admin::insert_all_types_test(
+        pool,
+        bool_col,
+        char_col.clone(),
+        int2_col,
+        int4_col,
+        int8_col,
+        float4_col,
+        float8_col,
+        numeric_col,
+        name_col.clone(),
+        text_col.clone(),
+        varchar_col.clone(),
+        bpchar_col.clone(),
+        bytea_col.clone(),
+        bit_col.clone(),
+        varbit_col.clone(),
+        date_col,
+        time_col,
+        timestamp_col,
+        timestamptz_col,
+        interval_col,
+        timetz_col,
+        int4_range_col,
+        int8_range_col,
+        num_range_col,
+        ts_range_col,
+        tstz_range_col,
+        date_range_col,
+        inet_col,
+        cidr_col,
+        macaddr_col,
+        json_col.clone(),
+        jsonb_col.clone(),
+        uuid_col,
+        bool_array_col.clone(),
+        int4_array_col.clone(),
+        int8_array_col.clone(),
+        text_array_col.clone(),
+        float8_array_col.clone(),
+        int4_range_array_col.clone(),
+        date_range_array_col.clone(),
+    )
+    .await?;
+
+    println!("✓ Inserted row with ID: {}", result);
+
+    // Read back the inserted row
+    println!("Reading back the inserted row...");
+    let retrieved = generated::admin::get_all_types_test(pool, result).await?;
+
+    println!("✓ Successfully retrieved row:");
+    println!("  ID: {:?}", retrieved.id);
+    println!("  Boolean: {:?}", retrieved.bool_col);
+    println!("  Int4: {:?}", retrieved.int4_col);
+    println!("  Int8: {:?}", retrieved.int8_col);
+    println!("  Float8: {:?}", retrieved.float8_col);
+    println!("  Text: {:?}", retrieved.text_col);
+    println!("  UUID: {:?}", retrieved.uuid_col);
+    println!("  JSON: {:?}", retrieved.jsonb_col);
+    println!("  Date: {:?}", retrieved.date_col);
+    println!("  Timestamp: {:?}", retrieved.timestamp_col);
+    println!("  Int4 Range: {:?}", retrieved.int4_range_col);
+    println!("  Date Range: {:?}", retrieved.date_range_col);
+    println!("  Int4 Array: {:?}", retrieved.int4_array_col);
+    println!("  Text Array: {:?}", retrieved.text_array_col);
+    println!("  Int4 Range Array: {:?}", retrieved.int4_range_array_col);
+    println!("  Date Range Array: {:?}", retrieved.date_range_array_col);
+
+    println!("\n✓ All PostgreSQL types test completed successfully!");
 
     Ok(())
 }
