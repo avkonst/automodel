@@ -38,25 +38,9 @@ async fn connect_to_database(database_url: &str) -> Result<PgPool, Box<dyn std::
 async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nRunning example queries...");
 
-    // Example of how you would use the generated functions:
-
-    // Admin functions
-    match generated::admin::get_current_time(pool).await {
-        Ok(time) => println!("Current time: {:?}", time),
-        Err(e) => println!("Error getting time: {}", e),
-    }
-
-    // Setup functions
-    match generated::setup::create_users_table(pool).await {
-        Ok(_) => println!("Users table created successfully"),
-        Err(e) => println!("Error creating table: {}", e),
-    }
-
-    // Users functions
-    match generated::users::get_all_users(pool).await {
-        Ok(users) => println!("All users: {:?}", users),
-        Err(e) => println!("Error listing users: {}", e),
-    }
+    // Test basic queries
+    println!("\n=== Testing Basic Queries ===");
+    test_basic_queries(pool).await?;
 
     // Test conditional update - only update fields that are provided
     println!("\n=== Testing Conditional Update ===");
@@ -75,6 +59,28 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "The code is regenerated automatically when the build runs after queries.yaml changes!"
     );
+
+    Ok(())
+}
+
+async fn test_basic_queries(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    // Admin functions
+    match generated::admin::get_current_time(pool).await {
+        Ok(time) => println!("Current time: {:?}", time),
+        Err(e) => println!("Error getting time: {}", e),
+    }
+
+    // Setup functions
+    match generated::setup::create_users_table(pool).await {
+        Ok(_) => println!("Users table created successfully"),
+        Err(e) => println!("Error creating table: {}", e),
+    }
+
+    // Users functions
+    match generated::users::get_all_users(pool).await {
+        Ok(users) => println!("All users: {:?}", users),
+        Err(e) => println!("Error listing users: {}", e),
+    }
 
     Ok(())
 }
