@@ -886,12 +886,15 @@ pub fn extract_enum_types(
         .collect()
 }
 
-pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -> Option<String> {
+/// Generate a result struct with a custom struct name
+pub fn generate_result_struct_with_name(
+    struct_name: &str,
+    output_types: &[OutputColumn],
+) -> Option<String> {
     if output_types.len() <= 1 {
         return None;
     }
 
-    let struct_name = format!("{}Item", to_pascal_case(query_name));
     let mut struct_def = format!("#[derive(Debug, Clone)]\npub struct {} {{\n", struct_name);
 
     for col in output_types {
@@ -994,7 +997,7 @@ fn to_snake_case(s: &str) -> String {
     result
 }
 
-/// Generate struct for conditional_diff pattern
+/// Generate struct for conditions_type pattern
 /// This creates a struct with ONLY the conditional parameters (those ending with '?')
 /// without Option wrappers, used for both old and new values in diff-based updates
 pub fn generate_conditional_diff_struct(
@@ -1029,7 +1032,7 @@ pub fn generate_conditional_diff_struct(
 
             // Only add if we haven't seen this parameter name before
             if !unique_params.contains_key(&clean_param_name) {
-                // For conditional_diff, we don't use Option - the struct fields are the raw types
+                // For conditions_type, we don't use Option - the struct fields are the raw types
                 let final_type = rust_type.rust_type.clone();
                 unique_params.insert(clean_param_name.clone(), final_type);
                 param_order.push(clean_param_name);
@@ -1053,14 +1056,19 @@ pub fn generate_conditional_diff_struct(
     Some(code)
 }
 
-/// Generate function parameters for conditional_diff pattern
+/// Generate function parameters for conditions_type pattern
 /// Returns: "old: &QueryNameParams, new: &QueryNameParams, non_conditional_params..."
 pub fn generate_conditional_diff_params(
     query_name: &str,
     param_names: &[String],
     input_types: &[RustType],
+    struct_name_override: Option<&str>,
 ) -> String {
-    let struct_name = format!("{}Params", to_pascal_case(query_name));
+    let struct_name = if let Some(override_name) = struct_name_override {
+        override_name.to_string()
+    } else {
+        format!("{}Params", to_pascal_case(query_name))
+    };
 
     // Separate conditional and non-conditional parameters
     let mut non_conditional_params = Vec::new();
@@ -1143,7 +1151,7 @@ pub fn generate_structured_params_struct(
     Some(code)
 }
 
-/// Generate function parameters for structured_parameters pattern
+/// Generate function parameters for parameters_type pattern
 /// Returns: "params: &QueryNameParams" or "params: &OverrideName" if override is provided
 pub fn generate_structured_params_signature(
     query_name: &str,

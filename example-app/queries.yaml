@@ -140,14 +140,14 @@ queries:
     description: "Update user fields using diff-based conditional updates - compares old and new structs"
     module: "users"
     expect: "exactly_one"
-    conditional_diff: true
+    conditions_type: true
 
   - name: insert_user_structured
     sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age}) RETURNING id, name, email, age, created_at"
     description: "Insert a new user using structured parameters - all params passed as a single struct"
     module: "users"
     expect: "exactly_one"
-    structured_parameters: true
+    parameters_type: true
 
   - name: get_all_user_statuses
     sql: "SELECT DISTINCT status FROM users ORDER BY status"
@@ -424,27 +424,47 @@ queries:
     module: "admin"
     expect: "exactly_one"
 
-  # Test structured_parameters with struct reuse
+  # Test parameters_type with struct reuse
   - name: get_user_by_id_and_email
     sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
     description: "Get a user by ID and email - generates GetUserByIdAndEmailParams struct and GetUserByIdAndEmailItem return struct"
     module: "users"
     expect: "possible_one"
-    structured_parameters: true
+    parameters_type: true
 
   - name: delete_user_by_id_and_email
     sql: "DELETE FROM users WHERE id = ${id} AND email = ${email} RETURNING id, email"
     description: "Delete user by ID and email - reuses GetUserByIdAndEmailParams struct"
     module: "users"
     expect: "exactly_one"
-    structured_parameters: "GetUserByIdAndEmailParams"
+    parameters_type: "GetUserByIdAndEmailParams"
 
   - name: update_user_contact_info
     sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id} RETURNING id, name, email"
     description: "Update user contact info - reuses GetUserByIdAndEmailItem return struct as params"
     module: "users"
     expect: "exactly_one"
-    structured_parameters: "GetUserByIdAndEmailItem"
+    parameters_type: "GetUserByIdAndEmailItem"
+
+  # Test conditions_type with struct reuse
+  - name: update_user_profile_diff
+    sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id} RETURNING id, name, email, profile, updated_at"
+    description: "Update user profile with conditional name/email - generates UpdateUserProfileDiffParams"
+    module: "users"
+    expect: "exactly_one"
+    conditions_type: true
+    types:
+      "users.profile": "crate::models::UserProfile"
+      "profile": "crate::models::UserProfile"
+
+  - name: update_user_metadata_diff
+    sql: "UPDATE users SET profile = ${profile}, updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id} RETURNING id, name, email, updated_at"
+    description: "Update user metadata - reuses UpdateUserProfileDiffParams struct"
+    module: "users"
+    expect: "exactly_one"
+    conditions_type: "UpdateUserProfileDiffParams"
+    types:
+      "profile": "crate::models::UserProfile"
 
   # Test with type mismatch (should fail validation) - commented out
   # - name: test_type_mismatch
@@ -452,7 +472,60 @@ queries:
   #   description: "Test type mismatch - tries to reuse struct but needs additional 'name' field"
   #   module: "users"
   #   expect: "exactly_one"
-  #   structured_parameters: "GetUserByIdAndEmailParams"
+  #   parameters_type: "GetUserByIdAndEmailParams"
+
+  # Test return_type with custom names and struct reuse
+  - name: get_user_summary
+    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    description: "Get user summary - generates UserSummary return struct with custom name"
+    module: "users"
+    expect: "exactly_one"
+    return_type: "UserSummary"
+
+  - name: get_user_info_by_email
+    sql: "SELECT id, name, email FROM users WHERE email = ${email}"
+    description: "Get user info by email - reuses UserSummary return struct"
+    module: "users"
+    expect: "possible_one"
+    return_type: "UserSummary"
+
+  - name: get_all_user_summaries
+    sql: "SELECT id, name, email FROM users ORDER BY name"
+    description: "Get all user summaries - reuses UserSummary return struct"
+    module: "users"
+    expect: "multiple"
+    return_type: "UserSummary"
+
+  - name: get_user_details
+    sql: "SELECT id, name, email, age, created_at FROM users WHERE id = ${user_id}"
+    description: "Get user details with age and created_at - generates UserDetails return struct"
+    module: "users"
+    expect: "exactly_one"
+    return_type: "UserDetails"
+
+  - name: search_user_details
+    sql: "SELECT id, name, email, age, created_at FROM users WHERE name ILIKE ${pattern}"
+    description: "Search user details - reuses UserDetails return struct"
+    module: "users"
+    expect: "multiple"
+    return_type: "UserDetails"
+
+  # Test return_type: false to disable custom struct generation
+  - name: get_user_count_and_avg_age
+    sql: "SELECT COUNT(*) as count, AVG(age) as avg_age FROM users"
+    description: "Get user count and average age - uses default return struct instead of custom"
+    module: "analytics"
+    expect: "exactly_one"
+    return_type: false
+
+  # Test combining parameters_type and return_type
+  - name: find_user_by_criteria
+    sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
+    description: "Find user by criteria - uses GetUserByIdAndEmailParams for params and UserSummary for return"
+    module: "users"
+    expect: "possible_one"
+    parameters_type: "GetUserByIdAndEmailParams"
+    return_type: "UserSummary"
 
 
 

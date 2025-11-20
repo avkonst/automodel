@@ -293,7 +293,7 @@ async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::
     );
 
     println!("\n✓ Diff-based conditional update examples completed successfully!");
-    println!("With conditional_diff: true, the function compares old.field != new.field to decide which SET clauses to include");
+    println!("With conditions_type: true, the function compares old.field != new.field to decide which SET clauses to include");
 
     Ok(())
 }
@@ -331,7 +331,7 @@ async fn test_structured_parameters(pool: &PgPool) -> Result<(), Box<dyn std::er
     );
 
     println!("\n✓ Structured parameters examples completed successfully!");
-    println!("With structured_parameters: true, all query parameters are passed as a single struct instead of individual parameters");
+    println!("With parameters_type: true, all query parameters are passed as a single struct instead of individual parameters");
 
     Ok(())
 }
@@ -344,7 +344,7 @@ async fn test_struct_reuse(pool: &PgPool) -> Result<(), Box<dyn std::error::Erro
     let timestamp = chrono::Utc::now().timestamp();
 
     // Example 1: Reusing a Params struct
-    println!("1. Query with structured_parameters: true generates GetUserByIdAndEmailParams");
+    println!("1. Query with parameters_type: true generates GetUserByIdAndEmailParams");
     let email = format!("struct.reuse.{}@example.com", timestamp);
 
     // First insert a test user
@@ -385,7 +385,7 @@ async fn test_struct_reuse(pool: &PgPool) -> Result<(), Box<dyn std::error::Erro
     }
 
     // Example 2: Reusing the same Params struct in delete query
-    println!("\n2. Another query reuses GetUserByIdAndEmailParams (structured_parameters: \"GetUserByIdAndEmailParams\")");
+    println!("\n2. Another query reuses GetUserByIdAndEmailParams (parameters_type: \"GetUserByIdAndEmailParams\")");
     println!("   No new struct is generated - it reuses the existing one!");
 
     let deleted = generated::users::delete_user_by_id_and_email(pool, &params).await?;

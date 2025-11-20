@@ -1,28 +1,73 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Structured parameters configuration - can be either a boolean or a struct name reference
+/// Parameters type configuration - can be either a boolean or a struct name
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
-pub enum StructuredParameters {
+pub enum ParametersType {
     /// Auto-generate a new struct with name {QueryName}Params
     Enabled(bool),
-    /// Use an existing struct by name (e.g., "User", "InsertUserParams")
-    Reference(String),
+    /// Use or generate a struct with the given name
+    Named(String),
 }
 
-impl StructuredParameters {
+impl ParametersType {
     pub fn is_enabled(&self) -> bool {
         match self {
-            StructuredParameters::Enabled(b) => *b,
-            StructuredParameters::Reference(_) => true,
+            ParametersType::Enabled(b) => *b,
+            ParametersType::Named(_) => true,
         }
     }
 
     pub fn get_struct_name(&self) -> Option<&str> {
         match self {
-            StructuredParameters::Enabled(_) => None,
-            StructuredParameters::Reference(name) => Some(name.as_str()),
+            ParametersType::Enabled(_) => None,
+            ParametersType::Named(name) => Some(name.as_str()),
+        }
+    }
+}
+
+/// Conditions type configuration - can be either a boolean or a struct name
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ConditionsType {
+    /// Auto-generate a new struct with name {QueryName}Params
+    Enabled(bool),
+    /// Use or generate a struct with the given name
+    Named(String),
+}
+
+impl ConditionsType {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            ConditionsType::Enabled(b) => *b,
+            ConditionsType::Named(_) => true,
+        }
+    }
+
+    pub fn get_struct_name(&self) -> Option<&str> {
+        match self {
+            ConditionsType::Enabled(_) => None,
+            ConditionsType::Named(name) => Some(name.as_str()),
+        }
+    }
+}
+
+/// Return type configuration - can be either a boolean or a struct name
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ReturnType {
+    /// Auto-generate return type struct with name {QueryName}Item (default behavior)
+    Default(bool),
+    /// Use or generate a return type struct with the given name
+    Named(String),
+}
+
+impl ReturnType {
+    pub fn get_struct_name(&self) -> Option<&str> {
+        match self {
+            ReturnType::Default(_) => None,
+            ReturnType::Named(name) => Some(name.as_str()),
         }
     }
 }
@@ -129,20 +174,24 @@ pub struct QueryDefinition {
     #[serde(default)]
     pub multiunzip: Option<bool>,
     /// Whether to use diff-based conditional parameters
-    /// When true, instead of generating separate Option<T> parameters for conditional fields,
-    /// generates two struct parameters (old and new) and automatically diffs them
-    /// to determine which fields should be updated
+    /// When true, generates two struct parameters (old and new) and automatically diffs them
+    /// When a string, uses or generates a struct with the given name
     /// Defaults to false
     #[serde(default)]
-    pub conditional_diff: Option<bool>,
-    /// Whether to use structured parameters
-    /// When true, all query parameters are passed as a single struct instead of individual parameters
-    /// The struct name will be {QueryName}Params
-    /// When a string, references an existing struct name from another query
-    /// Ignored if conditional_diff is true
+    pub conditions_type: Option<ConditionsType>,
+    /// Type of struct to use for parameters
+    /// When true, all query parameters are passed as a single struct
+    /// When a string, uses or generates a struct with the given name
+    /// Ignored if conditions_type is enabled
     /// Defaults to false
     #[serde(default)]
-    pub structured_parameters: Option<StructuredParameters>,
+    pub parameters_type: Option<ParametersType>,
+    /// Type of struct to use for return values
+    /// When false or not specified, uses default {QueryName}Item naming
+    /// When a string, uses or generates a struct with the given name
+    /// Defaults to false (use default naming)
+    #[serde(default)]
+    pub return_type: Option<ReturnType>,
 }
 
 /// Per-query telemetry configuration

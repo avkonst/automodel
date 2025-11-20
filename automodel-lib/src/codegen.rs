@@ -2,7 +2,7 @@ use crate::config::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_conditional_diff_params,
     generate_conditional_diff_struct, generate_input_params_with_names,
-    generate_multiunzip_input_struct, generate_multiunzip_param, generate_result_struct,
+    generate_multiunzip_input_struct, generate_multiunzip_param, generate_result_struct_with_name,
     generate_return_type, generate_structured_params_signature, generate_structured_params_struct,
     parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
@@ -147,6 +147,7 @@ fn generate_indented_raw_string_literal(sql: &str) -> String {
 pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
+    emitted_struct_names: &mut std::collections::HashSet<String>,
 ) -> Result<String> {
     let mut code = String::new();
 
@@ -164,13 +165,22 @@ pub fn generate_function_code_without_enums(
         .collect();
 
     let use_multiunzip = query.multiunzip.unwrap_or(false);
-    let use_conditional_diff = query.conditional_diff.unwrap_or(false);
 
-    // Determine if structured_parameters is enabled and get the struct name
-    let (use_structured_params, struct_name_override) = match &query.structured_parameters {
+    // Determine if conditions_type is enabled and get the struct name override
+    let (use_conditional_diff, diff_struct_name_override) = match &query.conditions_type {
+        Some(cd) => match cd {
+            crate::config::ConditionsType::Enabled(true) => (true, None),
+            crate::config::ConditionsType::Named(name) => (true, Some(name.as_str())),
+            _ => (false, None),
+        },
+        _ => (false, None),
+    };
+
+    // Determine if parameters_type is enabled and get the struct name
+    let (use_structured_params, struct_name_override) = match &query.parameters_type {
         Some(sp) if !use_conditional_diff => match sp {
-            crate::config::StructuredParameters::Enabled(true) => (true, None),
-            crate::config::StructuredParameters::Reference(name) => (true, Some(name.as_str())),
+            crate::config::ParametersType::Enabled(true) => (true, None),
+            crate::config::ParametersType::Named(name) => (true, Some(name.as_str())),
             _ => (false, None),
         },
         _ => (false, None),
@@ -178,45 +188,83 @@ pub fn generate_function_code_without_enums(
 
     // Generate input struct for multiunzip if needed
     if use_multiunzip {
-        if let Some(input_struct) = generate_multiunzip_input_struct(
-            &query.name,
-            &clean_param_names,
-            &type_info.input_types,
-        ) {
-            code.push_str(&input_struct);
-            code.push('\n');
+        let struct_name = format!("{}Record", to_pascal_case(&query.name));
+        if !emitted_struct_names.contains(&struct_name) {
+            if let Some(input_struct) = generate_multiunzip_input_struct(
+                &query.name,
+                &clean_param_names,
+                &type_info.input_types,
+            ) {
+                code.push_str(&input_struct);
+                code.push('\n');
+                emitted_struct_names.insert(struct_name);
+            }
         }
     }
 
-    // Generate diff struct for conditional_diff if needed
+    // Generate diff struct for conditions_type if needed
     if use_conditional_diff && type_info.parsed_sql.is_some() {
-        if let Some(diff_struct) = generate_conditional_diff_struct(
-            &query.name,
-            &original_param_names,
-            &type_info.input_types,
-        ) {
-            code.push_str(&diff_struct);
-            code.push('\n');
+        let struct_name = if let Some(override_name) = diff_struct_name_override {
+            override_name.to_string()
+        } else {
+            format!("{}Params", to_pascal_case(&query.name))
+        };
+
+        if !emitted_struct_names.contains(&struct_name) {
+            if let Some(diff_struct) = generate_conditional_diff_struct(
+                diff_struct_name_override.unwrap_or(&query.name),
+                &original_param_names,
+                &type_info.input_types,
+            ) {
+                code.push_str(&diff_struct);
+                code.push('\n');
+                emitted_struct_names.insert(struct_name);
+            }
         }
     }
 
-    // Generate struct for structured_parameters if needed (but not for conditional_diff)
-    // Skip if struct_name_override is provided (reusing existing struct)
-    if use_structured_params && struct_name_override.is_none() {
-        if let Some(params_struct) = generate_structured_params_struct(
-            &query.name,
-            &clean_param_names,
-            &type_info.input_types,
-        ) {
-            code.push_str(&params_struct);
-            code.push('\n');
+    // Generate struct for parameters_type if needed (but not for conditions_type)
+    if use_structured_params {
+        let struct_name = if let Some(override_name) = struct_name_override {
+            override_name.to_string()
+        } else {
+            format!("{}Params", to_pascal_case(&query.name))
+        };
+
+        if !emitted_struct_names.contains(&struct_name) {
+            if let Some(params_struct) = generate_structured_params_struct(
+                struct_name_override.unwrap_or(&query.name),
+                &clean_param_names,
+                &type_info.input_types,
+            ) {
+                code.push_str(&params_struct);
+                code.push('\n');
+                emitted_struct_names.insert(struct_name);
+            }
         }
     }
 
     // Generate result struct if needed (but no enums)
-    if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
-        code.push_str(&struct_def);
-        code.push('\n');
+    if type_info.output_types.len() > 1 {
+        let result_struct_name = if let Some(ref rt) = query.return_type {
+            if let Some(custom_name) = rt.get_struct_name() {
+                custom_name.to_string()
+            } else {
+                format!("{}Item", to_pascal_case(&query.name))
+            }
+        } else {
+            format!("{}Item", to_pascal_case(&query.name))
+        };
+
+        if !emitted_struct_names.contains(&result_struct_name) {
+            if let Some(struct_def) =
+                generate_result_struct_with_name(&result_struct_name, &type_info.output_types)
+            {
+                code.push_str(&struct_def);
+                code.push('\n');
+                emitted_struct_names.insert(result_struct_name);
+            }
+        }
     }
 
     // Generate function documentation
@@ -231,18 +279,33 @@ pub fn generate_function_code_without_enums(
         // For multiunzip, generate a single Vec<StructName> parameter
         generate_multiunzip_param(&query.name, "items")
     } else if use_conditional_diff && type_info.parsed_sql.is_some() {
-        // For conditional_diff, generate old and new struct parameters
-        generate_conditional_diff_params(&query.name, &original_param_names, &type_info.input_types)
+        // For conditions_type, generate old and new struct parameters
+        generate_conditional_diff_params(
+            &query.name,
+            &original_param_names,
+            &type_info.input_types,
+            diff_struct_name_override.as_deref(),
+        )
     } else if use_structured_params {
-        // For structured_parameters, generate a single struct parameter
+        // For parameters_type, generate a single struct parameter
         generate_structured_params_signature(&query.name, struct_name_override.as_deref())
     } else {
         generate_input_params_with_names(&type_info.input_types, &clean_param_names)
     };
 
     let base_return_type = if type_info.output_types.len() > 1 {
-        format!("{}Item", to_pascal_case(&query.name))
+        // Multi-column result - use struct name
+        if let Some(ref rt) = query.return_type {
+            if let Some(custom_name) = rt.get_struct_name() {
+                custom_name.to_string()
+            } else {
+                format!("{}Item", to_pascal_case(&query.name))
+            }
+        } else {
+            format!("{}Item", to_pascal_case(&query.name))
+        }
     } else {
+        // Single column result - use direct type
         generate_return_type(type_info.output_types.first())
     };
 
@@ -312,9 +375,14 @@ fn generate_static_function_body(
     return_type: &str,
 ) -> Result<()> {
     let use_multiunzip = query.multiunzip.unwrap_or(false);
-    let use_structured_params = query.structured_parameters.as_ref().map_or(false, |sp| {
-        sp.is_enabled() && !query.conditional_diff.unwrap_or(false)
-    });
+    let use_conditional_diff = query
+        .conditions_type
+        .as_ref()
+        .map_or(false, |cd| cd.is_enabled());
+    let use_structured_params = query
+        .parameters_type
+        .as_ref()
+        .map_or(false, |sp| sp.is_enabled() && !use_conditional_diff);
 
     // Add itertools import if using multiunzip
     if use_multiunzip {
@@ -399,7 +467,7 @@ fn generate_static_function_body(
                 }
             }
         } else if use_structured_params {
-            // For structured_parameters, bind from params struct
+            // For parameters_type, bind from params struct
             for (i, name) in param_names.iter().enumerate() {
                 let clean_name = if name.ends_with('?') {
                     name.trim_end_matches('?').to_string()
@@ -485,9 +553,12 @@ fn generate_conditional_function_body(
 ) -> Result<()> {
     use crate::type_extraction::parse_parameter_names_from_sql;
 
-    let use_conditional_diff = query.conditional_diff.unwrap_or(false);
+    let use_conditional_diff = query
+        .conditions_type
+        .as_ref()
+        .map_or(false, |cd| cd.is_enabled());
     let use_structured_params = query
-        .structured_parameters
+        .parameters_type
         .as_ref()
         .map_or(false, |sp| sp.is_enabled() && !use_conditional_diff);
 
@@ -539,13 +610,13 @@ fn generate_conditional_function_body(
         let conditional_block = format!("$[{}]", block_sql);
 
         if use_conditional_diff {
-            // For conditional_diff, check if old and new values differ
+            // For conditions_type, check if old and new values differ
             body.push_str(&format!(
                 "    if old.{} != new.{} {{\n",
                 clean_param, clean_param
             ));
         } else if use_structured_params {
-            // For structured_parameters, check if parameter is Some (for Option types)
+            // For parameters_type, check if parameter is Some (for Option types)
             body.push_str(&format!("    if params.{}.is_some() {{\n", clean_param));
         } else {
             // For regular conditional, check if parameter is Some
@@ -669,10 +740,10 @@ fn generate_conditional_function_body(
             if let Some(rust_type_info) = type_info.input_types.get(param_index) {
                 if rust_type_info.needs_json_wrapper {
                     if use_conditional_diff {
-                        // For conditional_diff, use new.field directly
+                        // For conditions_type, use new.field directly
                         body.push_str(&format!("        let {}_json = serde_json::to_value(&new.{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
                     } else if use_structured_params {
-                        // For structured_parameters, unwrap from params struct
+                        // For parameters_type, unwrap from params struct
                         body.push_str(&format!("        let {}_json = serde_json::to_value(&params.{}.as_ref().unwrap()).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
                     } else {
                         // For regular conditional, unwrap the Option
@@ -684,13 +755,13 @@ fn generate_conditional_function_body(
                     ));
                 } else {
                     if use_conditional_diff {
-                        // For conditional_diff, bind new.field directly
+                        // For conditions_type, bind new.field directly
                         body.push_str(&format!(
                             "        query = query.bind(&new.{});\n",
                             clean_param
                         ));
                     } else if use_structured_params {
-                        // For structured_parameters, unwrap from params struct
+                        // For parameters_type, unwrap from params struct
                         body.push_str(&format!(
                             "        query = query.bind(params.{}.as_ref().unwrap());\n",
                             clean_param
@@ -926,7 +997,7 @@ pub fn validate_struct_reference(
     // Check if the struct exists
     let struct_fields = available_structs.get(struct_name).ok_or_else(|| {
         anyhow::anyhow!(
-            "Referenced struct '{}' does not exist. Make sure it's defined by a previous query (either via structured_parameters: true for params structs, or as a return type for multi-column queries)",
+            "Referenced struct '{}' does not exist. Make sure it's defined by a previous query (either via parameters_type: true for params structs, or as a return type for multi-column queries)",
             struct_name
         )
     })?;

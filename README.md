@@ -22,9 +22,9 @@ This is a Cargo workspace with three main components:
 - 🎯 Advanced CLI with dry-run and flexible output options
 - 📊 Built-in query performance analysis with sequential scan detection
 - 🔄 Conditional queries with dynamic SQL based on optional parameters
-- 📦 Structured parameters for cleaner function signatures
-- ♻️ Struct reuse across queries to eliminate code duplication
+- ♻️ Struct reuse and deduplication across queries
 - 🔀 Diff-based conditional updates for precise change tracking
+- 🎨 Custom struct naming for cleaner, domain-specific APIs
 
 ## Quick Start
 
@@ -225,10 +225,10 @@ Each query in the `queries` array supports these options:
   multiunzip: false                        # Default: false. Enable for UNNEST-based batch inserts
   
   # Diff-based conditional parameters (for conditional queries with $[...])
-  conditional_diff: false                  # Default: false. Use old/new struct comparison instead of Option<T>
+  conditions_type: false                   # Default: false. Use old/new struct comparison instead of Option<T>
   
   # Structured parameters - all params as single struct
-  structured_parameters: false             # Default: false. Group all parameters into one struct (ignored if conditional_diff is true)
+  parameters_type: false                   # Default: false. Group all parameters into one struct (ignored if conditions_type is true)
 ```
 
 ### Expected Result Types
@@ -480,152 +480,31 @@ update_user_fields(executor, user_id, Some("Janet".to_string()), Some("janet@exa
 
 **Note**: Always include at least one non-conditional SET clause (like `updated_at = NOW()`) to ensure the UPDATE statement is syntactically valid even when all optional parameters are `None`.
 
-### Diff-Based Conditional Queries
+## Struct Configuration and Reuse
 
-For scenarios where you want to dynamically include clauses based on comparing old and new values, AutoModel provides the `conditional_diff` option. Instead of using `Option<T>` parameters, this generates a struct with the conditional fields and compares old vs new values to decide which clauses to include.
+AutoModel provides three powerful configuration options that allow you to customize how structs are generated and reused across queries: `parameters_type`, `conditions_type`, and `return_type`. These options enable you to eliminate code duplication, improve type safety, and create cleaner APIs.
 
-This feature works with **any query type** (SELECT, UPDATE, DELETE, etc.), not just UPDATEs.
+### Overview
 
-**Configuration Example (UPDATE):**
+| Option | Purpose | Default | Accepts | Generates |
+|--------|---------|---------|---------|-----------|
+| `parameters_type` | Group query parameters into a struct | `false` | `true` or struct name | `{QueryName}Params` struct |
+| `conditions_type` | Diff-based conditional parameters | `false` | `true` or struct name | `{QueryName}Params` struct with old/new comparison |
+| `return_type` | Custom name for return type struct | auto | `false` or struct name | Custom named or `{QueryName}Item` struct |
 
-```yaml
-- name: update_user_fields_diff
-  sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${user_id} RETURNING id, name, email, age, updated_at"
-  description: "Update user fields using diff-based conditional updates - compares old and new structs"
-  conditional_diff: true
-```
+### parameters_type: Structured Parameters
 
-**Configuration Example (SELECT):**
+Group all query parameters into a single struct instead of passing them individually. Makes function calls cleaner and enables parameter reuse.
 
-```yaml
-- name: search_users_diff
-  sql: "SELECT id, name, email, age FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND email ILIKE ${email_pattern?}] $[AND age >= ${min_age?}] ORDER BY created_at DESC"
-  description: "Search users by comparing filter criteria changes"
-  conditional_diff: true
-```
-
-**Generated Struct and Function:**
-
-```rust
-pub struct UpdateUserFieldsDiffParams {
-    pub name: String,
-    pub email: String,
-    pub age: i32,
-}
-
-pub async fn update_user_fields_diff(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
-    old: &UpdateUserFieldsDiffParams,
-    new: &UpdateUserFieldsDiffParams,
-    user_id: i32
-) -> Result<UpdateUserFieldsDiffItem, sqlx::Error>
-```
-
-**Usage Examples:**
-
-```rust
-// Update only the name (by passing different old/new values)
-let old = UpdateUserFieldsDiffParams {
-    name: "Alice Cooper".to_string(),
-    email: "alice@example.com".to_string(),
-    age: 28,
-};
-let new = UpdateUserFieldsDiffParams {
-    name: "Alice Smith".to_string(),  // Changed
-    email: "alice@example.com".to_string(),  // Same
-    age: 28,  // Same
-};
-update_user_fields_diff(executor, &old, &new, user_id).await?;
-// SQL: "UPDATE users SET updated_at = NOW(), name = $1 WHERE id = $2 RETURNING ..."
-// Params: ["Alice Smith", user_id]
-
-// Update multiple fields
-let old = UpdateUserFieldsDiffParams {
-    name: "Alice Smith".to_string(),
-    email: "alice@example.com".to_string(),
-    age: 28,
-};
-let new = UpdateUserFieldsDiffParams {
-    name: "Alicia Smith".to_string(),  // Changed
-    email: "alicia@example.com".to_string(),  // Changed
-    age: 28,  // Same
-};
-update_user_fields_diff(executor, &old, &new, user_id).await?;
-// SQL: "UPDATE users SET updated_at = NOW(), name = $1, email = $2 WHERE id = $3 RETURNING ..."
-// Params: ["Alicia Smith", "alicia@example.com", user_id]
-```
-
-**SELECT Query Example:**
-
-```rust
-// Generated for search_users_diff query
-pub struct SearchUsersDiffParams {
-    pub name_pattern: String,
-    pub email_pattern: String,
-    pub min_age: i32,
-}
-
-// Search with only name filter changed
-let old_filters = SearchUsersDiffParams {
-    name_pattern: "%smith%".to_string(),
-    email_pattern: "%@example.com%".to_string(),
-    min_age: 18,
-};
-let new_filters = SearchUsersDiffParams {
-    name_pattern: "%johnson%".to_string(),  // Changed
-    email_pattern: "%@example.com%".to_string(),  // Same
-    min_age: 18,  // Same
-};
-search_users_diff(executor, &old_filters, &new_filters).await?;
-// SQL: "SELECT id, name, email, age FROM users WHERE 1=1 AND name ILIKE $1 ORDER BY created_at DESC"
-// Params: ["%johnson%"]
-
-// Search with all filters changed
-let old_filters = SearchUsersDiffParams {
-    name_pattern: "%johnson%".to_string(),
-    email_pattern: "%@example.com%".to_string(),
-    min_age: 18,
-};
-let new_filters = SearchUsersDiffParams {
-    name_pattern: "%williams%".to_string(),  // Changed
-    email_pattern: "%@company.com%".to_string(),  // Changed
-    min_age: 25,  // Changed
-};
-search_users_diff(executor, &old_filters, &new_filters).await?;
-// SQL: "SELECT id, name, email, age FROM users WHERE 1=1 AND name ILIKE $1 AND email ILIKE $2 AND age >= $3 ORDER BY created_at DESC"
-// Params: ["%williams%", "%@company.com%", 25]
-```
-
-**How It Works:**
-- The struct contains only the conditional parameters (those ending with `?`)
-- Non-conditional parameters remain as individual function parameters
-- At runtime, the function compares `old.field != new.field` for each conditional parameter
-- Only clauses where the field differs between old and new are included
-- Values from the `new` struct are bound to the query parameters
-
-**When to Use:**
-- When you have a "current state" and want to apply changes dynamically
-- For SELECT queries with filters that should only apply when criteria changed
-- For UPDATE queries that should only modify changed fields
-- When building APIs that track state changes (e.g., comparing previous filter vs new filter)
-- When you want to avoid the verbosity of many `Option<T>` parameters
-- When implementing PATCH-style REST endpoints that update only modified fields
-- For any conditional query where diff-based logic is clearer than Option-based logic
-
-## Structured Parameters
-
-For queries with multiple parameters, you can use the `structured_parameters` option to group all parameters into a single struct instead of passing them individually. This makes function calls cleaner and enables parameter reuse.
-
-**Configuration:**
+**Basic Usage:**
 
 ```yaml
 - name: insert_user_structured
-  sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age}) RETURNING id, name, email, age, created_at"
-  description: "Insert a new user using structured parameters"
-  structured_parameters: true
+  sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age}) RETURNING id"
+  parameters_type: true  # Generates InsertUserStructuredParams
 ```
 
-**Generated Struct and Function:**
+**Generated Code:**
 
 ```rust
 #[derive(Debug, Clone)]
@@ -638,251 +517,300 @@ pub struct InsertUserStructuredParams {
 pub async fn insert_user_structured(
     executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     params: &InsertUserStructuredParams
-) -> Result<InsertUserStructuredItem, sqlx::Error>
+) -> Result<i32, sqlx::Error>
 ```
 
-**Usage Examples:**
+**Usage:**
 
 ```rust
-// Create a params struct and insert a user
 let params = InsertUserStructuredParams {
-    name: "Bob Builder".to_string(),
-    email: "bob.builder@example.com".to_string(),
-    age: 42,
+    name: "Alice".to_string(),
+    email: "alice@example.com".to_string(),
+    age: 30,
 };
 insert_user_structured(executor, &params).await?;
-
-// Easy to reuse the struct with modifications
-let params2 = InsertUserStructuredParams {
-    name: "Alice Builder".to_string(),
-    email: "alice.builder@example.com".to_string(),
-    age: 38,
-};
-insert_user_structured(executor, &params2).await?;
-
-// Can also construct from existing data
-let user_data = vec![
-    ("John", "john@example.com", 30),
-    ("Jane", "jane@example.com", 28),
-];
-for (name, email, age) in user_data {
-    let params = InsertUserStructuredParams {
-        name: name.to_string(),
-        email: email.to_string(),
-        age,
-    };
-    insert_user_structured(executor, &params).await?;
-}
 ```
 
-**Works with conditional queries too:**
+**Struct Reuse:**
 
-```yaml
-- name: search_users_structured
-  sql: "SELECT id, name, email FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}]"
-  structured_parameters: true
-```
-
-```rust
-pub struct SearchUsersStructuredParams {
-    pub name_pattern: Option<String>,
-    pub min_age: Option<i32>,
-}
-
-// Use None for parameters you don't want to filter by
-let params = SearchUsersStructuredParams {
-    name_pattern: Some("%john%".to_string()),
-    min_age: None,  // Age filter not applied
-};
-search_users_structured(executor, &params).await?;
-```
-
-**When to Use:**
-- Queries with many parameters (3+) where individual params become unwieldy
-- When building query parameters from existing structs or API input
-- When you want to reuse parameter sets with slight modifications
-- To improve code organization and reduce function signature complexity
-- When constructing parameters conditionally before the query call
-
-**Note:** The `structured_parameters` option is ignored when `conditional_diff` is enabled, as diff-based queries already use structured parameters.
-
-## Struct Reuse Across Queries
-
-When multiple queries share the same parameter structure, you can eliminate code duplication by reusing struct definitions from previous queries. The `structured_parameters` option supports both generating new structs and referencing existing ones.
-
-### Basic Usage
-
-Instead of setting `structured_parameters: true`, you can set it to a string containing the name of an existing struct:
+Specify an existing struct name to reuse it across queries:
 
 ```yaml
 queries:
   # First query generates the struct
   - name: get_user_by_id_and_email
     sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
-    module: "users"
-    expect: "possible_one"
-    structured_parameters: true  # Generates GetUserByIdAndEmailParams struct
+    parameters_type: true  # Generates GetUserByIdAndEmailParams
   
   # Second query reuses the same struct
   - name: delete_user_by_id_and_email
-    sql: "DELETE FROM users WHERE id = ${id} AND email = ${email} RETURNING id, email"
-    module: "users"
-    expect: "exactly_one"
-    structured_parameters: "GetUserByIdAndEmailParams"  # Reuses existing struct
+    sql: "DELETE FROM users WHERE id = ${id} AND email = ${email} RETURNING id"
+    parameters_type: "GetUserByIdAndEmailParams"  # Reuses existing struct
+```
+
+Only one struct definition is generated, shared by both functions.
+
+### conditions_type: Diff-Based Conditional Parameters
+
+For queries with conditional SQL (`$[...]` blocks), generate a struct and compare old vs new values to decide which clauses to include. Works with any query type (SELECT, UPDATE, DELETE, etc.).
+
+**Basic Usage:**
+
+```yaml
+- name: update_user_fields_diff
+  sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+  conditions_type: true  # Generates UpdateUserFieldsDiffParams
 ```
 
 **Generated Code:**
 
 ```rust
-// Struct is generated only once
-#[derive(Debug, Clone)]
-pub struct GetUserByIdAndEmailParams {
-    pub id: i32,
+pub struct UpdateUserFieldsDiffParams {
+    pub name: String,
     pub email: String,
 }
 
-// First function uses the struct
-pub async fn get_user_by_id_and_email(
+pub async fn update_user_fields_diff(
     executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
-    params: &GetUserByIdAndEmailParams
-) -> Result<Option<GetUserByIdAndEmailItem>, sqlx::Error>
-
-// Second function reuses the same struct (no duplicate definition)
-pub async fn delete_user_by_id_and_email(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
-    params: &GetUserByIdAndEmailParams
-) -> Result<DeleteUserByIdAndEmailItem, sqlx::Error>
+    old: &UpdateUserFieldsDiffParams,
+    new: &UpdateUserFieldsDiffParams,
+    user_id: i32
+) -> Result<(), sqlx::Error>
 ```
 
 **Usage:**
 
 ```rust
-// Create params once
-let params = GetUserByIdAndEmailParams {
-    id: 42,
-    email: "user@example.com".to_string(),
+let old = UpdateUserFieldsDiffParams {
+    name: "Alice".to_string(),
+    email: "alice@example.com".to_string(),
 };
-
-// Use with multiple functions
-let user = get_user_by_id_and_email(executor, &params).await?;
-let deleted = delete_user_by_id_and_email(executor, &params).await?;
+let new = UpdateUserFieldsDiffParams {
+    name: "Alicia".to_string(),  // Changed
+    email: "alice@example.com".to_string(),  // Same
+};
+update_user_fields_diff(executor, &old, &new, 42).await?;
+// Only executes: UPDATE users SET updated_at = NOW(), name = $1 WHERE id = $2
 ```
 
-### Reusing Return Type Structs
+**How It Works:**
+- The struct contains only conditional parameters (those ending with `?`)
+- Non-conditional parameters remain as individual function parameters
+- At runtime, the function compares `old.field != new.field`
+- Only clauses where the field differs are included in the query
 
-You can also reuse return type structs (generated for multi-column SELECT queries) as input parameters for other queries:
+**Struct Reuse:**
 
 ```yaml
 queries:
-  # This query generates GetUserByIdAndEmailItem as a return type
-  - name: get_user_by_id_and_email
-    sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
-    module: "users"
-    expect: "possible_one"
-    structured_parameters: true
+  - name: update_user_profile_diff
+    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+    conditions_type: true
   
-  # This query reuses the Item struct as input params
-  - name: update_user_contact_info
-    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id} RETURNING id, name, email"
-    module: "users"
-    expect: "exactly_one"
-    structured_parameters: "GetUserByIdAndEmailItem"  # Reuses the return type struct
+  - name: update_user_metadata_diff
+    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+    conditions_type: "UpdateUserProfileDiffParams"  # Reuses existing diff struct
+```
+
+### return_type: Custom Return Type Names
+
+Customize the name of return type structs (generated for multi-column SELECT queries) and enable struct reuse across queries that return the same columns.
+
+**Basic Usage:**
+
+```yaml
+- name: get_user_summary
+  sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+  return_type: "UserSummary"  # Custom name instead of GetUserSummaryItem
 ```
 
 **Generated Code:**
 
 ```rust
-// Return type struct from first query
 #[derive(Debug, Clone)]
-pub struct GetUserByIdAndEmailItem {
+pub struct UserSummary {
     pub id: i32,
     pub name: String,
     pub email: String,
 }
 
-pub async fn get_user_by_id_and_email(
+pub async fn get_user_summary(
     executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
-    params: &GetUserByIdAndEmailParams
-) -> Result<Option<GetUserByIdAndEmailItem>, sqlx::Error>
-
-// Second query reuses the Item struct as params
-pub async fn update_user_contact_info(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
-    params: &GetUserByIdAndEmailItem  // Same struct as return type above
-) -> Result<UpdateUserContactInfoItem, sqlx::Error>
+    user_id: i32
+) -> Result<UserSummary, sqlx::Error>
 ```
 
-**Usage Pattern:**
+**Struct Reuse:**
+
+Multiple queries returning the same columns can share the same struct:
+
+```yaml
+queries:
+  - name: get_user_summary
+    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    return_type: "UserSummary"  # Generates the struct
+  
+  - name: get_user_info_by_email
+    sql: "SELECT id, name, email FROM users WHERE email = ${email}"
+    return_type: "UserSummary"  # Reuses the struct
+  
+  - name: get_all_user_summaries
+    sql: "SELECT id, name, email FROM users ORDER BY name"
+    return_type: "UserSummary"  # Reuses the struct
+```
+
+Only one `UserSummary` struct is generated, shared by all three functions.
+
+**Disable Custom Struct:**
+
+Set to `false` to use the default `{QueryName}Item` naming:
+
+```yaml
+- name: get_user_count
+  sql: "SELECT COUNT(*) as count FROM users"
+  return_type: false  # Uses GetUserCountItem
+```
+
+### Cross-Struct Reuse
+
+You can reuse any struct from a previous query in the same module, regardless of how it was generated:
+
+```yaml
+queries:
+  # Generate a return type struct
+  - name: get_user_info
+    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    return_type: "UserInfo"
+  
+  # Reuse it as parameters for another query
+  - name: update_user_info
+    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id}"
+    parameters_type: "UserInfo"  # Reuses the return type struct
+```
+
+**Usage:**
 
 ```rust
-// Get a user
-let user = get_user_by_id_and_email(executor, &lookup_params)
-    .await?
-    .expect("User exists");
+// Get user info
+let user = get_user_info(executor, 42).await?;
 
-// Modify the user struct
-let updated_user = GetUserByIdAndEmailItem {
-    id: user.id,
+// Modify and update using the same struct
+let updated = UserInfo {
     name: "New Name".to_string(),
-    email: user.email,
+    ..user
 };
-
-// Update using the same struct type
-let result = update_user_contact_info(executor, &updated_user).await?;
+update_user_info(executor, &updated).await?;
 ```
 
 ### Build-Time Validation
 
-AutoModel validates struct references at build time to ensure correctness:
+AutoModel validates all struct references at build time:
 
-1. **Existence Check**: The referenced struct must be defined by a previous query in the same module
-2. **Field Matching**: Query parameters must exactly match the struct fields (same names and types)
-3. **Clear Error Messages**: Validation failures provide helpful messages indicating what's wrong
+1. **Existence Check**: Referenced struct must be defined by a previous query in the same module
+2. **Field Matching**: Query parameters/columns must exactly match struct fields (names and types)
+3. **Clear Error Messages**: Validation failures provide helpful guidance
 
-**Example validation error:**
-
-```
-Error: Referenced struct 'NonExistentParams' does not exist. 
-Make sure it's defined by a previous query (either via structured_parameters: true 
-for params structs, or as a return type for multi-column queries)
-```
-
-Or if fields don't match:
+**Example validation errors:**
 
 ```
-Error: Query parameter 'age' not found in struct 'GetUserByIdAndEmailParams'. 
-Available fields: id, email
+Error: Referenced struct 'NonExistentStruct' does not exist.
+Make sure it's defined by a previous query.
 ```
 
-### Struct Sources
+```
+Error: Query parameter 'age' not found in struct 'UserInfo'.
+Available fields: id, name, email
+```
 
-Structs can be reused from two sources:
+```
+Error: Type mismatch for parameter 'id' in struct 'UserInfo':
+expected 'i64', but query requires 'i32'
+```
 
-1. **Params structs**: Generated by queries with `structured_parameters: true`
-   - Named as `{QueryName}Params` (e.g., `GetUserParams`)
-   - Contains input parameters for the query
+### Struct Definition Sources
 
-2. **Return type structs**: Generated for multi-column SELECT queries
-   - Named as `{QueryName}Item` (e.g., `GetUserItem`)
-   - Contains output columns from the query
+Structs can be generated from three sources:
 
-### Limitations
+1. **parameters_type: true** → `{QueryName}Params` (input parameters)
+2. **conditions_type: true** → `{QueryName}Params` (conditional input parameters)
+3. **return_type: "Name"** → Custom named struct (output columns)
+4. **Multi-column SELECT** → `{QueryName}Item` (output columns, when return_type not specified)
 
-- Struct must be defined by a **previous** query in the same module
-- All query parameters must match struct fields exactly (no subset matching)
-- Referenced struct must be in the same generated module
+### When to Use Each Option
 
-### Parameter Binding and Performance
+**Use `parameters_type`:**
+- Queries with 3+ parameters where individual params become unwieldy
+- Building query parameters from existing structs or API input
+- Reusing parameter sets with slight modifications
+- Improving code organization and reducing function signature complexity
 
-- **Sequential parameter binding**: AutoModel automatically renumbers parameters to ensure sequential binding ($1, $2, $3, etc.)
-- **No SQL parsing overhead**: Parameter renumbering happens at function generation time, not runtime
-- **Prepared statement compatibility**: Generated SQL is fully compatible with PostgreSQL prepared statements
-- **Type safety**: All parameter types are validated at compile time
+**Use `conditions_type`:**
+- Conditional queries (`$[...]`) with state comparison logic
+- UPDATE queries that should only modify changed fields
+- SELECT queries with filters that should only apply when criteria changed
+- Implementing PATCH-style REST endpoints
+- Avoiding the verbosity of many `Option<T>` parameters
 
-### Limitations
+**Use `return_type`:**
+- Multiple queries returning the same column structure
+- Creating domain-specific struct names (e.g., `UserSummary` instead of `GetUserItem`)
+- Reusing return types as input parameters for related queries
+- Building consistent DTOs across your API
 
-- **No nested conditionals**: `$[...]` blocks cannot be nested inside other conditional blocks
-- **Parameter uniqueness**: Each optional parameter can only be used once per conditional block
+### Complete Example
+
+```yaml
+queries:
+  # Define a common return type
+  - name: get_user_summary
+    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    return_type: "UserSummary"
+  
+  # Reuse it in other queries
+  - name: search_users
+    sql: "SELECT id, name, email FROM users WHERE name ILIKE ${pattern}"
+    return_type: "UserSummary"
+  
+  # Use it as input parameters
+  - name: update_user_contact
+    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id}"
+    parameters_type: "UserSummary"
+  
+  # Conditional update with custom struct
+  - name: partial_update_user
+    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+    conditions_type: true  # Generates PartialUpdateUserParams
+```
+
+**Generated Code:**
+
+```rust
+// Single struct definition shared across queries
+#[derive(Debug, Clone)]
+pub struct UserSummary {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PartialUpdateUserParams {
+    pub name: String,
+    pub email: String,
+}
+
+pub async fn get_user_summary(...) -> Result<UserSummary, sqlx::Error>
+pub async fn search_users(...) -> Result<Vec<UserSummary>, sqlx::Error>
+pub async fn update_user_contact(..., params: &UserSummary) -> Result<(), sqlx::Error>
+pub async fn partial_update_user(..., old: &PartialUpdateUserParams, new: &PartialUpdateUserParams, ...) -> Result<(), sqlx::Error>
+```
+
+### Notes
+
+- **Struct must be from a previous query**: The referenced struct must be defined earlier in the same module
+- **Exact field matching**: All query parameters/columns must match struct fields exactly
+- **No subset matching**: You cannot use a struct with extra fields; all fields must match
+- **parameters_type ignored when conditions_type is enabled**: Diff-based queries already use structured parameters
 
 ## Batch Insert with UNNEST Pattern
 
