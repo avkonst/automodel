@@ -58,6 +58,10 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => println!("Error listing users: {}", e),
     }
 
+    // Test conditional update - only update fields that are provided
+    println!("\n=== Testing Conditional Update ===");
+    test_conditional_update(pool).await?;
+
     // Test all PostgreSQL types
     println!("\n=== Testing All PostgreSQL Types ===");
     test_all_types(pool).await?;
@@ -67,6 +71,89 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "The code is regenerated automatically when the build runs after queries.yaml changes!"
     );
+
+    Ok(())
+}
+
+async fn test_conditional_update(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Demonstrating conditional UPDATE with optional parameters...");
+
+    // First, insert a test user
+    println!("\n1. Inserting a test user...");
+    let user = generated::users::insert_user(
+        pool,
+        "John Doe".to_string(),
+        "john.doe@example.com".to_string(),
+        30,
+        models::UserProfile {
+            bio: Some("Test user for conditional update demo".to_string()),
+            avatar_url: None,
+            preferences: models::UserPreferences {
+                theme: "dark".to_string(),
+                language: "en".to_string(),
+                notifications_enabled: true,
+            },
+            social_links: vec![],
+        },
+    )
+    .await?;
+    println!("✓ Created user: ID={}, name={}, email={}, age={:?}", 
+        user.id, user.name, user.email, user.age);
+
+    // Example 1: Update only the name
+    println!("\n2. Updating only the name (email and age remain unchanged)...");
+    let updated = generated::users::update_user_fields(
+        pool,
+        Some("Jane Doe".to_string()),
+        None,  // email not updated
+        None,  // age not updated
+        user.id,
+    )
+    .await?;
+    println!("✓ After updating name: ID={}, name={}, email={}, age={:?}", 
+        updated.id, updated.name, updated.email, updated.age);
+
+    // Example 2: Update only the age
+    println!("\n3. Updating only the age (name and email remain unchanged)...");
+    let updated = generated::users::update_user_fields(
+        pool,
+        None,  // name not updated
+        None,  // email not updated
+        Some(35),
+        user.id,
+    )
+    .await?;
+    println!("✓ After updating age: ID={}, name={}, email={}, age={:?}", 
+        updated.id, updated.name, updated.email, updated.age);
+
+    // Example 3: Update multiple fields at once
+    println!("\n4. Updating both name and email (age remains unchanged)...");
+    let updated = generated::users::update_user_fields(
+        pool,
+        Some("Jane Smith".to_string()),
+        Some("jane.smith@example.com".to_string()),
+        None,  // age not updated
+        user.id,
+    )
+    .await?;
+    println!("✓ After updating name and email: ID={}, name={}, email={}, age={:?}", 
+        updated.id, updated.name, updated.email, updated.age);
+
+    // Example 4: Update all fields
+    println!("\n5. Updating all fields at once...");
+    let updated = generated::users::update_user_fields(
+        pool,
+        Some("Janet Smith".to_string()),
+        Some("janet.smith@example.com".to_string()),
+        Some(40),
+        user.id,
+    )
+    .await?;
+    println!("✓ After updating all fields: ID={}, name={}, email={}, age={:?}", 
+        updated.id, updated.name, updated.email, updated.age);
+
+    println!("\n✓ Conditional update examples completed successfully!");
+    println!("The conditional syntax $[, field = ${{param?}}] only includes the SET clause when the parameter is Some(value)");
 
     Ok(())
 }

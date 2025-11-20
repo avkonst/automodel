@@ -433,6 +433,40 @@ pub async fn find_users_complex(
    sql: "SELECT * FROM users WHERE 1=1 $[AND name = ${name?}] $[AND age > ${min_age?}]"
    ```
 
+### Conditional UPDATE Statements
+
+Conditional syntax is also useful for UPDATE statements where you want to update only certain fields based on which parameters are provided:
+
+```yaml
+- name: update_user_fields
+  sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${user_id} RETURNING id, name, email, age, updated_at"
+  description: "Update user fields conditionally - only updates fields that are provided (not None)"
+  module: "users"
+  expect: "exactly_one"
+```
+
+This generates a function that allows partial updates:
+
+```rust
+// Update only the name
+update_user_fields(executor, user_id, Some("Jane Doe".to_string()), None, None).await?;
+// SQL: "UPDATE users SET updated_at = NOW(), name = $1 WHERE id = $2 RETURNING ..."
+
+// Update only the age  
+update_user_fields(executor, user_id, None, None, Some(35)).await?;
+// SQL: "UPDATE users SET updated_at = NOW(), age = $1 WHERE id = $2 RETURNING ..."
+
+// Update multiple fields
+update_user_fields(executor, user_id, Some("Jane".to_string()), Some("jane@example.com".to_string()), None).await?;
+// SQL: "UPDATE users SET updated_at = NOW(), name = $1, email = $2 WHERE id = $3 RETURNING ..."
+
+// Update all fields
+update_user_fields(executor, user_id, Some("Janet".to_string()), Some("janet@example.com".to_string()), Some(40)).await?;
+// SQL: "UPDATE users SET updated_at = NOW(), name = $1, email = $2, age = $3 WHERE id = $4 RETURNING ..."
+```
+
+**Note**: Always include at least one non-conditional SET clause (like `updated_at = NOW()`) to ensure the UPDATE statement is syntactically valid even when all optional parameters are `None`.
+
 ### Parameter Binding and Performance
 
 - **Sequential parameter binding**: AutoModel automatically renumbers parameters to ensure sequential binding ($1, $2, $3, etc.)
