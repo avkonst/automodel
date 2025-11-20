@@ -50,6 +50,10 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Conditional Update with Diff ===");
     test_conditional_update_diff(pool).await?;
 
+    // Test structured parameters
+    println!("\n=== Testing Structured Parameters ===");
+    test_structured_parameters(pool).await?;
+
     // Test all PostgreSQL types
     println!("\n=== Testing All PostgreSQL Types ===");
     test_all_types(pool).await?;
@@ -286,6 +290,44 @@ async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::
 
     println!("\n✓ Diff-based conditional update examples completed successfully!");
     println!("With conditional_diff: true, the function compares old.field != new.field to decide which SET clauses to include");
+
+    Ok(())
+}
+
+async fn test_structured_parameters(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Demonstrating structured parameters...");
+
+    // Create a params struct and insert a user
+    println!("\n1. Inserting a user using structured parameters...");
+    let timestamp = chrono::Utc::now().timestamp();
+    let params = generated::users::InsertUserStructuredParams {
+        name: "Bob Builder".to_string(),
+        email: format!("bob.builder.{}@example.com", timestamp),
+        age: 42,
+    };
+
+    let user = generated::users::insert_user_structured(pool, &params).await?;
+    println!(
+        "✓ Created user: ID={}, name={}, email={}, age={:?}",
+        user.id, user.name, user.email, user.age
+    );
+
+    // Demonstrate reusing the struct
+    println!("\n2. Inserting another user with modified params...");
+    let params2 = generated::users::InsertUserStructuredParams {
+        name: "Alice Builder".to_string(),
+        email: format!("alice.builder.{}@example.com", timestamp),
+        age: 38,
+    };
+
+    let user2 = generated::users::insert_user_structured(pool, &params2).await?;
+    println!(
+        "✓ Created user: ID={}, name={}, email={}, age={:?}",
+        user2.id, user2.name, user2.email, user2.age
+    );
+
+    println!("\n✓ Structured parameters examples completed successfully!");
+    println!("With structured_parameters: true, all query parameters are passed as a single struct instead of individual parameters");
 
     Ok(())
 }

@@ -142,6 +142,13 @@ queries:
     expect: "exactly_one"
     conditional_diff: true
 
+  - name: insert_user_structured
+    sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age}) RETURNING id, name, email, age, created_at"
+    description: "Insert a new user using structured parameters - all params passed as a single struct"
+    module: "users"
+    expect: "exactly_one"
+    structured_parameters: true
+
   - name: get_all_user_statuses
     sql: "SELECT DISTINCT status FROM users ORDER BY status"
     description: "Get all possible user statuses currently in use"

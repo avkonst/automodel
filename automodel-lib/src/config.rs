@@ -109,6 +109,13 @@ pub struct QueryDefinition {
     /// Defaults to false
     #[serde(default)]
     pub conditional_diff: Option<bool>,
+    /// Whether to use structured parameters
+    /// When true, all query parameters are passed as a single struct instead of individual parameters
+    /// The struct name will be {QueryName}Params
+    /// Ignored if conditional_diff is true
+    /// Defaults to false
+    #[serde(default)]
+    pub structured_parameters: Option<bool>,
 }
 
 /// Per-query telemetry configuration

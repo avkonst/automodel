@@ -216,6 +216,15 @@ Each query in the `queries` array supports these options:
   
   # Per-query analysis configuration
   ensure_indexes: true                     # Override global analysis setting for this query
+  
+  # Batch insert optimization with UNNEST pattern
+  multiunzip: false                        # Default: false. Enable for UNNEST-based batch inserts
+  
+  # Diff-based conditional parameters (for conditional queries with $[...])
+  conditional_diff: false                  # Default: false. Use old/new struct comparison instead of Option<T>
+  
+  # Structured parameters - all params as single struct
+  structured_parameters: false             # Default: false. Group all parameters into one struct (ignored if conditional_diff is true)
 ```
 
 ### Expected Result Types
@@ -598,6 +607,100 @@ search_users_diff(executor, &old_filters, &new_filters).await?;
 - When you want to avoid the verbosity of many `Option<T>` parameters
 - When implementing PATCH-style REST endpoints that update only modified fields
 - For any conditional query where diff-based logic is clearer than Option-based logic
+
+## Structured Parameters
+
+For queries with multiple parameters, you can use the `structured_parameters` option to group all parameters into a single struct instead of passing them individually. This makes function calls cleaner and enables parameter reuse.
+
+**Configuration:**
+
+```yaml
+- name: insert_user_structured
+  sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age}) RETURNING id, name, email, age, created_at"
+  description: "Insert a new user using structured parameters"
+  structured_parameters: true
+```
+
+**Generated Struct and Function:**
+
+```rust
+#[derive(Debug, Clone)]
+pub struct InsertUserStructuredParams {
+    pub name: String,
+    pub email: String,
+    pub age: i32,
+}
+
+pub async fn insert_user_structured(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    params: &InsertUserStructuredParams
+) -> Result<InsertUserStructuredItem, sqlx::Error>
+```
+
+**Usage Examples:**
+
+```rust
+// Create a params struct and insert a user
+let params = InsertUserStructuredParams {
+    name: "Bob Builder".to_string(),
+    email: "bob.builder@example.com".to_string(),
+    age: 42,
+};
+insert_user_structured(executor, &params).await?;
+
+// Easy to reuse the struct with modifications
+let params2 = InsertUserStructuredParams {
+    name: "Alice Builder".to_string(),
+    email: "alice.builder@example.com".to_string(),
+    age: 38,
+};
+insert_user_structured(executor, &params2).await?;
+
+// Can also construct from existing data
+let user_data = vec![
+    ("John", "john@example.com", 30),
+    ("Jane", "jane@example.com", 28),
+];
+for (name, email, age) in user_data {
+    let params = InsertUserStructuredParams {
+        name: name.to_string(),
+        email: email.to_string(),
+        age,
+    };
+    insert_user_structured(executor, &params).await?;
+}
+```
+
+**Works with conditional queries too:**
+
+```yaml
+- name: search_users_structured
+  sql: "SELECT id, name, email FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}]"
+  structured_parameters: true
+```
+
+```rust
+pub struct SearchUsersStructuredParams {
+    pub name_pattern: Option<String>,
+    pub min_age: Option<i32>,
+}
+
+// Use None for parameters you don't want to filter by
+let params = SearchUsersStructuredParams {
+    name_pattern: Some("%john%".to_string()),
+    min_age: None,  // Age filter not applied
+};
+search_users_structured(executor, &params).await?;
+```
+
+**When to Use:**
+- Queries with many parameters (3+) where individual params become unwieldy
+- When building query parameters from existing structs or API input
+- When you want to reuse parameter sets with slight modifications
+- To improve code organization and reduce function signature complexity
+- When constructing parameters conditionally before the query call
+
+**Note:** The `structured_parameters` option is ignored when `conditional_diff` is enabled, as diff-based queries already use structured parameters.
 
 ### Parameter Binding and Performance
 

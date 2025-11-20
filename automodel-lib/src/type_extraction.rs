@@ -1089,3 +1089,63 @@ pub fn generate_conditional_diff_params(
 
     params.join(", ")
 }
+
+/// Generate a struct for structured parameters pattern
+/// Returns: "pub struct QueryNameParams { pub param1: Type1, pub param2: Type2, ... }"
+pub fn generate_structured_params_struct(
+    query_name: &str,
+    param_names: &[String],
+    input_types: &[RustType],
+) -> Option<String> {
+    if input_types.is_empty() {
+        return None;
+    }
+
+    let struct_name = format!("{}Params", to_pascal_case(query_name));
+    let mut code = String::new();
+
+    code.push_str("#[derive(Debug, Clone)]\n");
+    code.push_str(&format!("pub struct {} {{\n", struct_name));
+
+    // Build a map of unique parameter names to their types
+    let mut unique_params: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut param_order: Vec<String> = Vec::new();
+
+    for (i, rust_type) in input_types.iter().enumerate() {
+        let default_name = format!("param_{}", i + 1);
+        let param_name = param_names.get(i).unwrap_or(&default_name);
+
+        // Clean parameter name (remove '?' if present for conditional params)
+        let clean_param_name = param_name.trim_end_matches('?').to_string();
+
+        // Only add if we haven't seen this parameter name before
+        if !unique_params.contains_key(&clean_param_name) {
+            // Use the type as-is (including Option wrapper if nullable)
+            let final_type = if rust_type.is_nullable {
+                format!("Option<{}>", rust_type.rust_type)
+            } else {
+                rust_type.rust_type.clone()
+            };
+            unique_params.insert(clean_param_name.clone(), final_type);
+            param_order.push(clean_param_name);
+        }
+    }
+
+    // Generate struct fields
+    for param_name in &param_order {
+        let param_type = unique_params.get(param_name).unwrap();
+        code.push_str(&format!("    pub {}: {},\n", param_name, param_type));
+    }
+
+    code.push_str("}\n");
+
+    Some(code)
+}
+
+/// Generate function parameters for structured_parameters pattern
+/// Returns: "params: &QueryNameParams"
+pub fn generate_structured_params_signature(query_name: &str) -> String {
+    let struct_name = format!("{}Params", to_pascal_case(query_name));
+    format!("params: &{}", struct_name)
+}

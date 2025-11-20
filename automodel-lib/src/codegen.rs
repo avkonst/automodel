@@ -3,7 +3,8 @@ use crate::type_extraction::{
     convert_named_params_to_positional, generate_conditional_diff_params,
     generate_conditional_diff_struct, generate_input_params_with_names,
     generate_multiunzip_input_struct, generate_multiunzip_param, generate_result_struct,
-    generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
+    generate_return_type, generate_structured_params_signature, generate_structured_params_struct,
+    parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use anyhow::Result;
 
@@ -164,6 +165,8 @@ pub fn generate_function_code_without_enums(
 
     let use_multiunzip = query.multiunzip.unwrap_or(false);
     let use_conditional_diff = query.conditional_diff.unwrap_or(false);
+    let use_structured_params =
+        query.structured_parameters.unwrap_or(false) && !use_conditional_diff;
 
     // Generate input struct for multiunzip if needed
     if use_multiunzip {
@@ -189,6 +192,18 @@ pub fn generate_function_code_without_enums(
         }
     }
 
+    // Generate struct for structured_parameters if needed (but not for conditional_diff)
+    if use_structured_params {
+        if let Some(params_struct) = generate_structured_params_struct(
+            &query.name,
+            &clean_param_names,
+            &type_info.input_types,
+        ) {
+            code.push_str(&params_struct);
+            code.push('\n');
+        }
+    }
+
     // Generate result struct if needed (but no enums)
     if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
         code.push_str(&struct_def);
@@ -209,6 +224,9 @@ pub fn generate_function_code_without_enums(
     } else if use_conditional_diff && type_info.parsed_sql.is_some() {
         // For conditional_diff, generate old and new struct parameters
         generate_conditional_diff_params(&query.name, &original_param_names, &type_info.input_types)
+    } else if use_structured_params {
+        // For structured_parameters, generate a single struct parameter
+        generate_structured_params_signature(&query.name)
     } else {
         generate_input_params_with_names(&type_info.input_types, &clean_param_names)
     };
@@ -285,6 +303,8 @@ fn generate_static_function_body(
     return_type: &str,
 ) -> Result<()> {
     let use_multiunzip = query.multiunzip.unwrap_or(false);
+    let use_structured_params =
+        query.structured_parameters.unwrap_or(false) && !query.conditional_diff.unwrap_or(false);
 
     // Add itertools import if using multiunzip
     if use_multiunzip {
@@ -368,6 +388,45 @@ fn generate_static_function_body(
                     body.push_str(&format!("    let query = query.bind({});\n", var));
                 }
             }
+        } else if use_structured_params {
+            // For structured_parameters, bind from params struct
+            for (i, name) in param_names.iter().enumerate() {
+                let clean_name = if name.ends_with('?') {
+                    name.trim_end_matches('?').to_string()
+                } else {
+                    name.clone()
+                };
+
+                let rust_type_info = &type_info.input_types[i];
+                let param_type = &rust_type_info.rust_type;
+
+                // Check if this is a custom type that needs JSON serialization
+                if rust_type_info.needs_json_wrapper {
+                    // For custom types, serialize to JSON before binding
+                    body.push_str(&format!(
+                        "    let query = query.bind(serde_json::to_value(&params.{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?);\n", 
+                        clean_name
+                    ));
+                } else if param_type == "String" {
+                    // Use reference for String parameters to avoid move issues
+                    body.push_str(&format!(
+                        "    let query = query.bind(&params.{});\n",
+                        clean_name
+                    ));
+                } else if rust_type_info.is_nullable {
+                    // For Option types, we can bind directly
+                    body.push_str(&format!(
+                        "    let query = query.bind(params.{});\n",
+                        clean_name
+                    ));
+                } else {
+                    // For Copy types, we can bind directly
+                    body.push_str(&format!(
+                        "    let query = query.bind(params.{});\n",
+                        clean_name
+                    ));
+                }
+            }
         } else if param_names.is_empty() {
             // Fallback to generic param names
             for i in 1..=type_info.input_types.len() {
@@ -417,6 +476,8 @@ fn generate_conditional_function_body(
     use crate::type_extraction::parse_parameter_names_from_sql;
 
     let use_conditional_diff = query.conditional_diff.unwrap_or(false);
+    let use_structured_params =
+        query.structured_parameters.unwrap_or(false) && !use_conditional_diff;
 
     // Parse all parameters from the original SQL to get their order and types
     let all_params = parse_parameter_names_from_sql(&query.sql);
@@ -471,6 +532,9 @@ fn generate_conditional_function_body(
                 "    if old.{} != new.{} {{\n",
                 clean_param, clean_param
             ));
+        } else if use_structured_params {
+            // For structured_parameters, check if parameter is Some (for Option types)
+            body.push_str(&format!("    if params.{}.is_some() {{\n", clean_param));
         } else {
             // For regular conditional, check if parameter is Some
             body.push_str(&format!("    if {}.is_some() {{\n", clean_param));
@@ -548,10 +612,21 @@ fn generate_conditional_function_body(
             }) {
                 if let Some(rust_type_info) = type_info.input_types.get(param_index) {
                     if rust_type_info.needs_json_wrapper {
-                        body.push_str(&format!("    let {}_json = serde_json::to_value(&{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                        if use_structured_params {
+                            body.push_str(&format!("    let {}_json = serde_json::to_value(&params.{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                        } else {
+                            body.push_str(&format!("    let {}_json = serde_json::to_value(&{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                        }
                         body.push_str(&format!("    query = query.bind({}_json);\n", clean_param));
                     } else {
-                        body.push_str(&format!("    query = query.bind(&{});\n", clean_param));
+                        if use_structured_params {
+                            body.push_str(&format!(
+                                "    query = query.bind(&params.{});\n",
+                                clean_param
+                            ));
+                        } else {
+                            body.push_str(&format!("    query = query.bind(&{});\n", clean_param));
+                        }
                     }
                 }
             }
@@ -584,6 +659,9 @@ fn generate_conditional_function_body(
                     if use_conditional_diff {
                         // For conditional_diff, use new.field directly
                         body.push_str(&format!("        let {}_json = serde_json::to_value(&new.{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                    } else if use_structured_params {
+                        // For structured_parameters, unwrap from params struct
+                        body.push_str(&format!("        let {}_json = serde_json::to_value(&params.{}.as_ref().unwrap()).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
                     } else {
                         // For regular conditional, unwrap the Option
                         body.push_str(&format!("        let {}_json = serde_json::to_value(&{}.as_ref().unwrap()).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
@@ -597,6 +675,12 @@ fn generate_conditional_function_body(
                         // For conditional_diff, bind new.field directly
                         body.push_str(&format!(
                             "        query = query.bind(&new.{});\n",
+                            clean_param
+                        ));
+                    } else if use_structured_params {
+                        // For structured_parameters, unwrap from params struct
+                        body.push_str(&format!(
+                            "        query = query.bind(params.{}.as_ref().unwrap());\n",
                             clean_param
                         ));
                     } else {
