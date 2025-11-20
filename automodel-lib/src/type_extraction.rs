@@ -1061,10 +1061,10 @@ pub fn generate_conditional_diff_params(
     input_types: &[RustType],
 ) -> String {
     let struct_name = format!("{}Params", to_pascal_case(query_name));
-    
+
     // Separate conditional and non-conditional parameters
     let mut non_conditional_params = Vec::new();
-    
+
     for (i, param_name) in param_names.iter().enumerate() {
         // Only include non-conditional parameters (those without '?')
         if !param_name.ends_with('?') {
@@ -1078,14 +1078,14 @@ pub fn generate_conditional_diff_params(
             }
         }
     }
-    
+
     // Build parameter string - old and new structs, then non-conditional params
     let mut params = vec![
         format!("old: &{}", struct_name),
         format!("new: &{}", struct_name),
     ];
-    
+
     params.extend(non_conditional_params);
-    
+
     params.join(", ")
 }

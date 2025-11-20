@@ -212,9 +212,9 @@ async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::
         age: 28,
     };
     let new = generated::users::UpdateUserFieldsDiffParams {
-        name: "Alice Smith".to_string(),  // Changed
-        email: email.clone(),  // Same
-        age: 28,  // Same
+        name: "Alice Smith".to_string(), // Changed
+        email: email.clone(),            // Same
+        age: 28,                         // Same
     };
     let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
     println!(
@@ -230,9 +230,9 @@ async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::
         age: 28,
     };
     let new = generated::users::UpdateUserFieldsDiffParams {
-        name: "Alice Smith".to_string(),  // Same
-        email: email.clone(),  // Same
-        age: 29,  // Changed
+        name: "Alice Smith".to_string(), // Same
+        email: email.clone(),            // Same
+        age: 29,                         // Changed
     };
     let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
     println!(
@@ -249,9 +249,9 @@ async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::
         age: 29,
     };
     let new = generated::users::UpdateUserFieldsDiffParams {
-        name: "Alicia Smith".to_string(),  // Changed
-        email: email2.clone(),  // Changed
-        age: 29,  // Same
+        name: "Alicia Smith".to_string(), // Changed
+        email: email2.clone(),            // Changed
+        age: 29,                          // Same
     };
     let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
     println!(
@@ -268,9 +268,9 @@ async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::
         age: 29,
     };
     let new = generated::users::UpdateUserFieldsDiffParams {
-        name: "Alicia Johnson".to_string(),  // Changed
-        email: email3,  // Changed
-        age: 30,  // Changed
+        name: "Alicia Johnson".to_string(), // Changed
+        email: email3,                      // Changed
+        age: 30,                            // Changed
     };
     let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
     println!(

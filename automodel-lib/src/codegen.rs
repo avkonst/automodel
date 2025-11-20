@@ -467,12 +467,15 @@ fn generate_conditional_function_body(
 
         if use_conditional_diff {
             // For conditional_diff, check if old and new values differ
-            body.push_str(&format!("    if old.{} != new.{} {{\n", clean_param, clean_param));
+            body.push_str(&format!(
+                "    if old.{} != new.{} {{\n",
+                clean_param, clean_param
+            ));
         } else {
             // For regular conditional, check if parameter is Some
             body.push_str(&format!("    if {}.is_some() {{\n", clean_param));
         }
-        
+
         body.push_str(&format!(
             "        final_sql = final_sql.replace(r\"{}\", r\"{}\");\n",
             conditional_block,
