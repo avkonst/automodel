@@ -445,6 +445,165 @@ pub async fn find_users_complex(
 - **No nested conditionals**: `$[...]` blocks cannot be nested inside other conditional blocks
 - **Parameter uniqueness**: Each optional parameter can only be used once per conditional block
 
+## Batch Insert with UNNEST Pattern
+
+AutoModel supports efficient batch inserts using PostgreSQL's `UNNEST` function, which allows you to insert multiple rows in a single query. This is much more efficient than inserting rows one at a time.
+
+### Basic UNNEST Pattern
+
+PostgreSQL's `UNNEST` function can expand multiple arrays into a set of rows:
+
+```sql
+INSERT INTO users (name, email, age)
+SELECT * FROM UNNEST(
+  ARRAY['Alice', 'Bob', 'Charlie'],
+  ARRAY['alice@example.com', 'bob@example.com', 'charlie@example.com'],
+  ARRAY[25, 30, 35]
+)
+RETURNING id, name, email, age, created_at;
+```
+
+### Using UNNEST with AutoModel
+
+Define a batch insert query in your `queries.yaml`:
+
+```yaml
+- name: insert_users_batch
+  sql: |
+    INSERT INTO users (name, email, age)
+    SELECT * FROM UNNEST(${name}::text[], ${email}::text[], ${age}::int4[])
+    RETURNING id, name, email, age, created_at
+  description: "Insert multiple users using UNNEST pattern"
+  module: "users"
+  expect: "multiple"
+  multiunzip: true
+```
+
+**Key Points:**
+- Use array parameters: `${name}::text[]`, `${email}::text[]`, etc.
+- Include explicit type casts for proper type inference
+- Set `expect: "multiple"` to return a vector of results
+- Set `multiunzip: true` to enable the special batch insert mode
+
+### The `multiunzip` Configuration Parameter
+
+When `multiunzip: true` is set, AutoModel generates special code to handle batch inserts more ergonomically:
+
+**Without `multiunzip`** (standard array parameters):
+```rust
+// You would need to pass separate arrays for each column
+insert_users_batch(
+    &client,
+    vec!["Alice".to_string(), "Bob".to_string()],
+    vec!["alice@example.com".to_string(), "bob@example.com".to_string()],
+    vec![25, 30]
+).await?;
+```
+
+**With `multiunzip: true`** (generates a record struct):
+```rust
+// AutoModel generates an InsertUsersBatchRecord struct
+#[derive(Debug, Clone)]
+pub struct InsertUsersBatchRecord {
+    pub name: String,
+    pub email: String,
+    pub age: i32,
+}
+
+// Now you can pass a single vector of records
+insert_users_batch(
+    &client,
+    vec![
+        InsertUsersBatchRecord {
+            name: "Alice".to_string(),
+            email: "alice@example.com".to_string(),
+            age: 25,
+        },
+        InsertUsersBatchRecord {
+            name: "Bob".to_string(),
+            email: "bob@example.com".to_string(),
+            age: 30,
+        },
+    ]
+).await?;
+```
+
+### How `multiunzip` Works
+
+When `multiunzip: true` is enabled:
+
+1. **Generates an input record struct** with fields matching your parameters
+2. **Uses itertools::multiunzip()** to transform `Vec<Record>` into tuple of arrays `(Vec<name>, Vec<email>, Vec<age>)`
+3. **Binds each array** to the corresponding SQL parameter
+
+Generated function signature:
+```rust
+pub async fn insert_users_batch(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    items: Vec<InsertUsersBatchRecord>  // Single parameter instead of multiple arrays
+) -> Result<Vec<InsertUsersBatchItem>, sqlx::Error>
+```
+
+Internal implementation:
+```rust
+use itertools::Itertools;
+
+// Transform Vec<Record> into separate arrays
+let (name, email, age): (Vec<_>, Vec<_>, Vec<_>) =
+    items
+        .into_iter()
+        .map(|item| (item.name, item.email, item.age))
+        .multiunzip();
+
+// Bind each array to the query
+let query = query.bind(name);
+let query = query.bind(email);
+let query = query.bind(age);
+```
+
+### Complete Example
+
+**queries.yaml:**
+```yaml
+- name: insert_posts_batch
+  sql: |
+    INSERT INTO posts (title, content, author_id, published_at)
+    SELECT * FROM UNNEST(
+      ${title}::text[],
+      ${content}::text[],
+      ${author_id}::int4[],
+      ${published_at}::timestamptz[]
+    )
+    RETURNING id, title, author_id, created_at
+  description: "Batch insert multiple posts"
+  module: "posts"
+  expect: "multiple"
+  multiunzip: true
+```
+
+**Usage:**
+```rust
+use crate::generated::posts::{insert_posts_batch, InsertPostsBatchRecord};
+
+let posts = vec![
+    InsertPostsBatchRecord {
+        title: "First Post".to_string(),
+        content: "Content 1".to_string(),
+        author_id: 1,
+        published_at: chrono::Utc::now(),
+    },
+    InsertPostsBatchRecord {
+        title: "Second Post".to_string(),
+        content: "Content 2".to_string(),
+        author_id: 1,
+        published_at: chrono::Utc::now(),
+    },
+];
+
+let inserted = insert_posts_batch(&client, posts).await?;
+println!("Inserted {} posts", inserted.len());
+```
+
 ## CLI Features
 
 ### Commands
@@ -490,26 +649,132 @@ cargo check -p automodel-cli
 
 ## Supported PostgreSQL Types
 
+AutoModel supports a comprehensive set of PostgreSQL types with automatic mapping to Rust types. All types support `Option<T>` for nullable columns.
+
+### Boolean & Numeric Types
+
 | PostgreSQL Type | Rust Type |
 |----------------|-----------|
 | `BOOL` | `bool` |
-| `INT2` | `i16` |
-| `INT4` | `i32` |
-| `INT8` | `i64` |
-| `FLOAT4` | `f32` |
-| `FLOAT8` | `f64` |
-| `TEXT`, `VARCHAR` | `String` |
+| `CHAR` | `i8` |
+| `INT2` (SMALLINT) | `i16` |
+| `INT4` (INTEGER) | `i32` |
+| `INT8` (BIGINT) | `i64` |
+| `FLOAT4` (REAL) | `f32` |
+| `FLOAT8` (DOUBLE PRECISION) | `f64` |
+| `NUMERIC`, `DECIMAL` | `rust_decimal::Decimal` |
+| `OID`, `REGPROC`, `XID`, `CID` | `u32` |
+| `XID8` | `u64` |
+| `TID` | `(u32, u32)` |
+
+### String & Text Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `TEXT` | `String` |
+| `VARCHAR` | `String` |
+| `CHAR(n)`, `BPCHAR` | `String` |
+| `NAME` | `String` |
+| `XML` | `String` |
+
+### Binary & Bit Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
 | `BYTEA` | `Vec<u8>` |
-| `TIMESTAMP` | `chrono::NaiveDateTime` |
-| `TIMESTAMPTZ` | `chrono::DateTime<chrono::Utc>` |
+| `BIT`, `BIT(n)` | `bit_vec::BitVec` |
+| `VARBIT` | `bit_vec::BitVec` |
+
+### Date & Time Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
 | `DATE` | `chrono::NaiveDate` |
 | `TIME` | `chrono::NaiveTime` |
-| `UUID` | `uuid::Uuid` |
-| `JSON`, `JSONB` | `serde_json::Value` |
-| `INET` | `std::net::IpAddr` |
-| `NUMERIC` | `rust_decimal::Decimal` |
+| `TIMETZ` | `sqlx::postgres::types::PgTimeTz` |
+| `TIMESTAMP` | `chrono::NaiveDateTime` |
+| `TIMESTAMPTZ` | `chrono::DateTime<chrono::Utc>` |
+| `INTERVAL` | `sqlx::postgres::types::PgInterval` |
 
-All types support `Option<T>` for nullable columns.
+### Range Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `INT4RANGE` | `sqlx::postgres::types::PgRange<i32>` |
+| `INT8RANGE` | `sqlx::postgres::types::PgRange<i64>` |
+| `NUMRANGE` | `sqlx::postgres::types::PgRange<rust_decimal::Decimal>` |
+| `TSRANGE` | `sqlx::postgres::types::PgRange<chrono::NaiveDateTime>` |
+| `TSTZRANGE` | `sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>` |
+| `DATERANGE` | `sqlx::postgres::types::PgRange<chrono::NaiveDate>` |
+
+### Multirange Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `INT4MULTIRANGE` | `serde_json::Value` |
+| `INT8MULTIRANGE` | `serde_json::Value` |
+| `NUMMULTIRANGE` | `serde_json::Value` |
+| `TSMULTIRANGE` | `serde_json::Value` |
+| `TSTZMULTIRANGE` | `serde_json::Value` |
+| `DATEMULTIRANGE` | `serde_json::Value` |
+
+### Network & Address Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `INET` | `std::net::IpAddr` |
+| `CIDR` | `std::net::IpAddr` |
+| `MACADDR` | `mac_address::MacAddress` |
+
+### Geometric Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `POINT` | `sqlx::postgres::types::PgPoint` |
+| `LINE` | `sqlx::postgres::types::PgLine` |
+| `LSEG` | `sqlx::postgres::types::PgLseg` |
+| `BOX` | `sqlx::postgres::types::PgBox` |
+| `PATH` | `sqlx::postgres::types::PgPath` |
+| `POLYGON` | `sqlx::postgres::types::PgPolygon` |
+| `CIRCLE` | `sqlx::postgres::types::PgCircle` |
+
+### JSON & Special Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `JSON` | `serde_json::Value` |
+| `JSONB` | `serde_json::Value` |
+| `JSONPATH` | `String` |
+| `UUID` | `uuid::Uuid` |
+
+### Array Types
+
+All types support PostgreSQL arrays with automatic mapping to `Vec<T>`:
+
+| PostgreSQL Array Type | Rust Type |
+|----------------------|-----------|
+| `BOOL[]` | `Vec<bool>` |
+| `INT2[]`, `INT4[]`, `INT8[]` | `Vec<i16>`, `Vec<i32>`, `Vec<i64>` |
+| `FLOAT4[]`, `FLOAT8[]` | `Vec<f32>`, `Vec<f64>` |
+| `TEXT[]`, `VARCHAR[]` | `Vec<String>` |
+| `BYTEA[]` | `Vec<Vec<u8>>` |
+| `UUID[]` | `Vec<uuid::Uuid>` |
+| `DATE[]`, `TIMESTAMP[]`, `TIMESTAMPTZ[]` | `Vec<chrono::NaiveDate>`, `Vec<chrono::NaiveDateTime>`, `Vec<chrono::DateTime<chrono::Utc>>` |
+| `INT4RANGE[]`, `DATERANGE[]`, etc. | `Vec<sqlx::postgres::types::PgRange<T>>` |
+| And many more... | See type mapping table above |
+
+### Full-Text Search & System Types
+
+| PostgreSQL Type | Rust Type |
+|----------------|-----------|
+| `TSQUERY` | `String` |
+| `REGCONFIG`, `REGDICTIONARY`, `REGNAMESPACE`, `REGROLE`, `REGCOLLATION` | `u32` |
+| `PG_LSN` | `u64` |
+| `ACLITEM` | `String` |
+
+### Custom Enum Types
+
+PostgreSQL custom enums are automatically detected and mapped to generated Rust enums with proper encoding/decoding support. See the Configuration Options section for details on enum handling.
 
 ## Requirements
 
