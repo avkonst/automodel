@@ -40,6 +40,16 @@ queries:
       level: trace                    # Override global level to trace
       include_params: ["name", "email", "age"]  # Include these params in span
 
+  - name: insert_users_batch
+    sql: |
+      INSERT INTO users (name, email, age)
+      SELECT * FROM UNNEST(${name}::text[], ${email}::text[], ${age}::int4[])
+      RETURNING id, name, email, age, created_at
+    description: "Insert multiple users using UNNEST pattern with multiunzip"
+    module: "users"
+    expect: "multiple"
+    multiunzip: true
+
   - name: get_all_users
     sql: "SELECT id, name, email, age, profile, created_at, updated_at FROM users ORDER BY created_at DESC"
     description: "Get all users with all their fields"

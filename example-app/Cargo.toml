@@ -15,6 +15,7 @@ tracing = "0.1"
 bit-vec = { version = "0.6", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 mac_address = "1.1"
+itertools = "0.13"
 
 [build-dependencies]
 automodel = { path = "../automodel-lib" }

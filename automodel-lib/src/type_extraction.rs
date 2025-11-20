@@ -387,7 +387,7 @@ async fn pg_type_to_rust_type(
         PgType::INT8_RANGE => "sqlx::postgres::types::PgRange<i64>",
         PgType::INT8_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<i64>>",
         PgType::NUM_RANGE => "sqlx::postgres::types::PgRange<rust_decimal::Decimal>",
-        PgType::NUM_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<ruste_decimal::Decimal>>",
+        PgType::NUM_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<rust_decimal::Decimal>>",
         PgType::TS_RANGE => "sqlx::postgres::types::PgRange<chrono::NaiveDateTime>",
         PgType::TS_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<chrono::NaiveDateTime>>",
         PgType::TSTZ_RANGE => "sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>",
@@ -551,6 +551,14 @@ pub fn generate_input_params_with_names(
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Generate function parameter for multiunzip pattern
+/// Returns a single parameter that is a Vec of structs containing all the input types
+/// For example: items: Vec<InsertUsersBatchRecord>
+pub fn generate_multiunzip_param(query_name: &str, param_name: &str) -> String {
+    let struct_name = format!("{}Record", to_pascal_case(query_name));
+    format!("{}: Vec<{}>", param_name, struct_name)
 }
 
 /// Parse SQL to extract meaningful parameter names from named parameters
@@ -897,6 +905,48 @@ pub fn generate_result_struct(query_name: &str, output_types: &[OutputColumn]) -
             to_snake_case(&col.name),
             field_type
         ));
+    }
+
+    struct_def.push_str("}\n");
+    Some(struct_def)
+}
+
+/// Generate an input struct for multiunzip pattern
+/// Creates a struct with fields matching the parameter names and types
+pub fn generate_multiunzip_input_struct(
+    query_name: &str,
+    param_names: &[String],
+    input_types: &[RustType],
+) -> Option<String> {
+    if input_types.is_empty() {
+        return None;
+    }
+
+    let struct_name = format!("{}Record", to_pascal_case(query_name));
+    let mut struct_def = format!("#[derive(Debug, Clone)]\npub struct {} {{\n", struct_name);
+
+    for (i, param_name) in param_names.iter().enumerate() {
+        if let Some(rust_type) = input_types.get(i) {
+            // Extract base type from Vec<T> for array parameters
+            let base_type =
+                if rust_type.rust_type.starts_with("Vec<") && rust_type.rust_type.ends_with('>') {
+                    &rust_type.rust_type[4..rust_type.rust_type.len() - 1]
+                } else {
+                    &rust_type.rust_type
+                };
+
+            let field_type = if rust_type.is_nullable {
+                format!("Option<{}>", base_type)
+            } else {
+                base_type.to_string()
+            };
+
+            struct_def.push_str(&format!(
+                "    pub {}: {},\n",
+                to_snake_case(param_name),
+                field_type
+            ));
+        }
     }
 
     struct_def.push_str("}\n");

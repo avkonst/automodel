@@ -1,6 +1,7 @@
 use crate::config::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::type_extraction::{
-    convert_named_params_to_positional, generate_input_params_with_names, generate_result_struct,
+    convert_named_params_to_positional, generate_input_params_with_names,
+    generate_multiunzip_input_struct, generate_multiunzip_param, generate_result_struct,
     generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use anyhow::Result;
@@ -147,17 +148,6 @@ pub fn generate_function_code_without_enums(
 ) -> Result<String> {
     let mut code = String::new();
 
-    // Generate result struct if needed (but no enums)
-    if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
-        code.push_str(&struct_def);
-        code.push('\n');
-    }
-
-    // Generate function documentation
-    if let Some(description) = &query.description {
-        code.push_str(&format!("/// {}\n", description));
-    }
-
     // Extract clean parameter names directly from the SQL for function signature
     let original_param_names = parse_parameter_names_from_sql(&query.sql);
     let clean_param_names: Vec<String> = original_param_names
@@ -171,10 +161,41 @@ pub fn generate_function_code_without_enums(
         })
         .collect();
 
+    let use_multiunzip = query.multiunzip.unwrap_or(false);
+
+    // Generate input struct for multiunzip if needed
+    if use_multiunzip {
+        if let Some(input_struct) = generate_multiunzip_input_struct(
+            &query.name,
+            &clean_param_names,
+            &type_info.input_types,
+        ) {
+            code.push_str(&input_struct);
+            code.push('\n');
+        }
+    }
+
+    // Generate result struct if needed (but no enums)
+    if let Some(struct_def) = generate_result_struct(&query.name, &type_info.output_types) {
+        code.push_str(&struct_def);
+        code.push('\n');
+    }
+
+    // Generate function documentation
+    if let Some(description) = &query.description {
+        code.push_str(&format!("/// {}\n", description));
+    }
+
     let tracing_attribute = generate_tracing_attribute(query, &clean_param_names);
     code.push_str(&tracing_attribute);
 
-    let input_params = generate_input_params_with_names(&type_info.input_types, &clean_param_names);
+    let input_params = if use_multiunzip {
+        // For multiunzip, generate a single Vec<StructName> parameter
+        generate_multiunzip_param(&query.name, "items")
+    } else {
+        generate_input_params_with_names(&type_info.input_types, &clean_param_names)
+    };
+
     let base_return_type = if type_info.output_types.len() > 1 {
         format!("{}Item", to_pascal_case(&query.name))
     } else {
@@ -246,6 +267,13 @@ fn generate_static_function_body(
     type_info: &QueryTypeInfo,
     return_type: &str,
 ) -> Result<()> {
+    let use_multiunzip = query.multiunzip.unwrap_or(false);
+
+    // Add itertools import if using multiunzip
+    if use_multiunzip {
+        body.push_str("    use itertools::Itertools;\n");
+    }
+
     // Convert named parameters to positional parameters for SQLx
     let (converted_sql, param_names) = convert_named_params_to_positional(&query.sql);
 
@@ -258,7 +286,72 @@ fn generate_static_function_body(
 
     // Add parameter bindings using method chaining
     if !type_info.input_types.is_empty() {
-        if param_names.is_empty() {
+        if use_multiunzip {
+            // Generate multiunzip pattern with struct field extraction
+
+            // Get clean parameter names for field extraction
+            let original_param_names = parse_parameter_names_from_sql(&query.sql);
+            let clean_param_names: Vec<String> = original_param_names
+                .iter()
+                .map(|name| {
+                    if name.ends_with('?') {
+                        name.trim_end_matches('?').to_string()
+                    } else {
+                        name.clone()
+                    }
+                })
+                .collect();
+
+            // Generate the tuple pattern based on number of types
+            let num_types = type_info.input_types.len();
+            let tuple_vars: Vec<String> = clean_param_names
+                .iter()
+                .map(|name| {
+                    // Convert to snake_case for consistency
+                    to_snake_case(name)
+                })
+                .collect();
+            let tuple_pattern = tuple_vars.join(", ");
+
+            body.push_str(&format!(
+                "    let ({}): ({}) =\n",
+                tuple_pattern,
+                vec!["Vec<_>"; num_types].join(", ")
+            ));
+            body.push_str("        items\n");
+            body.push_str("            .into_iter()\n");
+
+            // Generate the map closure to extract struct fields
+            body.push_str(&format!(
+                "            .map(|item| ({}))\n",
+                tuple_vars
+                    .iter()
+                    .map(|field| format!("item.{}", field))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+
+            body.push_str("            .multiunzip();\n");
+
+            // Bind each array
+            for (i, var) in tuple_vars.iter().enumerate() {
+                let rust_type_info = &type_info.input_types[i];
+
+                if rust_type_info.needs_json_wrapper {
+                    // For custom types in arrays, we need to serialize each element
+                    body.push_str(&format!(
+                        "    let {}_json: Result<Vec<serde_json::Value>, _> = {}.into_iter().map(|v| serde_json::to_value(&v)).collect();\n",
+                        var, var
+                    ));
+                    body.push_str(&format!(
+                        "    let query = query.bind({}_json.map_err(|e| sqlx::Error::Encode(Box::new(e)))?);\n",
+                        var
+                    ));
+                } else {
+                    body.push_str(&format!("    let query = query.bind({});\n", var));
+                }
+            }
+        } else if param_names.is_empty() {
             // Fallback to generic param names
             for i in 1..=type_info.input_types.len() {
                 body.push_str(&format!("    let query = query.bind(param_{});\n", i));

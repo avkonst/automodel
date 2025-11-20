@@ -186,6 +186,16 @@ impl AutoModel {
             let module_file = output_path.join(format!("{}.rs", module));
             // Tell cargo to rerun if any module file is manually modified
             println!("cargo:rerun-if-changed={}", module_file.display());
+
+            // Clean up module file if it exists but doesn't have a valid hash
+            if module_file.exists() {
+                if !Self::is_generated_code_up_to_date(automodel.file_hash, &module_file)
+                    .unwrap_or(false)
+                {
+                    // File exists but hash is invalid/missing, delete it to force regeneration
+                    let _ = std::fs::remove_file(&module_file);
+                }
+            }
         }
         let mod_file = output_path.join("mod.rs");
         // Tell cargo to rerun if the mod.rs file is manually modified
@@ -195,7 +205,22 @@ impl AutoModel {
         if Self::is_generated_code_up_to_date(automodel.file_hash, &output_path.join("mod.rs"))
             .unwrap_or(false)
         {
-            return Ok(());
+            // Also verify all module files have valid hashes
+            let mut all_modules_valid = true;
+            for module in &modules {
+                let module_file = output_path.join(format!("{}.rs", module));
+                if !module_file.exists()
+                    || !Self::is_generated_code_up_to_date(automodel.file_hash, &module_file)
+                        .unwrap_or(false)
+                {
+                    all_modules_valid = false;
+                    break;
+                }
+            }
+
+            if all_modules_valid {
+                return Ok(());
+            }
         }
 
         let database_url = env::var("AUTOMODEL_DATABASE_URL")
@@ -317,7 +342,7 @@ impl AutoModel {
         let mut type_infos = Vec::new();
         for query in &module_queries {
             println!("cargo:info=Processing query: {}", query.name);
-            
+
             let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
             type_infos.push(type_info);
 
@@ -332,7 +357,11 @@ impl AutoModel {
         // Check if any query has output types (needs Row trait for try_get method)
         let needs_row_import = type_infos.iter().any(|ti| !ti.output_types.is_empty());
         if needs_row_import {
-            generated_code.push_str("use sqlx::Row;\n\n");
+            generated_code.push_str("use sqlx::Row;\n");
+        }
+
+        if needs_row_import {
+            generated_code.push_str("\n");
         }
 
         // Extract and generate all unique enum types for this module

@@ -96,6 +96,12 @@ pub struct QueryDefinition {
     /// Defaults to None (use global setting)
     #[serde(default)]
     pub ensure_indexes: Option<bool>,
+    /// Whether to use multiunzip pattern for array parameters
+    /// When true, the function accepts a Vec of tuples and unzips them into separate arrays
+    /// for binding to UNNEST(...) style queries
+    /// Defaults to false
+    #[serde(default)]
+    pub multiunzip: Option<bool>,
 }
 
 /// Per-query telemetry configuration
