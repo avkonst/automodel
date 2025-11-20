@@ -999,9 +999,9 @@ fn to_snake_case(s: &str) -> String {
 
 /// Generate struct for conditions_type pattern
 /// This creates a struct with ONLY the conditional parameters (those ending with '?')
-/// without Option wrappers, used for both old and new values in diff-based updates
+/// preserving their nullable types to support setting values to NULL (e.g., age: Some(40) -> None)
 pub fn generate_conditional_diff_struct(
-    query_name: &str,
+    struct_name: &str,
     param_names: &[String],
     input_types: &[RustType],
 ) -> Option<String> {
@@ -1009,7 +1009,6 @@ pub fn generate_conditional_diff_struct(
         return None;
     }
 
-    let struct_name = format!("{}Params", to_pascal_case(query_name));
     let mut code = String::new();
 
     code.push_str("#[derive(Debug, Clone, PartialEq)]\n");
@@ -1032,8 +1031,12 @@ pub fn generate_conditional_diff_struct(
 
             // Only add if we haven't seen this parameter name before
             if !unique_params.contains_key(&clean_param_name) {
-                // For conditions_type, we don't use Option - the struct fields are the raw types
-                let final_type = rust_type.rust_type.clone();
+                // For conditions_type, preserve nullable types to support setting values to NULL
+                let final_type = if rust_type.is_nullable {
+                    format!("Option<{}>", rust_type.rust_type)
+                } else {
+                    rust_type.rust_type.clone()
+                };
                 unique_params.insert(clean_param_name.clone(), final_type);
                 param_order.push(clean_param_name);
             }

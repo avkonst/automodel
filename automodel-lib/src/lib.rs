@@ -403,6 +403,7 @@ impl AutoModel {
                             if param_name.ends_with('?') {
                                 let clean_param = param_name.trim_end_matches('?');
                                 if let Some(param_type) = type_info.input_types.get(i) {
+                                    // For conditions_type, preserve nullable types for NULL support
                                     let type_str = if param_type.is_nullable {
                                         format!("Option<{}>", param_type.rust_type)
                                     } else {
@@ -447,6 +448,7 @@ impl AutoModel {
                         if param_name.ends_with('?') {
                             let clean_param = param_name.trim_end_matches('?');
                             if let Some(param_type) = type_info.input_types.get(i) {
+                                // For conditions_type, preserve nullable types for NULL support
                                 let type_str = if param_type.is_nullable {
                                     format!("Option<{}>", param_type.rust_type)
                                 } else {
@@ -578,11 +580,17 @@ impl AutoModel {
                         );
 
                         if !missing.is_empty() {
-                            error_msg.push_str(&format!("\n  Fields in query but not in struct: [{}]", missing.join(", ")));
+                            error_msg.push_str(&format!(
+                                "\n  Fields in query but not in struct: [{}]",
+                                missing.join(", ")
+                            ));
                         }
 
                         if !redundant.is_empty() {
-                            error_msg.push_str(&format!("\n  Fields in struct but not in query: [{}]", redundant.join(", ")));
+                            error_msg.push_str(&format!(
+                                "\n  Fields in struct but not in query: [{}]",
+                                redundant.join(", ")
+                            ));
                         }
 
                         anyhow::bail!(error_msg);

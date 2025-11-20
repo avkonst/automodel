@@ -527,6 +527,37 @@ queries:
     parameters_type: "GetUserByIdAndEmailParams"
     return_type: "UserSummary"
 
+  # Demo module showing UserModel pattern with insert, full update, partial update, and select
+  - name: create_user
+    sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age?}) RETURNING id, name, email, age"
+    description: "Insert a new user and return as UserModel"
+    module: "user_model"
+    expect: "exactly_one"
+    return_type: "UserModel"
+
+  - name: update_user_full
+    sql: "UPDATE users SET name = ${name}, email = ${email}, age = ${age?} WHERE id = ${id} RETURNING id, name, email, age"
+    description: "Full update of user - reuses UserModel for both parameters and return type"
+    module: "user_model"
+    expect: "exactly_one"
+    parameters_type: "UserModel"
+    return_type: "UserModel"
+
+  - name: update_user_partial
+    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${id} RETURNING id, name, email, age"
+    description: "Partial update using diff-based comparison - auto-generates params struct for old/new comparison "
+    module: "user_model"
+    expect: "exactly_one"
+    conditions_type: ShouldGenerateThisStructIfItIsReferencedFirstTime
+    return_type: "UserModel"
+
+  - name: find_user_by_email
+    sql: "SELECT id, name, email, age FROM users WHERE email = ${email}"
+    description: "Select user by email - returns UserModel"
+    module: "user_model"
+    expect: "possible_one"
+    return_type: "UserModel"
+
 
 
 

@@ -212,7 +212,7 @@ pub fn generate_function_code_without_enums(
 
         if !emitted_struct_names.contains(&struct_name) {
             if let Some(diff_struct) = generate_conditional_diff_struct(
-                diff_struct_name_override.unwrap_or(&query.name),
+                &struct_name,
                 &original_param_names,
                 &type_info.input_types,
             ) {
