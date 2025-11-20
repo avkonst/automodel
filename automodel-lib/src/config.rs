@@ -102,6 +102,13 @@ pub struct QueryDefinition {
     /// Defaults to false
     #[serde(default)]
     pub multiunzip: Option<bool>,
+    /// Whether to use diff-based conditional parameters
+    /// When true, instead of generating separate Option<T> parameters for conditional fields,
+    /// generates two struct parameters (old and new) and automatically diffs them
+    /// to determine which fields should be updated
+    /// Defaults to false
+    #[serde(default)]
+    pub conditional_diff: Option<bool>,
 }
 
 /// Per-query telemetry configuration

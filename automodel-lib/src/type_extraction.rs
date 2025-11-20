@@ -993,3 +993,99 @@ fn to_snake_case(s: &str) -> String {
 
     result
 }
+
+/// Generate struct for conditional_diff pattern
+/// This creates a struct with ONLY the conditional parameters (those ending with '?')
+/// without Option wrappers, used for both old and new values in diff-based updates
+pub fn generate_conditional_diff_struct(
+    query_name: &str,
+    param_names: &[String],
+    input_types: &[RustType],
+) -> Option<String> {
+    if input_types.is_empty() {
+        return None;
+    }
+
+    let struct_name = format!("{}Params", to_pascal_case(query_name));
+    let mut code = String::new();
+
+    code.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+    code.push_str(&format!("pub struct {} {{\n", struct_name));
+
+    // Build a map of unique parameter names to their types
+    // Only include conditional parameters (those with '?')
+    let mut unique_params: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut param_order: Vec<String> = Vec::new();
+
+    for (i, rust_type) in input_types.iter().enumerate() {
+        let default_name = format!("param_{}", i + 1);
+        let raw_param_name = param_names.get(i).unwrap_or(&default_name);
+
+        // Only process conditional parameters (those ending with '?')
+        if raw_param_name.ends_with('?') {
+            // Strip the ? suffix
+            let clean_param_name = raw_param_name.trim_end_matches('?').to_string();
+
+            // Only add if we haven't seen this parameter name before
+            if !unique_params.contains_key(&clean_param_name) {
+                // For conditional_diff, we don't use Option - the struct fields are the raw types
+                let final_type = rust_type.rust_type.clone();
+                unique_params.insert(clean_param_name.clone(), final_type);
+                param_order.push(clean_param_name);
+            }
+        }
+    }
+
+    // If no conditional parameters found, don't generate the struct
+    if param_order.is_empty() {
+        return None;
+    }
+
+    // Generate struct fields
+    for param_name in &param_order {
+        let param_type = unique_params.get(param_name).unwrap();
+        code.push_str(&format!("    pub {}: {},\n", param_name, param_type));
+    }
+
+    code.push_str("}\n");
+
+    Some(code)
+}
+
+/// Generate function parameters for conditional_diff pattern
+/// Returns: "old: &QueryNameParams, new: &QueryNameParams, non_conditional_params..."
+pub fn generate_conditional_diff_params(
+    query_name: &str,
+    param_names: &[String],
+    input_types: &[RustType],
+) -> String {
+    let struct_name = format!("{}Params", to_pascal_case(query_name));
+    
+    // Separate conditional and non-conditional parameters
+    let mut non_conditional_params = Vec::new();
+    
+    for (i, param_name) in param_names.iter().enumerate() {
+        // Only include non-conditional parameters (those without '?')
+        if !param_name.ends_with('?') {
+            if let Some(rust_type) = input_types.get(i) {
+                let final_type = if rust_type.is_nullable {
+                    format!("Option<{}>", rust_type.rust_type)
+                } else {
+                    rust_type.rust_type.clone()
+                };
+                non_conditional_params.push(format!("{}: {}", param_name, final_type));
+            }
+        }
+    }
+    
+    // Build parameter string - old and new structs, then non-conditional params
+    let mut params = vec![
+        format!("old: &{}", struct_name),
+        format!("new: &{}", struct_name),
+    ];
+    
+    params.extend(non_conditional_params);
+    
+    params.join(", ")
+}

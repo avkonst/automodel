@@ -62,6 +62,10 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Conditional Update ===");
     test_conditional_update(pool).await?;
 
+    // Test conditional update with diff
+    println!("\n=== Testing Conditional Update with Diff ===");
+    test_conditional_update_diff(pool).await?;
+
     // Test all PostgreSQL types
     println!("\n=== Testing All PostgreSQL Types ===");
     test_all_types(pool).await?;
@@ -78,12 +82,13 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
 async fn test_conditional_update(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("Demonstrating conditional UPDATE with optional parameters...");
 
-    // First, insert a test user
+    // First, insert a test user with a unique email
     println!("\n1. Inserting a test user...");
+    let timestamp = chrono::Utc::now().timestamp();
     let user = generated::users::insert_user(
         pool,
         "John Doe".to_string(),
-        "john.doe@example.com".to_string(),
+        format!("john.doe.{}@example.com", timestamp),
         30,
         models::UserProfile {
             bio: Some("Test user for conditional update demo".to_string()),
@@ -97,63 +102,184 @@ async fn test_conditional_update(pool: &PgPool) -> Result<(), Box<dyn std::error
         },
     )
     .await?;
-    println!("✓ Created user: ID={}, name={}, email={}, age={:?}", 
-        user.id, user.name, user.email, user.age);
+    println!(
+        "✓ Created user: ID={}, name={}, email={}, age={:?}",
+        user.id, user.name, user.email, user.age
+    );
 
     // Example 1: Update only the name
     println!("\n2. Updating only the name (email and age remain unchanged)...");
     let updated = generated::users::update_user_fields(
         pool,
         Some("Jane Doe".to_string()),
-        None,  // email not updated
-        None,  // age not updated
+        None, // email not updated
+        None, // age not updated
         user.id,
     )
     .await?;
-    println!("✓ After updating name: ID={}, name={}, email={}, age={:?}", 
-        updated.id, updated.name, updated.email, updated.age);
+    println!(
+        "✓ After updating name: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
 
     // Example 2: Update only the age
     println!("\n3. Updating only the age (name and email remain unchanged)...");
     let updated = generated::users::update_user_fields(
         pool,
-        None,  // name not updated
-        None,  // email not updated
+        None, // name not updated
+        None, // email not updated
         Some(35),
         user.id,
     )
     .await?;
-    println!("✓ After updating age: ID={}, name={}, email={}, age={:?}", 
-        updated.id, updated.name, updated.email, updated.age);
+    println!(
+        "✓ After updating age: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
 
     // Example 3: Update multiple fields at once
     println!("\n4. Updating both name and email (age remains unchanged)...");
+    let unique_email = format!("jane.smith.{}@example.com", timestamp);
     let updated = generated::users::update_user_fields(
         pool,
         Some("Jane Smith".to_string()),
-        Some("jane.smith@example.com".to_string()),
-        None,  // age not updated
+        Some(unique_email),
+        None, // age not updated
         user.id,
     )
     .await?;
-    println!("✓ After updating name and email: ID={}, name={}, email={}, age={:?}", 
-        updated.id, updated.name, updated.email, updated.age);
+    println!(
+        "✓ After updating name and email: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
 
     // Example 4: Update all fields
     println!("\n5. Updating all fields at once...");
+    let unique_email2 = format!("janet.williams.{}@example.com", timestamp);
     let updated = generated::users::update_user_fields(
         pool,
-        Some("Janet Smith".to_string()),
-        Some("janet.smith@example.com".to_string()),
+        Some("Janet Williams".to_string()),
+        Some(unique_email2),
         Some(40),
         user.id,
     )
     .await?;
-    println!("✓ After updating all fields: ID={}, name={}, email={}, age={:?}", 
-        updated.id, updated.name, updated.email, updated.age);
+    println!(
+        "✓ After updating all fields: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
 
     println!("\n✓ Conditional update examples completed successfully!");
     println!("The conditional syntax $[, field = ${{param?}}] only includes the SET clause when the parameter is Some(value)");
+
+    Ok(())
+}
+
+async fn test_conditional_update_diff(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Demonstrating conditional UPDATE with diff-based comparison...");
+
+    // First, insert a test user with a unique email
+    println!("\n1. Inserting a test user...");
+    let timestamp = chrono::Utc::now().timestamp();
+    let email = format!("alice.cooper.{}@example.com", timestamp);
+    let user = generated::users::insert_user(
+        pool,
+        "Alice Cooper".to_string(),
+        email.clone(),
+        28,
+        models::UserProfile {
+            bio: Some("Test user for diff-based conditional update demo".to_string()),
+            avatar_url: None,
+            preferences: models::UserPreferences {
+                theme: "light".to_string(),
+                language: "en".to_string(),
+                notifications_enabled: true,
+            },
+            social_links: vec![],
+        },
+    )
+    .await?;
+    println!(
+        "✓ Created user: ID={}, name={}, email={}, age={:?}",
+        user.id, user.name, user.email, user.age
+    );
+
+    // Example 1: Update only the name (by passing different old/new values)
+    println!("\n2. Updating only the name using diff (email and age stay the same)...");
+    let old = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alice Cooper".to_string(),
+        email: email.clone(),
+        age: 28,
+    };
+    let new = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alice Smith".to_string(),  // Changed
+        email: email.clone(),  // Same
+        age: 28,  // Same
+    };
+    let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
+    println!(
+        "✓ After updating name: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
+
+    // Example 2: Update only the age
+    println!("\n3. Updating only the age using diff (name and email stay the same)...");
+    let old = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alice Smith".to_string(),
+        email: email.clone(),
+        age: 28,
+    };
+    let new = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alice Smith".to_string(),  // Same
+        email: email.clone(),  // Same
+        age: 29,  // Changed
+    };
+    let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
+    println!(
+        "✓ After updating age: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
+
+    // Example 3: Update multiple fields
+    println!("\n4. Updating both name and email using diff (age stays the same)...");
+    let email2 = format!("alicia.smith.{}@example.com", timestamp);
+    let old = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alice Smith".to_string(),
+        email: email.clone(),
+        age: 29,
+    };
+    let new = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alicia Smith".to_string(),  // Changed
+        email: email2.clone(),  // Changed
+        age: 29,  // Same
+    };
+    let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
+    println!(
+        "✓ After updating name and email: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
+
+    // Example 4: Update all fields
+    println!("\n5. Updating all fields using diff...");
+    let email3 = format!("alicia.johnson.{}@example.com", timestamp);
+    let old = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alicia Smith".to_string(),
+        email: email2.clone(),
+        age: 29,
+    };
+    let new = generated::users::UpdateUserFieldsDiffParams {
+        name: "Alicia Johnson".to_string(),  // Changed
+        email: email3,  // Changed
+        age: 30,  // Changed
+    };
+    let updated = generated::users::update_user_fields_diff(pool, &old, &new, user.id).await?;
+    println!(
+        "✓ After updating all fields: ID={}, name={}, email={}, age={:?}",
+        updated.id, updated.name, updated.email, updated.age
+    );
+
+    println!("\n✓ Diff-based conditional update examples completed successfully!");
+    println!("With conditional_diff: true, the function compares old.field != new.field to decide which SET clauses to include");
 
     Ok(())
 }

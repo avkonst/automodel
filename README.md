@@ -467,6 +467,138 @@ update_user_fields(executor, user_id, Some("Janet".to_string()), Some("janet@exa
 
 **Note**: Always include at least one non-conditional SET clause (like `updated_at = NOW()`) to ensure the UPDATE statement is syntactically valid even when all optional parameters are `None`.
 
+### Diff-Based Conditional Queries
+
+For scenarios where you want to dynamically include clauses based on comparing old and new values, AutoModel provides the `conditional_diff` option. Instead of using `Option<T>` parameters, this generates a struct with the conditional fields and compares old vs new values to decide which clauses to include.
+
+This feature works with **any query type** (SELECT, UPDATE, DELETE, etc.), not just UPDATEs.
+
+**Configuration Example (UPDATE):**
+
+```yaml
+- name: update_user_fields_diff
+  sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${user_id} RETURNING id, name, email, age, updated_at"
+  description: "Update user fields using diff-based conditional updates - compares old and new structs"
+  conditional_diff: true
+```
+
+**Configuration Example (SELECT):**
+
+```yaml
+- name: search_users_diff
+  sql: "SELECT id, name, email, age FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND email ILIKE ${email_pattern?}] $[AND age >= ${min_age?}] ORDER BY created_at DESC"
+  description: "Search users by comparing filter criteria changes"
+  conditional_diff: true
+```
+
+**Generated Struct and Function:**
+
+```rust
+pub struct UpdateUserFieldsDiffParams {
+    pub name: String,
+    pub email: String,
+    pub age: i32,
+}
+
+pub async fn update_user_fields_diff(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    old: &UpdateUserFieldsDiffParams,
+    new: &UpdateUserFieldsDiffParams,
+    user_id: i32
+) -> Result<UpdateUserFieldsDiffItem, sqlx::Error>
+```
+
+**Usage Examples:**
+
+```rust
+// Update only the name (by passing different old/new values)
+let old = UpdateUserFieldsDiffParams {
+    name: "Alice Cooper".to_string(),
+    email: "alice@example.com".to_string(),
+    age: 28,
+};
+let new = UpdateUserFieldsDiffParams {
+    name: "Alice Smith".to_string(),  // Changed
+    email: "alice@example.com".to_string(),  // Same
+    age: 28,  // Same
+};
+update_user_fields_diff(executor, &old, &new, user_id).await?;
+// SQL: "UPDATE users SET updated_at = NOW(), name = $1 WHERE id = $2 RETURNING ..."
+// Params: ["Alice Smith", user_id]
+
+// Update multiple fields
+let old = UpdateUserFieldsDiffParams {
+    name: "Alice Smith".to_string(),
+    email: "alice@example.com".to_string(),
+    age: 28,
+};
+let new = UpdateUserFieldsDiffParams {
+    name: "Alicia Smith".to_string(),  // Changed
+    email: "alicia@example.com".to_string(),  // Changed
+    age: 28,  // Same
+};
+update_user_fields_diff(executor, &old, &new, user_id).await?;
+// SQL: "UPDATE users SET updated_at = NOW(), name = $1, email = $2 WHERE id = $3 RETURNING ..."
+// Params: ["Alicia Smith", "alicia@example.com", user_id]
+```
+
+**SELECT Query Example:**
+
+```rust
+// Generated for search_users_diff query
+pub struct SearchUsersDiffParams {
+    pub name_pattern: String,
+    pub email_pattern: String,
+    pub min_age: i32,
+}
+
+// Search with only name filter changed
+let old_filters = SearchUsersDiffParams {
+    name_pattern: "%smith%".to_string(),
+    email_pattern: "%@example.com%".to_string(),
+    min_age: 18,
+};
+let new_filters = SearchUsersDiffParams {
+    name_pattern: "%johnson%".to_string(),  // Changed
+    email_pattern: "%@example.com%".to_string(),  // Same
+    min_age: 18,  // Same
+};
+search_users_diff(executor, &old_filters, &new_filters).await?;
+// SQL: "SELECT id, name, email, age FROM users WHERE 1=1 AND name ILIKE $1 ORDER BY created_at DESC"
+// Params: ["%johnson%"]
+
+// Search with all filters changed
+let old_filters = SearchUsersDiffParams {
+    name_pattern: "%johnson%".to_string(),
+    email_pattern: "%@example.com%".to_string(),
+    min_age: 18,
+};
+let new_filters = SearchUsersDiffParams {
+    name_pattern: "%williams%".to_string(),  // Changed
+    email_pattern: "%@company.com%".to_string(),  // Changed
+    min_age: 25,  // Changed
+};
+search_users_diff(executor, &old_filters, &new_filters).await?;
+// SQL: "SELECT id, name, email, age FROM users WHERE 1=1 AND name ILIKE $1 AND email ILIKE $2 AND age >= $3 ORDER BY created_at DESC"
+// Params: ["%williams%", "%@company.com%", 25]
+```
+
+**How It Works:**
+- The struct contains only the conditional parameters (those ending with `?`)
+- Non-conditional parameters remain as individual function parameters
+- At runtime, the function compares `old.field != new.field` for each conditional parameter
+- Only clauses where the field differs between old and new are included
+- Values from the `new` struct are bound to the query parameters
+
+**When to Use:**
+- When you have a "current state" and want to apply changes dynamically
+- For SELECT queries with filters that should only apply when criteria changed
+- For UPDATE queries that should only modify changed fields
+- When building APIs that track state changes (e.g., comparing previous filter vs new filter)
+- When you want to avoid the verbosity of many `Option<T>` parameters
+- When implementing PATCH-style REST endpoints that update only modified fields
+- For any conditional query where diff-based logic is clearer than Option-based logic
+
 ### Parameter Binding and Performance
 
 - **Sequential parameter binding**: AutoModel automatically renumbers parameters to ensure sequential binding ($1, $2, $3, etc.)

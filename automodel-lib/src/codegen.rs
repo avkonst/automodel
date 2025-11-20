@@ -1,6 +1,7 @@
 use crate::config::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::type_extraction::{
-    convert_named_params_to_positional, generate_input_params_with_names,
+    convert_named_params_to_positional, generate_conditional_diff_params,
+    generate_conditional_diff_struct, generate_input_params_with_names,
     generate_multiunzip_input_struct, generate_multiunzip_param, generate_result_struct,
     generate_return_type, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
@@ -162,6 +163,7 @@ pub fn generate_function_code_without_enums(
         .collect();
 
     let use_multiunzip = query.multiunzip.unwrap_or(false);
+    let use_conditional_diff = query.conditional_diff.unwrap_or(false);
 
     // Generate input struct for multiunzip if needed
     if use_multiunzip {
@@ -171,6 +173,18 @@ pub fn generate_function_code_without_enums(
             &type_info.input_types,
         ) {
             code.push_str(&input_struct);
+            code.push('\n');
+        }
+    }
+
+    // Generate diff struct for conditional_diff if needed
+    if use_conditional_diff && type_info.parsed_sql.is_some() {
+        if let Some(diff_struct) = generate_conditional_diff_struct(
+            &query.name,
+            &original_param_names,
+            &type_info.input_types,
+        ) {
+            code.push_str(&diff_struct);
             code.push('\n');
         }
     }
@@ -192,6 +206,9 @@ pub fn generate_function_code_without_enums(
     let input_params = if use_multiunzip {
         // For multiunzip, generate a single Vec<StructName> parameter
         generate_multiunzip_param(&query.name, "items")
+    } else if use_conditional_diff && type_info.parsed_sql.is_some() {
+        // For conditional_diff, generate old and new struct parameters
+        generate_conditional_diff_params(&query.name, &original_param_names, &type_info.input_types)
     } else {
         generate_input_params_with_names(&type_info.input_types, &clean_param_names)
     };
@@ -399,6 +416,8 @@ fn generate_conditional_function_body(
 ) -> Result<()> {
     use crate::type_extraction::parse_parameter_names_from_sql;
 
+    let use_conditional_diff = query.conditional_diff.unwrap_or(false);
+
     // Parse all parameters from the original SQL to get their order and types
     let all_params = parse_parameter_names_from_sql(&query.sql);
 
@@ -436,7 +455,7 @@ fn generate_conditional_function_body(
     body.push_str("\".to_string();\n");
     body.push_str("    let mut included_params = Vec::new();\n\n");
 
-    // Replace each conditional block based on parameter presence
+    // Replace each conditional block based on parameter presence or diff
     for (_, block_sql, param_name) in &conditional_replacements {
         let clean_param = if param_name.ends_with('?') {
             param_name.trim_end_matches('?')
@@ -446,7 +465,14 @@ fn generate_conditional_function_body(
 
         let conditional_block = format!("$[{}]", block_sql);
 
-        body.push_str(&format!("    if {}.is_some() {{\n", clean_param));
+        if use_conditional_diff {
+            // For conditional_diff, check if old and new values differ
+            body.push_str(&format!("    if old.{} != new.{} {{\n", clean_param, clean_param));
+        } else {
+            // For regular conditional, check if parameter is Some
+            body.push_str(&format!("    if {}.is_some() {{\n", clean_param));
+        }
+        
         body.push_str(&format!(
             "        final_sql = final_sql.replace(r\"{}\", r\"{}\");\n",
             conditional_block,
@@ -552,16 +578,31 @@ fn generate_conditional_function_body(
         }) {
             if let Some(rust_type_info) = type_info.input_types.get(param_index) {
                 if rust_type_info.needs_json_wrapper {
-                    body.push_str(&format!("        let {}_json = serde_json::to_value(&{}.as_ref().unwrap()).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                    if use_conditional_diff {
+                        // For conditional_diff, use new.field directly
+                        body.push_str(&format!("        let {}_json = serde_json::to_value(&new.{}).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                    } else {
+                        // For regular conditional, unwrap the Option
+                        body.push_str(&format!("        let {}_json = serde_json::to_value(&{}.as_ref().unwrap()).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;\n", clean_param, clean_param));
+                    }
                     body.push_str(&format!(
                         "        query = query.bind({}_json);\n",
                         clean_param
                     ));
                 } else {
-                    body.push_str(&format!(
-                        "        query = query.bind({}.as_ref().unwrap());\n",
-                        clean_param
-                    ));
+                    if use_conditional_diff {
+                        // For conditional_diff, bind new.field directly
+                        body.push_str(&format!(
+                            "        query = query.bind(&new.{});\n",
+                            clean_param
+                        ));
+                    } else {
+                        // For regular conditional, unwrap the Option
+                        body.push_str(&format!(
+                            "        query = query.bind({}.as_ref().unwrap());\n",
+                            clean_param
+                        ));
+                    }
                 }
             }
         }

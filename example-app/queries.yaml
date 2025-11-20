@@ -135,6 +135,13 @@ queries:
     module: "users"
     expect: "exactly_one"
 
+  - name: update_user_fields_diff
+    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${user_id} RETURNING id, name, email, age, updated_at"
+    description: "Update user fields using diff-based conditional updates - compares old and new structs"
+    module: "users"
+    expect: "exactly_one"
+    conditional_diff: true
+
   - name: get_all_user_statuses
     sql: "SELECT DISTINCT status FROM users ORDER BY status"
     description: "Get all possible user statuses currently in use"
