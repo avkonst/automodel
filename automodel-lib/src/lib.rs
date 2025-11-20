@@ -551,13 +551,41 @@ impl AutoModel {
 
                     // Check if field counts match
                     if existing_fields.len() != expected_fields.len() {
-                        anyhow::bail!(
-                            "Query '{}' return type references struct '{}' but field count mismatch: expected {} fields, found {} fields",
+                        // Determine which fields are missing and which are redundant
+                        let expected_names: std::collections::HashSet<_> =
+                            expected_fields.iter().map(|(n, _)| n.as_str()).collect();
+                        let existing_names: std::collections::HashSet<_> =
+                            existing_fields.iter().map(|(n, _)| n.as_str()).collect();
+
+                        let missing: Vec<_> = expected_fields
+                            .iter()
+                            .filter(|(n, _)| !existing_names.contains(n.as_str()))
+                            .map(|(n, t)| format!("{}: {}", n, t))
+                            .collect();
+
+                        let redundant: Vec<_> = existing_fields
+                            .iter()
+                            .filter(|(n, _)| !expected_names.contains(n.as_str()))
+                            .map(|(n, t)| format!("{}: {}", n, t))
+                            .collect();
+
+                        let mut error_msg = format!(
+                            "Query '{}' return type references struct '{}' but field count mismatch: expected {} fields, found {} fields in struct",
                             query.name,
                             struct_name,
                             expected_fields.len(),
                             existing_fields.len()
                         );
+
+                        if !missing.is_empty() {
+                            error_msg.push_str(&format!("\n  Fields in query but not in struct: [{}]", missing.join(", ")));
+                        }
+
+                        if !redundant.is_empty() {
+                            error_msg.push_str(&format!("\n  Fields in struct but not in query: [{}]", redundant.join(", ")));
+                        }
+
+                        anyhow::bail!(error_msg);
                     }
 
                     // Check if fields match (name and type)
