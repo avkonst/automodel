@@ -387,7 +387,7 @@ async fn pg_type_to_rust_type(
         PgType::INT8_RANGE => "sqlx::postgres::types::PgRange<i64>",
         PgType::INT8_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<i64>>",
         PgType::NUM_RANGE => "sqlx::postgres::types::PgRange<rust_decimal::Decimal>",
-        PgType::NUM_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<rust_decimal::Decimal>>",
+        PgType::NUM_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<ruste_decimal::Decimal>>",
         PgType::TS_RANGE => "sqlx::postgres::types::PgRange<chrono::NaiveDateTime>",
         PgType::TS_RANGE_ARRAY => "Vec<sqlx::postgres::types::PgRange<chrono::NaiveDateTime>>",
         PgType::TSTZ_RANGE => "sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>",
