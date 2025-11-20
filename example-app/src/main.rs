@@ -54,6 +54,10 @@ async fn run_examples(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Structured Parameters ===");
     test_structured_parameters(pool).await?;
 
+    // Test struct reuse
+    println!("\n=== Testing Struct Reuse ===");
+    test_struct_reuse(pool).await?;
+
     // Test all PostgreSQL types
     println!("\n=== Testing All PostgreSQL Types ===");
     test_all_types(pool).await?;
@@ -328,6 +332,129 @@ async fn test_structured_parameters(pool: &PgPool) -> Result<(), Box<dyn std::er
 
     println!("\n✓ Structured parameters examples completed successfully!");
     println!("With structured_parameters: true, all query parameters are passed as a single struct instead of individual parameters");
+
+    Ok(())
+}
+
+async fn test_struct_reuse(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Demonstrating struct reuse across queries...");
+    println!("This feature allows queries to reuse structs defined by previous queries,");
+    println!("eliminating code duplication when queries share the same parameter structure.\n");
+
+    let timestamp = chrono::Utc::now().timestamp();
+
+    // Example 1: Reusing a Params struct
+    println!("1. Query with structured_parameters: true generates GetUserByIdAndEmailParams");
+    let email = format!("struct.reuse.{}@example.com", timestamp);
+
+    // First insert a test user
+    let user = generated::users::insert_user(
+        pool,
+        "Struct Reuse Test".to_string(),
+        email.clone(),
+        35,
+        models::UserProfile {
+            bio: Some("Test user for struct reuse demo".to_string()),
+            avatar_url: None,
+            preferences: models::UserPreferences {
+                theme: "light".to_string(),
+                language: "en".to_string(),
+                notifications_enabled: true,
+            },
+            social_links: vec![],
+        },
+    )
+    .await?;
+    println!(
+        "   ✓ Inserted test user: ID={}, email={}",
+        user.id, user.email
+    );
+
+    // Use get_user_by_id_and_email which generates GetUserByIdAndEmailParams
+    let params = generated::users::GetUserByIdAndEmailParams {
+        id: user.id,
+        email: email.clone(),
+    };
+
+    match generated::users::get_user_by_id_and_email(pool, &params).await? {
+        Some(found) => println!(
+            "   ✓ Found user: ID={}, name={}, email={}",
+            found.id, found.name, found.email
+        ),
+        None => println!("   ✗ User not found"),
+    }
+
+    // Example 2: Reusing the same Params struct in delete query
+    println!("\n2. Another query reuses GetUserByIdAndEmailParams (structured_parameters: \"GetUserByIdAndEmailParams\")");
+    println!("   No new struct is generated - it reuses the existing one!");
+
+    let deleted = generated::users::delete_user_by_id_and_email(pool, &params).await?;
+    println!(
+        "   ✓ Deleted user: ID={}, email={}",
+        deleted.id, deleted.email
+    );
+
+    // Example 3: Reusing a return type struct (Item) as params
+    println!("\n3. Reusing a return type struct (GetUserByIdAndEmailItem) as params");
+
+    // Insert another test user
+    let email2 = format!("struct.item.reuse.{}@example.com", timestamp);
+    let user2 = generated::users::insert_user(
+        pool,
+        "Item Struct Reuse".to_string(),
+        email2.clone(),
+        40,
+        models::UserProfile {
+            bio: Some("Test user for item struct reuse demo".to_string()),
+            avatar_url: None,
+            preferences: models::UserPreferences {
+                theme: "dark".to_string(),
+                language: "en".to_string(),
+                notifications_enabled: false,
+            },
+            social_links: vec![],
+        },
+    )
+    .await?;
+    println!(
+        "   ✓ Inserted test user: ID={}, email={}",
+        user2.id, user2.email
+    );
+
+    // Get the user (returns GetUserByIdAndEmailItem with id, name, email fields)
+    let get_params = generated::users::GetUserByIdAndEmailParams {
+        id: user2.id,
+        email: email2.clone(),
+    };
+
+    let user_item = generated::users::get_user_by_id_and_email(pool, &get_params)
+        .await?
+        .expect("User should exist");
+    println!(
+        "   ✓ Retrieved user item: ID={}, name={}, email={}",
+        user_item.id, user_item.name, user_item.email
+    );
+
+    // Update using the same struct type (GetUserByIdAndEmailItem)
+    // This demonstrates reusing a return type struct as input params
+    let update_params = generated::users::GetUserByIdAndEmailItem {
+        id: user_item.id,
+        name: "Updated Name".to_string(),
+        email: user_item.email.clone(),
+    };
+
+    let updated = generated::users::update_user_contact_info(pool, &update_params).await?;
+    println!(
+        "   ✓ Updated user: ID={}, name={}, email={}",
+        updated.id, updated.name, updated.email
+    );
+
+    println!("\n✓ Struct reuse examples completed successfully!");
+    println!("\nKey benefits:");
+    println!("  • Reduces code duplication - one struct definition serves multiple queries");
+    println!("  • Type safety - compiler ensures fields match across queries");
+    println!("  • Can reuse both Params structs and Item (return type) structs");
+    println!("  • Validation at build time ensures referenced structs exist and match");
 
     Ok(())
 }

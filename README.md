@@ -21,6 +21,10 @@ This is a Cargo workspace with three main components:
 - ⚡ Build-time code generation with automatic regeneration when YAML changes
 - 🎯 Advanced CLI with dry-run and flexible output options
 - 📊 Built-in query performance analysis with sequential scan detection
+- 🔄 Conditional queries with dynamic SQL based on optional parameters
+- 📦 Structured parameters for cleaner function signatures
+- ♻️ Struct reuse across queries to eliminate code duplication
+- 🔀 Diff-based conditional updates for precise change tracking
 
 ## Quick Start
 
@@ -701,6 +705,172 @@ search_users_structured(executor, &params).await?;
 - When constructing parameters conditionally before the query call
 
 **Note:** The `structured_parameters` option is ignored when `conditional_diff` is enabled, as diff-based queries already use structured parameters.
+
+## Struct Reuse Across Queries
+
+When multiple queries share the same parameter structure, you can eliminate code duplication by reusing struct definitions from previous queries. The `structured_parameters` option supports both generating new structs and referencing existing ones.
+
+### Basic Usage
+
+Instead of setting `structured_parameters: true`, you can set it to a string containing the name of an existing struct:
+
+```yaml
+queries:
+  # First query generates the struct
+  - name: get_user_by_id_and_email
+    sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
+    module: "users"
+    expect: "possible_one"
+    structured_parameters: true  # Generates GetUserByIdAndEmailParams struct
+  
+  # Second query reuses the same struct
+  - name: delete_user_by_id_and_email
+    sql: "DELETE FROM users WHERE id = ${id} AND email = ${email} RETURNING id, email"
+    module: "users"
+    expect: "exactly_one"
+    structured_parameters: "GetUserByIdAndEmailParams"  # Reuses existing struct
+```
+
+**Generated Code:**
+
+```rust
+// Struct is generated only once
+#[derive(Debug, Clone)]
+pub struct GetUserByIdAndEmailParams {
+    pub id: i32,
+    pub email: String,
+}
+
+// First function uses the struct
+pub async fn get_user_by_id_and_email(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    params: &GetUserByIdAndEmailParams
+) -> Result<Option<GetUserByIdAndEmailItem>, sqlx::Error>
+
+// Second function reuses the same struct (no duplicate definition)
+pub async fn delete_user_by_id_and_email(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    params: &GetUserByIdAndEmailParams
+) -> Result<DeleteUserByIdAndEmailItem, sqlx::Error>
+```
+
+**Usage:**
+
+```rust
+// Create params once
+let params = GetUserByIdAndEmailParams {
+    id: 42,
+    email: "user@example.com".to_string(),
+};
+
+// Use with multiple functions
+let user = get_user_by_id_and_email(executor, &params).await?;
+let deleted = delete_user_by_id_and_email(executor, &params).await?;
+```
+
+### Reusing Return Type Structs
+
+You can also reuse return type structs (generated for multi-column SELECT queries) as input parameters for other queries:
+
+```yaml
+queries:
+  # This query generates GetUserByIdAndEmailItem as a return type
+  - name: get_user_by_id_and_email
+    sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
+    module: "users"
+    expect: "possible_one"
+    structured_parameters: true
+  
+  # This query reuses the Item struct as input params
+  - name: update_user_contact_info
+    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id} RETURNING id, name, email"
+    module: "users"
+    expect: "exactly_one"
+    structured_parameters: "GetUserByIdAndEmailItem"  # Reuses the return type struct
+```
+
+**Generated Code:**
+
+```rust
+// Return type struct from first query
+#[derive(Debug, Clone)]
+pub struct GetUserByIdAndEmailItem {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+}
+
+pub async fn get_user_by_id_and_email(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    params: &GetUserByIdAndEmailParams
+) -> Result<Option<GetUserByIdAndEmailItem>, sqlx::Error>
+
+// Second query reuses the Item struct as params
+pub async fn update_user_contact_info(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    params: &GetUserByIdAndEmailItem  // Same struct as return type above
+) -> Result<UpdateUserContactInfoItem, sqlx::Error>
+```
+
+**Usage Pattern:**
+
+```rust
+// Get a user
+let user = get_user_by_id_and_email(executor, &lookup_params)
+    .await?
+    .expect("User exists");
+
+// Modify the user struct
+let updated_user = GetUserByIdAndEmailItem {
+    id: user.id,
+    name: "New Name".to_string(),
+    email: user.email,
+};
+
+// Update using the same struct type
+let result = update_user_contact_info(executor, &updated_user).await?;
+```
+
+### Build-Time Validation
+
+AutoModel validates struct references at build time to ensure correctness:
+
+1. **Existence Check**: The referenced struct must be defined by a previous query in the same module
+2. **Field Matching**: Query parameters must exactly match the struct fields (same names and types)
+3. **Clear Error Messages**: Validation failures provide helpful messages indicating what's wrong
+
+**Example validation error:**
+
+```
+Error: Referenced struct 'NonExistentParams' does not exist. 
+Make sure it's defined by a previous query (either via structured_parameters: true 
+for params structs, or as a return type for multi-column queries)
+```
+
+Or if fields don't match:
+
+```
+Error: Query parameter 'age' not found in struct 'GetUserByIdAndEmailParams'. 
+Available fields: id, email
+```
+
+### Struct Sources
+
+Structs can be reused from two sources:
+
+1. **Params structs**: Generated by queries with `structured_parameters: true`
+   - Named as `{QueryName}Params` (e.g., `GetUserParams`)
+   - Contains input parameters for the query
+
+2. **Return type structs**: Generated for multi-column SELECT queries
+   - Named as `{QueryName}Item` (e.g., `GetUserItem`)
+   - Contains output columns from the query
+
+### Limitations
+
+- Struct must be defined by a **previous** query in the same module
+- All query parameters must match struct fields exactly (no subset matching)
+- Referenced struct must be in the same generated module
 
 ### Parameter Binding and Performance
 

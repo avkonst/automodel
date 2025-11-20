@@ -1,6 +1,32 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Structured parameters configuration - can be either a boolean or a struct name reference
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum StructuredParameters {
+    /// Auto-generate a new struct with name {QueryName}Params
+    Enabled(bool),
+    /// Use an existing struct by name (e.g., "User", "InsertUserParams")
+    Reference(String),
+}
+
+impl StructuredParameters {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            StructuredParameters::Enabled(b) => *b,
+            StructuredParameters::Reference(_) => true,
+        }
+    }
+
+    pub fn get_struct_name(&self) -> Option<&str> {
+        match self {
+            StructuredParameters::Enabled(_) => None,
+            StructuredParameters::Reference(name) => Some(name.as_str()),
+        }
+    }
+}
+
 /// Expected result type for a query
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -112,10 +138,11 @@ pub struct QueryDefinition {
     /// Whether to use structured parameters
     /// When true, all query parameters are passed as a single struct instead of individual parameters
     /// The struct name will be {QueryName}Params
+    /// When a string, references an existing struct name from another query
     /// Ignored if conditional_diff is true
     /// Defaults to false
     #[serde(default)]
-    pub structured_parameters: Option<bool>,
+    pub structured_parameters: Option<StructuredParameters>,
 }
 
 /// Per-query telemetry configuration

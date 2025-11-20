@@ -424,6 +424,37 @@ queries:
     module: "admin"
     expect: "exactly_one"
 
+  # Test structured_parameters with struct reuse
+  - name: get_user_by_id_and_email
+    sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
+    description: "Get a user by ID and email - generates GetUserByIdAndEmailParams struct and GetUserByIdAndEmailItem return struct"
+    module: "users"
+    expect: "possible_one"
+    structured_parameters: true
+
+  - name: delete_user_by_id_and_email
+    sql: "DELETE FROM users WHERE id = ${id} AND email = ${email} RETURNING id, email"
+    description: "Delete user by ID and email - reuses GetUserByIdAndEmailParams struct"
+    module: "users"
+    expect: "exactly_one"
+    structured_parameters: "GetUserByIdAndEmailParams"
+
+  - name: update_user_contact_info
+    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id} RETURNING id, name, email"
+    description: "Update user contact info - reuses GetUserByIdAndEmailItem return struct as params"
+    module: "users"
+    expect: "exactly_one"
+    structured_parameters: "GetUserByIdAndEmailItem"
+
+  # Test with type mismatch (should fail validation) - commented out
+  # - name: test_type_mismatch
+  #   sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id} RETURNING id"
+  #   description: "Test type mismatch - tries to reuse struct but needs additional 'name' field"
+  #   module: "users"
+  #   expect: "exactly_one"
+  #   structured_parameters: "GetUserByIdAndEmailParams"
+
+
 
 
 

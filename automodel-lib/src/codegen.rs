@@ -165,8 +165,16 @@ pub fn generate_function_code_without_enums(
 
     let use_multiunzip = query.multiunzip.unwrap_or(false);
     let use_conditional_diff = query.conditional_diff.unwrap_or(false);
-    let use_structured_params =
-        query.structured_parameters.unwrap_or(false) && !use_conditional_diff;
+
+    // Determine if structured_parameters is enabled and get the struct name
+    let (use_structured_params, struct_name_override) = match &query.structured_parameters {
+        Some(sp) if !use_conditional_diff => match sp {
+            crate::config::StructuredParameters::Enabled(true) => (true, None),
+            crate::config::StructuredParameters::Reference(name) => (true, Some(name.as_str())),
+            _ => (false, None),
+        },
+        _ => (false, None),
+    };
 
     // Generate input struct for multiunzip if needed
     if use_multiunzip {
@@ -193,7 +201,8 @@ pub fn generate_function_code_without_enums(
     }
 
     // Generate struct for structured_parameters if needed (but not for conditional_diff)
-    if use_structured_params {
+    // Skip if struct_name_override is provided (reusing existing struct)
+    if use_structured_params && struct_name_override.is_none() {
         if let Some(params_struct) = generate_structured_params_struct(
             &query.name,
             &clean_param_names,
@@ -226,7 +235,7 @@ pub fn generate_function_code_without_enums(
         generate_conditional_diff_params(&query.name, &original_param_names, &type_info.input_types)
     } else if use_structured_params {
         // For structured_parameters, generate a single struct parameter
-        generate_structured_params_signature(&query.name)
+        generate_structured_params_signature(&query.name, struct_name_override.as_deref())
     } else {
         generate_input_params_with_names(&type_info.input_types, &clean_param_names)
     };
@@ -303,8 +312,9 @@ fn generate_static_function_body(
     return_type: &str,
 ) -> Result<()> {
     let use_multiunzip = query.multiunzip.unwrap_or(false);
-    let use_structured_params =
-        query.structured_parameters.unwrap_or(false) && !query.conditional_diff.unwrap_or(false);
+    let use_structured_params = query.structured_parameters.as_ref().map_or(false, |sp| {
+        sp.is_enabled() && !query.conditional_diff.unwrap_or(false)
+    });
 
     // Add itertools import if using multiunzip
     if use_multiunzip {
@@ -476,8 +486,10 @@ fn generate_conditional_function_body(
     use crate::type_extraction::parse_parameter_names_from_sql;
 
     let use_conditional_diff = query.conditional_diff.unwrap_or(false);
-    let use_structured_params =
-        query.structured_parameters.unwrap_or(false) && !use_conditional_diff;
+    let use_structured_params = query
+        .structured_parameters
+        .as_ref()
+        .map_or(false, |sp| sp.is_enabled() && !use_conditional_diff);
 
     // Parse all parameters from the original SQL to get their order and types
     let all_params = parse_parameter_names_from_sql(&query.sql);
@@ -901,4 +913,67 @@ fn to_snake_case(s: &str) -> String {
     }
 
     result
+}
+
+/// Validates that a referenced struct exists and has matching parameter fields
+/// Returns Ok if validation passes, Err with a descriptive message if not
+pub fn validate_struct_reference(
+    struct_name: &str,
+    query_params: &[String],
+    query_param_types: &[crate::type_extraction::RustType],
+    available_structs: &std::collections::HashMap<String, Vec<(String, String)>>,
+) -> Result<()> {
+    // Check if the struct exists
+    let struct_fields = available_structs.get(struct_name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Referenced struct '{}' does not exist. Make sure it's defined by a previous query (either via structured_parameters: true for params structs, or as a return type for multi-column queries)",
+            struct_name
+        )
+    })?;
+
+    // Build a map of query parameters for comparison
+    let mut query_field_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (i, param_name) in query_params.iter().enumerate() {
+        let clean_param = param_name.trim_end_matches('?');
+        if let Some(param_type) = query_param_types.get(i) {
+            let type_str = if param_type.is_nullable {
+                format!("Option<{}>", param_type.rust_type)
+            } else {
+                param_type.rust_type.clone()
+            };
+            query_field_map.insert(clean_param.to_string(), type_str);
+        }
+    }
+
+    // Check if all query parameters exist in the struct with matching types
+    for (param_name, param_type) in &query_field_map {
+        let struct_field = struct_fields
+            .iter()
+            .find(|(name, _)| name == param_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Query parameter '{}' not found in struct '{}'. Available fields: {}",
+                    param_name,
+                    struct_name,
+                    struct_fields
+                        .iter()
+                        .map(|(n, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+
+        if &struct_field.1 != param_type {
+            anyhow::bail!(
+                "Type mismatch for parameter '{}' in struct '{}': expected '{}', but query requires '{}'",
+                param_name,
+                struct_name,
+                struct_field.1,
+                param_type
+            );
+        }
+    }
+
+    Ok(())
 }

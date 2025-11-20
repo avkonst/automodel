@@ -383,8 +383,63 @@ impl AutoModel {
             generated_code.push('\n');
         }
 
+        // Track generated structs for validation of struct references
+        // Map: struct_name -> Vec<(field_name, field_type)>
+        let mut generated_structs: std::collections::HashMap<String, Vec<(String, String)>> =
+            std::collections::HashMap::new();
+
         // Generate functions without enum definitions (since they're already at the top)
         for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
+            // Validate struct reference if present
+            if let Some(ref sp) = query.structured_parameters {
+                if let Some(struct_name) = sp.get_struct_name() {
+                    // Parse parameter names and types for validation
+                    let param_names = parse_parameter_names_from_sql(&query.sql);
+                    validate_struct_reference(
+                        struct_name,
+                        &param_names,
+                        &type_info.input_types,
+                        &generated_structs,
+                    )?;
+                } else if sp.is_enabled() {
+                    // This query generates a new Params struct, track it
+                    let struct_name = format!("{}Params", to_pascal_case(&query.name));
+                    let param_names = parse_parameter_names_from_sql(&query.sql);
+                    let mut fields = Vec::new();
+                    for (i, param_name) in param_names.iter().enumerate() {
+                        let clean_param = param_name.trim_end_matches('?');
+                        if let Some(param_type) = type_info.input_types.get(i) {
+                            let type_str = if param_type.is_nullable {
+                                format!("Option<{}>", param_type.rust_type)
+                            } else {
+                                param_type.rust_type.clone()
+                            };
+                            // Only add unique fields
+                            if !fields.iter().any(|(name, _)| name == clean_param) {
+                                fields.push((clean_param.to_string(), type_str));
+                            }
+                        }
+                    }
+                    generated_structs.insert(struct_name, fields);
+                }
+            }
+
+            // Track return type struct if this query generates one (multiple output columns)
+            if type_info.output_types.len() > 1 {
+                let struct_name = format!("{}Item", to_pascal_case(&query.name));
+                let mut fields = Vec::new();
+                for output_type in &type_info.output_types {
+                    let field_name = output_type.name.clone();
+                    let type_str = if output_type.rust_type.is_nullable {
+                        format!("Option<{}>", output_type.rust_type.rust_type)
+                    } else {
+                        output_type.rust_type.rust_type.clone()
+                    };
+                    fields.push((field_name, type_str));
+                }
+                generated_structs.insert(struct_name, fields);
+            }
+
             let function_code = generate_function_code_without_enums(query, type_info)?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');

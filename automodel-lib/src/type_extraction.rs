@@ -954,7 +954,7 @@ pub fn generate_multiunzip_input_struct(
 }
 
 /// Convert string to PascalCase
-fn to_pascal_case(s: &str) -> String {
+pub fn to_pascal_case(s: &str) -> String {
     s.split('_')
         .map(|word| {
             let mut chars = word.chars();
@@ -1144,8 +1144,15 @@ pub fn generate_structured_params_struct(
 }
 
 /// Generate function parameters for structured_parameters pattern
-/// Returns: "params: &QueryNameParams"
-pub fn generate_structured_params_signature(query_name: &str) -> String {
-    let struct_name = format!("{}Params", to_pascal_case(query_name));
+/// Returns: "params: &QueryNameParams" or "params: &OverrideName" if override is provided
+pub fn generate_structured_params_signature(
+    query_name: &str,
+    struct_name_override: Option<&str>,
+) -> String {
+    let struct_name = if let Some(override_name) = struct_name_override {
+        override_name.to_string()
+    } else {
+        format!("{}Params", to_pascal_case(query_name))
+    };
     format!("params: &{}", struct_name)
 }
