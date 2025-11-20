@@ -602,6 +602,139 @@ let posts = vec![
 
 let inserted = insert_posts_batch(&client, posts).await?;
 println!("Inserted {} posts", inserted.len());
+
+```
+## Upsert Pattern (INSERT ... ON CONFLICT)
+
+PostgreSQL's `ON CONFLICT` clause allows you to handle conflicts when inserting data, enabling "upsert" operations (insert if new, update if exists). AutoModel fully supports this pattern for both single-row and batch operations.
+
+### Understanding EXCLUDED
+
+In the `DO UPDATE` clause, `EXCLUDED` is a special table reference provided by PostgreSQL that contains the row that **would have been inserted** if there had been no conflict. This allows you to reference the attempted insert values.
+
+```sql
+INSERT INTO users (email, name, age)
+VALUES ('alice@example.com', 'Alice', 25)
+ON CONFLICT (email)
+DO UPDATE SET
+  name = EXCLUDED.name,      -- Use the name from the VALUES clause
+  age = EXCLUDED.age,        -- Use the age from the VALUES clause
+  updated_at = NOW()         -- Set updated_at to current timestamp
+```
+
+In this example:
+- `EXCLUDED.name` refers to `'Alice'` (the value being inserted)
+- `EXCLUDED.age` refers to `25` (the value being inserted)
+- `users.name` and `users.age` refer to the existing row's values in the table
+
+You can also mix both references:
+```sql
+-- Only update if the new age is greater than the existing age
+DO UPDATE SET age = EXCLUDED.age WHERE users.age < EXCLUDED.age
+```
+
+### Single Row Upsert
+
+Use `ON CONFLICT` to update existing rows when a conflict occurs:
+
+**queries.yaml:**
+```yaml
+- name: upsert_user
+  sql: |
+    INSERT INTO users (email, name, age, profile)
+    VALUES (${email}, ${name}, ${age}, ${profile})
+    ON CONFLICT (email) 
+    DO UPDATE SET 
+      name = EXCLUDED.name,
+      age = EXCLUDED.age,
+      profile = EXCLUDED.profile,
+      updated_at = NOW()
+    RETURNING id, email, name, age, created_at, updated_at
+  description: "Insert a new user or update if email already exists"
+  module: "users"
+  expect: "exactly_one"
+  types:
+    "profile": "crate::models::UserProfile"
+```
+
+**Usage:**
+```rust
+use crate::generated::users::upsert_user;
+use crate::models::UserProfile;
+
+// First insert - creates new user
+let user = upsert_user(
+    &client,
+    "alice@example.com".to_string(),
+    "Alice".to_string(),
+    25,
+    UserProfile { bio: "Developer".to_string() }
+).await?;
+
+// Second call with same email - updates existing user
+let updated_user = upsert_user(
+    &client,
+    "alice@example.com".to_string(),
+    "Alice Smith".to_string(),  // Updated name
+    26,                          // Updated age
+    UserProfile { bio: "Senior Developer".to_string() }
+).await?;
+
+// Same ID, but updated fields
+assert_eq!(user.id, updated_user.id);
+```
+
+### Batch Upsert with UNNEST
+
+Combine `UNNEST` with `ON CONFLICT` for efficient batch upserts:
+
+**queries.yaml:**
+```yaml
+- name: upsert_users_batch
+  sql: |
+    INSERT INTO users (email, name, age)
+    SELECT * FROM UNNEST(
+      ${email}::text[],
+      ${name}::text[],
+      ${age}::int4[]
+    )
+    ON CONFLICT (email)
+    DO UPDATE SET
+      name = EXCLUDED.name,
+      age = EXCLUDED.age,
+      updated_at = NOW()
+    RETURNING id, email, name, age, created_at, updated_at
+  description: "Batch upsert users - insert new or update existing by email"
+  module: "users"
+  expect: "multiple"
+  multiunzip: true
+```
+
+**Usage:**
+```rust
+use crate::generated::users::{upsert_users_batch, UpsertUsersBatchRecord};
+
+let users = vec![
+    UpsertUsersBatchRecord {
+        email: "alice@example.com".to_string(),
+        name: "Alice".to_string(),
+        age: 25,
+    },
+    UpsertUsersBatchRecord {
+        email: "bob@example.com".to_string(),
+        name: "Bob".to_string(),
+        age: 30,
+    },
+    UpsertUsersBatchRecord {
+        email: "alice@example.com".to_string(),  // Duplicate - will update
+        name: "Alice Updated".to_string(),
+        age: 26,
+    },
+];
+
+let results = upsert_users_batch(&client, users).await?;
+// Returns 2 rows: Bob (new) and Alice (updated)
+println!("Upserted {} users", results.len());
 ```
 
 ## CLI Features
