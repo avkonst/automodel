@@ -228,6 +228,12 @@ Each query in the `queries` array supports these options:
   
   # Structured parameters - all params as single struct
   parameters_type: false                   # Default: false. Group all parameters into one struct (ignored if conditions_type is true)
+  
+  # Custom return type name (for multi-column SELECT queries)
+  return_type: "UserInfo"                  # Default: auto-generated. Custom name or reuse existing struct
+  
+  # Custom error type name (for mutation queries with constraint violations)
+  error_type: "UserError"                  # Default: auto-generated. Custom name or reuse existing error type
 ```
 
 ### Expected Result Types
@@ -481,7 +487,7 @@ update_user_fields(executor, user_id, Some("Janet".to_string()), Some("janet@exa
 
 ## Struct Configuration and Reuse
 
-AutoModel provides three powerful configuration options that allow you to customize how structs are generated and reused across queries: `parameters_type`, `conditions_type`, and `return_type`. These options enable you to eliminate code duplication, improve type safety, and create cleaner APIs.
+AutoModel provides four powerful configuration options that allow you to customize how structs and error types are generated and reused across queries: `parameters_type`, `conditions_type`, `return_type`, and `error_type`. These options enable you to eliminate code duplication, improve type safety, and create cleaner APIs.
 
 ### Overview
 
@@ -489,10 +495,10 @@ AutoModel provides three powerful configuration options that allow you to custom
 |--------|---------|---------|---------|-----------|
 | `parameters_type` | Group query parameters into a struct | `false` | `true` or struct name | `{QueryName}Params` struct |
 | `conditions_type` | Diff-based conditional parameters | `false` | `true` or struct name | `{QueryName}Params` struct with old/new comparison |
-| `return_type` | Custom name for return type struct | auto | `false` or struct name | Custom named or `{QueryName}Item` struct |
+| `return_type` | Custom name for return type struct | auto | struct name or omit | Custom named or `{QueryName}Item` struct |
+| `error_type` | Custom name for error constraint enum (mutations only) | auto | error type name or omit | Custom named or `{QueryName}Constraints` enum |
 
-Any structure generated either for return type or parameters / conditions type can be after referenced by other queries either as a return type or parameters / conditions type.
-The AutoModel will ensure correct type assignability and compatibility between the referenced type and the one required by a query.
+Any structure or error type generated can be referenced by other queries. AutoModel validates at build time that the types are compatible and constraints match exactly.
 
 ### parameters_type: Structured Parameters
 
@@ -1148,6 +1154,162 @@ cargo run -p example-app
 cargo check -p automodel-lib
 cargo check -p automodel-cli
 ```
+
+## Error Handling and Custom Error Types
+
+AutoModel provides sophisticated error handling with automatic constraint extraction and type-safe error types. Different types of queries return different error types based on whether they can violate database constraints.
+
+### Error Type Overview
+
+AutoModel generates two types of error enums:
+
+1. **`ErrorReadOnly`** - For SELECT queries that cannot violate constraints
+2. **`Error<C>`** - For mutation queries (INSERT, UPDATE, DELETE) with constraint tracking
+
+### ErrorReadOnly - For Read-Only Queries
+
+All SELECT queries return `ErrorReadOnly`, a simple error enum without constraint violation variants:
+
+**Generated Code:**
+```rust
+#[derive(Debug)]
+pub enum ErrorReadOnly {
+    Database(sqlx::Error),
+    RowNotFound,
+}
+
+impl From<sqlx::Error> for ErrorReadOnly {
+    fn from(err: sqlx::Error) -> Self {
+        ErrorReadOnly::Database(err)
+    }
+}
+```
+
+**Example Usage:**
+```yaml
+- name: get_user_by_id
+  sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+  expect: "exactly_one"
+```
+
+```rust
+pub async fn get_user_by_id(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: i32
+) -> Result<GetUserByIdItem, super::ErrorReadOnly>  // Returns ErrorReadOnly
+```
+
+### Error<C> - For Mutation Queries
+
+Mutation queries (INSERT, UPDATE, DELETE) return `Error<C>` where `C` is a query-specific constraint enum. This provides type-safe handling of constraint violations.
+
+### Automatic Constraint Extraction
+
+AutoModel automatically extracts all constraints from your PostgreSQL database for each table referenced in mutation queries. This happens at build time by querying the PostgreSQL system catalogs.
+
+**Extracted Constraint Information:**
+- **Unique constraints** - Including primary keys and unique indexes
+- **Foreign key constraints** - With referenced table and column information
+- **Check constraints** - With constraint expression
+- **NOT NULL constraints** - For columns that cannot be null
+
+**Example:**
+For a users table with:
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    age INT CHECK (age >= 0),
+    organization_id INT REFERENCES organizations(id)
+);
+```
+
+AutoModel generates:
+```rust
+#[derive(Debug, Clone)]
+pub enum InsertUserConstraints {
+    UsersPkey,                    // PRIMARY KEY constraint
+    UsersEmailKey,                // UNIQUE constraint on email
+    UsersAgeCheck,                // CHECK constraint on age
+    UsersOrganizationIdFkey,      // FOREIGN KEY to organizations
+    UsersIdNotNull,               // NOT NULL constraint on id
+    UsersEmailNotNull,            // NOT NULL constraint on email
+}
+
+impl From<ErrorConstraintInfo> for InsertUserConstraints {
+    fn from(info: ErrorConstraintInfo) -> Self {
+        match info.constraint.as_str() {
+            "users_pkey" => InsertUserConstraints::UsersPkey,
+            "users_email_key" => InsertUserConstraints::UsersEmailKey,
+            "users_age_check" => InsertUserConstraints::UsersAgeCheck,
+            "users_organization_id_fkey" => InsertUserConstraints::UsersOrganizationIdFkey,
+            _ => panic!("Unknown constraint: {}", info.constraint),
+        }
+    }
+}
+```
+
+### Custom Error Type Names with `error_type`
+
+By default, AutoModel generates error type names based on the query name (e.g., `InsertUserConstraints`). You can customize this using the `error_type` configuration option.
+
+**Basic Usage:**
+```yaml
+- name: insert_user
+  sql: "INSERT INTO users (email, name, age) VALUES (${email}, ${name}, ${age}) RETURNING id"
+  error_type: "UserError"  # Custom name instead of InsertUserConstraints
+```
+
+**Generated Code:**
+```rust
+#[derive(Debug, Clone)]
+pub enum UserError {
+    UsersPkey,
+    UsersEmailKey,
+    UsersAgeCheck,
+    // ... other constraints
+}
+
+pub async fn insert_user(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    email: String,
+    name: String,
+    age: i32
+) -> Result<i32, super::Error<UserError>>  // Uses custom UserError
+```
+
+### Error Type Reuse
+
+Multiple queries that operate on the same table(s) can reuse the same error type. AutoModel validates at build time that the constraints match exactly.
+
+**Example:**
+```yaml
+queries:
+  # First query generates the error type
+  - name: insert_user
+    sql: "INSERT INTO users (email, name, age) VALUES (${email}, ${name}, ${age}) RETURNING id"
+    error_type: "UserError"
+  
+  # Second query reuses the same error type
+  - name: update_user_email
+    sql: "UPDATE users SET email = ${email} WHERE id = ${user_id} RETURNING id"
+    error_type: "UserError"  # Reuses UserError - constraints must match
+  
+  # Third query also reuses it
+  - name: upsert_user
+    sql: |
+      INSERT INTO users (email, name, age) VALUES (${email}, ${name}, ${age})
+      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, age = EXCLUDED.age
+      RETURNING id
+    error_type: "UserError"  # Reuses UserError
+```
+
+**Build-Time Validation:**
+
+AutoModel ensures that when you reuse an error type:
+1. The referenced error type exists (defined by a previous query)
+2. The constraints extracted for the current query exactly match the constraints in the reused type
+3. Both queries reference the same table(s)
 
 ## Supported PostgreSQL Types
 

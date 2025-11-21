@@ -135,6 +135,9 @@ impl AutoModel {
             mod_content.push('\n');
         }
 
+        // Add generic Error type
+        mod_content.push_str(&crate::codegen::generate_generic_error_type());
+
         fs::write(&mod_file, &mod_content)?;
 
         Ok(())
@@ -340,9 +343,9 @@ impl AutoModel {
 
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
-        for query in &module_queries {
-            println!("cargo:info=Processing query: {}", query.name);
+        let mut query_constraints: Vec<Vec<crate::config::ConstraintInfo>> = Vec::new();
 
+        for query in &module_queries {
             let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
             type_infos.push(type_info);
 
@@ -351,6 +354,44 @@ impl AutoModel {
                 let _analysis =
                     Self::analyze_query_performance(client, &query.sql, &query.name).await?;
                 // Analysis warnings are printed in the analyze_query_performance function
+            }
+
+            // Detect if this is a mutation query and extract constraints only for mutations
+            // For queries with conditional syntax, use the base variant (without conditional blocks)
+            let query_for_analysis = Self::remove_conditional_blocks(&query.sql);
+
+            match Self::is_mutation_query(client, &query_for_analysis, &query.name).await {
+                true => {
+                    // This is a mutation query, extract constraints
+                    let (converted_sql, _) =
+                        convert_named_params_to_positional(&query_for_analysis);
+                    match client.prepare(&converted_sql).await {
+                        Ok(statement) => {
+                            match extract_constraints_from_statement(client, &statement, &query.sql)
+                                .await
+                            {
+                                Ok(constraints) => {
+                                    query_constraints.push(constraints);
+                                }
+                                Err(e) => {
+                                    println!(
+                                        "cargo:warning=Failed to extract constraints for query '{}': {}",
+                                        query.name, e
+                                    );
+                                    query_constraints.push(Vec::new());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("cargo:info=Failed to prepare statement for constraint extraction for query '{}': {}", query.name, e);
+                            query_constraints.push(Vec::new());
+                        }
+                    }
+                }
+                false => {
+                    // This is a read-only query, no constraints needed
+                    query_constraints.push(Vec::new());
+                }
             }
         }
 
@@ -524,12 +565,8 @@ impl AutoModel {
             // Track or validate return type struct if this query has one
             if type_info.output_types.len() > 1 {
                 // Determine the struct name
-                let struct_name = if let Some(ref rt) = query.return_type {
-                    if let Some(custom_name) = rt.get_struct_name() {
-                        custom_name.to_string()
-                    } else {
-                        format!("{}Item", to_pascal_case(&query.name))
-                    }
+                let struct_name = if let Some(ref custom_name) = query.return_type {
+                    custom_name.to_string()
                 } else {
                     format!("{}Item", to_pascal_case(&query.name))
                 };
@@ -639,13 +676,104 @@ impl AutoModel {
             }
         }
 
+        // Track constraint enums for validation of error_type reuse
+        // Map: enum_name -> Vec<constraint_name>
+        let mut generated_constraint_enums: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        // Validate or track error_type constraint enums
+        for (query, constraints) in module_queries.iter().zip(query_constraints.iter()) {
+            if let Some(ref enum_name) = query.error_type {
+                // error_type is specified, validate it
+                let expected_constraints: Vec<String> =
+                    constraints.iter().map(|c| c.name.clone()).collect();
+
+                // Check if enum already exists
+                if let Some(existing_constraints) = generated_constraint_enums.get(enum_name) {
+                    // Validate that constraints match exactly
+                    if existing_constraints.len() != expected_constraints.len() {
+                        let existing_set: std::collections::HashSet<_> =
+                            existing_constraints.iter().collect();
+                        let expected_set: std::collections::HashSet<_> =
+                            expected_constraints.iter().collect();
+
+                        let missing: Vec<_> = expected_constraints
+                            .iter()
+                            .filter(|c| !existing_set.contains(c))
+                            .map(|c| c.as_str())
+                            .collect();
+
+                        let redundant: Vec<_> = existing_constraints
+                            .iter()
+                            .filter(|c| !expected_set.contains(c))
+                            .map(|c| c.as_str())
+                            .collect();
+
+                        let mut error_msg = format!(
+                                "Query '{}' error_type references enum '{}' but constraint mismatch:\n  Expected {} constraints in query, but enum has {} constraints",
+                                query.name,
+                                enum_name,
+                                expected_constraints.len(),
+                                existing_constraints.len()
+                            );
+
+                        if !missing.is_empty() {
+                            error_msg.push_str(&format!(
+                                "\n  Constraints in query but not in enum: [{}]",
+                                missing.join(", ")
+                            ));
+                        }
+
+                        if !redundant.is_empty() {
+                            error_msg.push_str(&format!(
+                                "\n  Constraints in enum but not in query: [{}]",
+                                redundant.join(", ")
+                            ));
+                        }
+
+                        anyhow::bail!(error_msg);
+                    }
+
+                    // Check if all constraints match exactly
+                    for expected_constraint in &expected_constraints {
+                        if !existing_constraints.contains(expected_constraint) {
+                            anyhow::bail!(
+                                    "Query '{}' error_type references enum '{}' but constraint '{}' is missing from the enum",
+                                    query.name,
+                                    enum_name,
+                                    expected_constraint
+                                );
+                        }
+                    }
+                } else {
+                    // First query using this enum, track it
+                    generated_constraint_enums.insert(enum_name.to_string(), expected_constraints);
+                }
+            } else if !constraints.is_empty() {
+                // No error_type specified, but query has constraints - auto-generate with default name
+                let enum_name = format!("{}Constraints", to_pascal_case(&query.name));
+                let expected_constraints: Vec<String> =
+                    constraints.iter().map(|c| c.name.clone()).collect();
+                generated_constraint_enums.insert(enum_name, expected_constraints);
+            }
+            // If no error_type and no constraints, it's a read-only query - nothing to track
+        }
+
         // Track which struct names have been emitted to avoid duplicates
         let mut emitted_struct_names = std::collections::HashSet::new();
 
-        // Generate functions with struct deduplication
-        for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
-            let function_code =
-                generate_function_code_without_enums(query, type_info, &mut emitted_struct_names)?;
+        // Generate functions with per-query constraint enums
+        for ((query, type_info), constraints) in module_queries
+            .iter()
+            .zip(type_infos.iter())
+            .zip(query_constraints.iter())
+        {
+            let function_code = generate_function_code_without_enums(
+                query,
+                type_info,
+                &mut emitted_struct_names,
+                constraints,
+            )?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
         }
@@ -720,7 +848,159 @@ impl AutoModel {
         variants
     }
 
+    /// Create dummy parameter values for EXPLAIN queries
+    /// Returns (dummy_params, special_params) where special_params contains info about enums and numeric types
+    async fn create_dummy_params(
+        client: &tokio_postgres::Client,
+        param_types: &[tokio_postgres::types::Type],
+    ) -> Result<(
+        Vec<Box<dyn tokio_postgres::types::ToSql + Sync>>,
+        Vec<(usize, String, String)>,
+    )> {
+        use tokio_postgres::types::Type;
+
+        let mut dummy_params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
+        let mut special_params: Vec<(usize, String, String)> = Vec::new(); // (param_index, type_name, value)
+
+        for param_type in param_types {
+            // Check if this is an enum type and get actual enum values
+            if let Ok(Some(enum_info)) =
+                crate::type_extraction::get_enum_type_info(client, param_type.oid()).await
+            {
+                special_params.push((
+                    dummy_params.len(),
+                    enum_info.type_name.clone(),
+                    enum_info.variants[0].clone(),
+                ));
+                dummy_params.push(Box::new("ENUM_PLACEHOLDER".to_string()));
+                continue;
+            }
+
+            // Handle numeric type specially - PostgreSQL is strict about numeric conversion
+            if param_type.name() == "numeric" {
+                special_params.push((dummy_params.len(), "numeric".to_string(), "0".to_string()));
+                dummy_params.push(Box::new("NUMERIC_PLACEHOLDER".to_string()));
+                continue;
+            }
+
+            // Handle built-in PostgreSQL types
+            let dummy_value: Box<dyn tokio_postgres::types::ToSql + Sync> = match param_type {
+                &Type::BOOL => Box::new(false),
+                &Type::INT2 => Box::new(0i16),
+                &Type::INT4 => Box::new(0i32),
+                &Type::INT8 => Box::new(0i64),
+                &Type::FLOAT4 => Box::new(0.0f32),
+                &Type::FLOAT8 => Box::new(0.0f64),
+                &Type::TEXT
+                | &Type::VARCHAR
+                | &Type::CHAR
+                | &Type::BPCHAR
+                | &Type::NAME
+                | &Type::UNKNOWN => Box::new("dummy".to_string()),
+                &Type::BYTEA => Box::new(vec![0u8]),
+                &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
+                &Type::TIMESTAMPTZ => Box::new(chrono::Utc::now()),
+                &Type::TIMESTAMP => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap()),
+                &Type::DATE => Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()),
+                &Type::TIME | &Type::TIMETZ => {
+                    Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+                }
+                &Type::UUID => Box::new(uuid::Uuid::nil()),
+                _ => Box::new("dummy".to_string()), // Fallback for unknown types
+            };
+            dummy_params.push(dummy_value);
+        }
+
+        Ok((dummy_params, special_params))
+    }
+
+    /// Prepare EXPLAIN query with proper parameter handling
+    /// Returns (final_explain_sql, param_refs) ready for execution
+    fn prepare_explain_query<'a>(
+        base_sql: &str,
+        dummy_params: &'a [Box<dyn tokio_postgres::types::ToSql + Sync>],
+        special_params: &[(usize, String, String)],
+    ) -> (String, Vec<&'a (dyn tokio_postgres::types::ToSql + Sync)>) {
+        let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", base_sql);
+
+        if special_params.is_empty() {
+            // No special parameters, use original approach
+            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                dummy_params.iter().map(|p| p.as_ref()).collect();
+            (explain_sql, param_refs)
+        } else {
+            // Replace special parameters (enums and numeric) with cast values
+            let mut modified_sql = base_sql.to_string();
+            let mut param_mapping = Vec::new();
+
+            // Build new parameter mapping (non-special parameters only)
+            for (i, _) in dummy_params.iter().enumerate() {
+                if !special_params
+                    .iter()
+                    .any(|(special_idx, _, _)| *special_idx == i)
+                {
+                    param_mapping.push(i);
+                }
+            }
+
+            // Replace parameters from highest index to lowest to avoid position shifts
+            let mut sorted_special_params = special_params.to_vec();
+            sorted_special_params.sort_by(|a, b| b.0.cmp(&a.0));
+
+            for (param_index, param_type, param_value) in sorted_special_params {
+                let old_placeholder = format!("${}", param_index + 1);
+                let cast_value = if param_type == "numeric" {
+                    format!("{}::numeric", param_value)
+                } else {
+                    format!("'{}'::{}", param_value, param_type)
+                };
+                modified_sql = modified_sql.replace(&old_placeholder, &cast_value);
+            }
+
+            // Renumber remaining parameters
+            let mut new_param_num = 1;
+            for &original_index in &param_mapping {
+                let old_placeholder = format!("${}", original_index + 1);
+                let new_placeholder = format!("${}", new_param_num);
+                modified_sql = modified_sql.replace(&old_placeholder, &new_placeholder);
+                new_param_num += 1;
+            }
+
+            let final_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql);
+            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = param_mapping
+                .iter()
+                .map(|&i| dummy_params[i].as_ref())
+                .collect();
+
+            (final_sql, param_refs)
+        }
+    }
+
+    /// Detect if a query is a mutation (INSERT/UPDATE/DELETE) using keyword detection
+    /// Returns Ok(true) for mutations, Ok(false) for read-only queries
+    async fn is_mutation_query(
+        _client: &tokio_postgres::Client,
+        sql: &str,
+        _query_name: &str,
+    ) -> bool {
+        // Case-insensitive mutation keyword detection with word boundaries
+        // Use regex-like word boundary check to avoid false positives like "updated_at" matching "UPDATE"
+        let mutation_keywords = ["insert", "update", "delete", "modify", "merge"];
+        let sql_lower = sql.to_lowercase();
+
+        // Check if any mutation keyword appears as a standalone word (not part of identifier)
+        let is_mutation = mutation_keywords.iter().any(|kw| {
+            // Look for keyword followed by whitespace or common SQL punctuation
+            sql_lower.contains(&format!("{} ", kw))
+                || sql_lower.contains(&format!("{}(", kw))
+                || sql_lower.starts_with(kw)
+        });
+
+        is_mutation
+    }
+
     /// Analyze query execution plan to detect potential performance issues
+
     async fn analyze_query_performance(
         client: &tokio_postgres::Client,
         sql: &str,
@@ -753,154 +1033,23 @@ impl AutoModel {
         let (converted_sql, param_names) =
             crate::type_extraction::convert_named_params_to_positional(sql);
 
-        // Use EXPLAIN to get the query execution plan
-        let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql);
-
         // Execute EXPLAIN query with appropriate parameters
         let query_result = if !param_names.is_empty() {
-            // Try to prepare the statement to get parameter types and create appropriate dummy values
             match client.prepare(&converted_sql).await {
                 Ok(statement) => {
                     let param_types = statement.params();
 
-                    // We'll handle enum types properly by getting their actual values
+                    // Create dummy parameters with proper type handling
+                    let (dummy_params, special_params) =
+                        Self::create_dummy_params(client, param_types).await?;
 
-                    let mut dummy_params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> =
-                        Vec::new();
-                    let mut special_params: Vec<(usize, String, String)> = Vec::new(); // (param_index, type_name, value) - for enums and numeric
+                    // Prepare EXPLAIN query
+                    let (explain_query, param_refs) =
+                        Self::prepare_explain_query(&converted_sql, &dummy_params, &special_params);
 
-                    // Create dummy values based on parameter types
-                    for param_type in param_types {
-                        use tokio_postgres::types::Type;
-
-                        // Check if this is an enum type and get actual enum values
-                        if let Ok(Some(enum_info)) =
-                            crate::type_extraction::get_enum_type_info(client, param_type.oid())
-                                .await
-                        {
-                            // For enum types, we'll handle them specially by modifying the query
-                            // Store enum info for later query modification
-                            special_params.push((
-                                dummy_params.len(),
-                                enum_info.type_name.clone(),
-                                enum_info.variants[0].clone(),
-                            ));
-                            dummy_params.push(Box::new("ENUM_PLACEHOLDER".to_string()));
-                            continue;
-                        }
-
-                        // Handle numeric type specially - PostgreSQL is strict about numeric conversion
-                        if param_type.name() == "numeric" {
-                            // For numeric types, we'll also handle them by modifying the query
-                            special_params.push((
-                                dummy_params.len(),
-                                "numeric".to_string(),
-                                "0".to_string(),
-                            ));
-                            dummy_params.push(Box::new("NUMERIC_PLACEHOLDER".to_string()));
-                            continue;
-                        }
-
-                        // Handle built-in PostgreSQL types
-                        let dummy_value: Box<dyn tokio_postgres::types::ToSql + Sync> =
-                            match param_type {
-                                &Type::BOOL => Box::new(false),
-                                &Type::INT2 => Box::new(0i16),
-                                &Type::INT4 => Box::new(0i32),
-                                &Type::INT8 => Box::new(0i64),
-                                &Type::FLOAT4 => Box::new(0.0f32),
-                                &Type::FLOAT8 => Box::new(0.0f64),
-                                &Type::TEXT
-                                | &Type::VARCHAR
-                                | &Type::CHAR
-                                | &Type::BPCHAR
-                                | &Type::NAME
-                                | &Type::UNKNOWN => Box::new("dummy".to_string()),
-                                &Type::BYTEA => Box::new(vec![0u8]),
-                                &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
-                                &Type::TIMESTAMPTZ => Box::new(chrono::Utc::now()),
-                                &Type::TIMESTAMP => {
-                                    Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap())
-                                }
-                                &Type::DATE => {
-                                    Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
-                                }
-                                &Type::TIME | &Type::TIMETZ => {
-                                    Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap())
-                                }
-                                &Type::UUID => Box::new(uuid::Uuid::nil()),
-                                _ => {
-                                    // Handle other types by name
-                                    match param_type.name() {
-                                        "numeric" => Box::new("0".to_string()), // PostgreSQL accepts string for numeric
-                                        _ => Box::new("dummy".to_string()), // Fallback for unknown types
-                                    }
-                                }
-                            };
-                        dummy_params.push(dummy_value);
-                    }
-
-                    // Handle enum parameters by modifying the query to cast enum values
-                    let (final_explain_sql, filtered_params) = if special_params.is_empty() {
-                        // No enum parameters, use original approach
-                        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-                            dummy_params.iter().map(|p| p.as_ref()).collect();
-                        (explain_sql.clone(), param_refs)
-                    } else {
-                        // Replace special parameters (enums and numeric) with cast values and adjust remaining parameters
-                        let mut modified_sql = converted_sql.clone();
-                        let mut param_mapping = Vec::new();
-
-                        // Build new parameter mapping (non-special parameters only)
-                        for (i, _) in dummy_params.iter().enumerate() {
-                            if !special_params
-                                .iter()
-                                .any(|(special_idx, _, _)| *special_idx == i)
-                            {
-                                param_mapping.push(i);
-                            }
-                        }
-
-                        // Replace parameters from highest index to lowest to avoid position shifts
-                        let mut sorted_special_params = special_params.clone();
-                        sorted_special_params.sort_by(|a, b| b.0.cmp(&a.0));
-
-                        for (param_index, param_type, param_value) in sorted_special_params {
-                            let old_placeholder = format!("${}", param_index + 1);
-                            let cast_value = if param_type == "numeric" {
-                                // For numeric, cast as numeric literal
-                                format!("{}::numeric", param_value)
-                            } else {
-                                // For enums, cast with quoted value
-                                format!("'{}'::{}", param_value, param_type)
-                            };
-                            modified_sql = modified_sql.replace(&old_placeholder, &cast_value);
-                        }
-
-                        // Renumber remaining parameters
-                        let mut new_param_num = 1;
-                        for &original_index in &param_mapping {
-                            let old_placeholder = format!("${}", original_index + 1);
-                            let new_placeholder = format!("${}", new_param_num);
-                            modified_sql = modified_sql.replace(&old_placeholder, &new_placeholder);
-                            new_param_num += 1;
-                        }
-
-                        let final_sql =
-                            format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql);
-                        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-                            param_mapping
-                                .iter()
-                                .map(|&i| dummy_params[i].as_ref())
-                                .collect();
-
-                        (final_sql, param_refs)
-                    };
-
-                    client.query(&final_explain_sql, &filtered_params).await
+                    client.query(&explain_query, &param_refs).await
                 }
                 Err(e) => {
-                    // If prepare fails, it might be due to complex syntax, skip analysis
                     return Err(anyhow::anyhow!(
                         "Failed to prepare statement for analysis: {}",
                         e
@@ -909,6 +1058,7 @@ impl AutoModel {
             }
         } else {
             // No parameters, execute directly
+            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql);
             client.query(&explain_sql, &[]).await
         };
 

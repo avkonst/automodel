@@ -1,5 +1,6 @@
+use crate::config::ConstraintInfo;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tokio::sync::Mutex;
 use tokio_postgres::types::Type as PgType;
@@ -112,6 +113,239 @@ pub async fn extract_query_types(
             None
         },
     })
+}
+
+/// Extract constraint information from tables involved in a prepared statement
+/// This analyzes the statement to identify affected tables and retrieves their constraints
+pub async fn extract_constraints_from_statement(
+    client: &tokio_postgres::Client,
+    statement: &Statement,
+    sql: &str,
+) -> Result<Vec<ConstraintInfo>> {
+    let mut constraints = Vec::new();
+    let mut table_oids = HashSet::new();
+
+    // Collect table OIDs from input parameters (for INSERT/UPDATE)
+    for param in statement.params() {
+        // Skip non-table types
+        if let Some(oid) = get_table_oid_from_type(param) {
+            table_oids.insert(oid);
+        }
+    }
+
+    // Collect table OIDs from output columns (for SELECT/RETURNING)
+    for column in statement.columns() {
+        if let Some(oid) = column.table_oid() {
+            table_oids.insert(oid);
+        }
+    }
+
+    // Fallback: parse SQL to extract table names for DDL statements
+    if table_oids.is_empty() {
+        let extracted_tables = extract_table_names_from_sql(sql);
+        for table_name in extracted_tables {
+            if let Some(oid) = get_table_oid_by_name(client, &table_name).await? {
+                table_oids.insert(oid);
+            }
+        }
+    }
+
+    // Query constraints for each table
+    for table_oid in table_oids {
+        let table_constraints = query_table_constraints(client, table_oid).await?;
+        constraints.extend(table_constraints);
+    }
+
+    Ok(constraints)
+}
+
+/// Get table OID from a PostgreSQL type (if it's a composite type)
+fn get_table_oid_from_type(_pg_type: &PgType) -> Option<u32> {
+    // For now, we can't easily determine table OID from type alone
+    // This would require more complex analysis
+    None
+}
+
+/// Extract table names from SQL using simple pattern matching
+fn extract_table_names_from_sql(sql: &str) -> Vec<String> {
+    let mut tables = Vec::new();
+    let sql_upper = sql.to_uppercase();
+
+    // Simple regex-like patterns for common SQL operations
+    let patterns = [
+        ("INSERT INTO ", " "),
+        ("UPDATE ", " SET"),
+        ("FROM ", " "),
+        ("JOIN ", " ON"),
+    ];
+
+    for (start_pattern, end_pattern) in patterns {
+        if let Some(start_pos) = sql_upper.find(start_pattern) {
+            let remaining = &sql[start_pos + start_pattern.len()..];
+            if let Some(end_pos) = remaining.to_uppercase().find(end_pattern) {
+                let table_part = remaining[..end_pos].trim();
+                // Extract just the table name (handle schema.table)
+                let table_name = table_part
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .split('(')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if !table_name.is_empty() && !tables.contains(&table_name.to_string()) {
+                    tables.push(table_name.to_string());
+                }
+            }
+        }
+    }
+
+    tables
+}
+
+/// Get table OID by table name
+async fn get_table_oid_by_name(
+    client: &tokio_postgres::Client,
+    table_name: &str,
+) -> Result<Option<u32>> {
+    let rows = client
+        .query(
+            "SELECT oid FROM pg_class WHERE relname = $1 AND relkind = 'r'",
+            &[&table_name],
+        )
+        .await?;
+
+    Ok(rows.first().map(|row| row.get(0)))
+}
+
+/// Query all constraints for a given table OID
+async fn query_table_constraints(
+    client: &tokio_postgres::Client,
+    table_oid: u32,
+) -> Result<Vec<ConstraintInfo>> {
+    let mut constraints = Vec::new();
+
+    // Query unique and primary key constraints
+    let rows = client
+        .query(
+            r#"
+            SELECT 
+                c.conname as constraint_name,
+                c.contype::text as constraint_type,
+                t.relname as table_name,
+                array_agg(a.attname ORDER BY u.attposition) as column_names
+            FROM pg_constraint c
+            JOIN pg_class t ON c.conrelid = t.oid
+            JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, attposition) ON true
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum
+            WHERE c.conrelid = $1 
+                AND c.contype IN ('u', 'p', 'f', 'c')
+            GROUP BY c.conname, c.contype, t.relname, c.confrelid, c.confkey
+            "#,
+            &[&table_oid],
+        )
+        .await?;
+
+    for row in rows {
+        let constraint_name: String = row.get(0);
+        let constraint_type_str: String = row.get(1);
+        let constraint_type_char: char = constraint_type_str.chars().next().unwrap_or('?');
+        let table_name: String = row.get(2);
+        let column_names: Vec<String> = row.get(3);
+
+        let constraint_type = match constraint_type_char {
+            'u' => "unique",
+            'p' => "primary_key",
+            'f' => "foreign_key",
+            'c' => "check",
+            _ => "other",
+        }
+        .to_string();
+
+        constraints.push(ConstraintInfo {
+            name: constraint_name,
+            constraint_type,
+            table_name,
+            column_names,
+            referenced_table: None,
+            referenced_columns: None,
+        });
+    }
+
+    // Query foreign key references separately
+    let fk_rows = client
+        .query(
+            r#"
+            SELECT 
+                c.conname as constraint_name,
+                t.relname as table_name,
+                array_agg(a.attname ORDER BY u.attposition) as column_names,
+                ft.relname as referenced_table,
+                array_agg(fa.attname ORDER BY fu.attposition) as referenced_columns
+            FROM pg_constraint c
+            JOIN pg_class t ON c.conrelid = t.oid
+            JOIN pg_class ft ON c.confrelid = ft.oid
+            JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, attposition) ON true
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum
+            JOIN LATERAL unnest(c.confkey) WITH ORDINALITY AS fu(attnum, attposition) ON true
+            JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = fu.attnum
+            WHERE c.conrelid = $1 AND c.contype = 'f'
+            GROUP BY c.conname, t.relname, ft.relname
+            "#,
+            &[&table_oid],
+        )
+        .await?;
+
+    for row in fk_rows {
+        let constraint_name: String = row.get(0);
+        let table_name: String = row.get(1);
+        let column_names: Vec<String> = row.get(2);
+        let referenced_table: String = row.get(3);
+        let referenced_columns: Vec<String> = row.get(4);
+
+        constraints.push(ConstraintInfo {
+            name: constraint_name,
+            constraint_type: "foreign_key".to_string(),
+            table_name,
+            column_names,
+            referenced_table: Some(referenced_table),
+            referenced_columns: Some(referenced_columns),
+        });
+    }
+
+    // Query NOT NULL constraints
+    let nn_rows = client
+        .query(
+            r#"
+            SELECT 
+                a.attname as column_name,
+                t.relname as table_name
+            FROM pg_attribute a
+            JOIN pg_class t ON a.attrelid = t.oid
+            WHERE a.attrelid = $1 
+                AND a.attnotnull = true
+                AND a.attnum > 0
+                AND NOT a.attisdropped
+            "#,
+            &[&table_oid],
+        )
+        .await?;
+
+    for row in nn_rows {
+        let column_name: String = row.get(0);
+        let table_name: String = row.get(1);
+
+        constraints.push(ConstraintInfo {
+            name: format!("{}_{}_not_null", table_name, column_name),
+            constraint_type: "not_null".to_string(),
+            table_name,
+            column_names: vec![column_name],
+            referenced_table: None,
+            referenced_columns: None,
+        });
+    }
+
+    Ok(constraints)
 }
 
 /// Extract input parameter types from a prepared statement

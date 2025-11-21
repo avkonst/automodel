@@ -8,6 +8,259 @@ use crate::type_extraction::{
 };
 use anyhow::Result;
 
+/// Generate the generic Error<C> type for mod.rs
+pub fn generate_generic_error_type() -> String {
+    r#"#[derive(Debug)]
+pub struct ErrorConstraintInfo {
+    /// Name of the violated constraint
+    pub constraint_name: String,
+    pub table_name: String,
+    pub kind: sqlx::error::ErrorKind,
+}
+
+/// Generic error type
+#[derive(Debug)]
+pub enum Error<C: From<ErrorConstraintInfo>> {
+    /// Catches the cases when a mutation query violates a constraint
+    /// Type C would be an enum specific to each query.
+    /// It would enumerate variants in pascal case for each constraint that can be violated.
+    /// The list of constaints is inferred automatically by the automodel based on the table schema
+    /// involved in the query.
+    ConstraintViolation(C),
+
+    /// Row not found error
+    RowNotFound,
+    
+    /// System under stress, timeout
+    PoolTimeout,
+
+    InternalError(String, sqlx::Error),
+}
+
+impl<C: From<ErrorConstraintInfo>> From<sqlx::Error> for Error<C> {
+    fn from(error: sqlx::Error) -> Self {
+        match &error {
+            sqlx::Error::RowNotFound => Self::RowNotFound,
+            sqlx::Error::ColumnNotFound(col) => {
+                Self::InternalError(format!("Column not found: {}", col), error)
+            }
+            sqlx::Error::Database(db_err) => {
+                // Extract constraint name and table from error
+                let constraint_name = db_err.constraint().unwrap_or("").to_string();
+                let table_name = db_err.table().unwrap_or("").to_string();
+                let kind = db_err.kind();
+
+                let violation = ErrorConstraintInfo {
+                    constraint_name,
+                    table_name,
+                    kind,
+                };
+                Self::ConstraintViolation(violation.into())
+            }
+            sqlx::Error::Configuration(_) => {
+                Self::InternalError("Configuration error".to_string(), error)
+            }
+            sqlx::Error::InvalidArgument(_) => {
+                Self::InternalError("Invalid argument".to_string(), error)
+            }
+            sqlx::Error::Io(_) => Self::InternalError("IO error".to_string(), error),
+            sqlx::Error::Tls(_) => Self::InternalError("TLS error".to_string(), error),
+            sqlx::Error::Protocol(_) => Self::InternalError("Protocol error".to_string(), error),
+            sqlx::Error::TypeNotFound { type_name } => {
+                Self::InternalError(format!("Type not found: {}", type_name), error)
+            }
+            sqlx::Error::ColumnIndexOutOfBounds { index, len } => Self::InternalError(
+                format!("Column index out of bounds: index {}, len {}", index, len),
+                error,
+            ),
+            sqlx::Error::ColumnDecode { index, source } => Self::InternalError(
+                format!("Column decode error at index {}: {}", index, source),
+                error,
+            ),
+            sqlx::Error::Encode(_) => Self::InternalError("Encode error".to_string(), error),
+            sqlx::Error::Decode(_) => Self::InternalError("Decode error".to_string(), error),
+            sqlx::Error::AnyDriverError(_) => {
+                Self::InternalError("Driver error".to_string(), error)
+            }
+            sqlx::Error::PoolTimedOut => Self::PoolTimeout,
+            sqlx::Error::PoolClosed => Self::InternalError("Pool closed".to_string(), error),
+            sqlx::Error::WorkerCrashed => Self::InternalError("Worker crashed".to_string(), error),
+            sqlx::Error::Migrate(_) => Self::InternalError("Migration error".to_string(), error),
+            sqlx::Error::InvalidSavePointStatement => Self::InternalError(
+                "Invalid save point statement".to_string(),
+                error,
+            ),
+            sqlx::Error::BeginFailed => Self::InternalError("Begin failed".to_string(), error),
+            _ => Self::InternalError("Unknown sqlx error".to_string(), error),
+        }
+    }
+}
+
+impl<C> std::fmt::Display for Error<C>
+where
+    C: std::fmt::Debug + From<ErrorConstraintInfo>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::ConstraintViolation(c) => write!(f, "Constraint violation: {:#?}", c),
+            Error::RowNotFound => write!(f, "Row not found"),
+            Error::PoolTimeout => write!(f, "Pool timeout"),
+            Error::InternalError(msg, err) => {
+                write!(f, "Internal error: {}, caused by: {}", msg, err)
+            }
+        }
+    }
+}
+
+impl<C> std::error::Error for Error<C>
+where
+    C: std::fmt::Debug + From<ErrorConstraintInfo>,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::InternalError(_, err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+/// Generic error type for read-only queries
+#[derive(Debug)]
+pub enum ErrorReadOnly {
+    /// Row not found error
+    RowNotFound,
+
+    /// System under stress, timeout
+    PoolTimeout,
+
+    InternalError(String, sqlx::Error),
+}
+
+impl From<sqlx::Error> for ErrorReadOnly {
+    fn from(error: sqlx::Error) -> Self {
+        Error::<ErrorConstraintInfo>::from(error).into()
+    }
+}
+
+impl Into<Error<ErrorConstraintInfo>> for ErrorReadOnly {
+    fn into(self) -> Error<ErrorConstraintInfo> {
+        match self {
+            ErrorReadOnly::RowNotFound => Error::RowNotFound,
+            ErrorReadOnly::PoolTimeout => Error::PoolTimeout,
+            ErrorReadOnly::InternalError(msg, err) => Error::InternalError(msg, err),
+        }
+    }
+}
+
+impl From<Error<ErrorConstraintInfo>> for ErrorReadOnly {
+    fn from(error: Error<ErrorConstraintInfo>) -> Self {
+        match error {
+            Error::RowNotFound => Self::RowNotFound,
+            Error::PoolTimeout => Self::PoolTimeout,
+            Error::InternalError(msg, err) => Self::InternalError(msg, err),
+            Error::ConstraintViolation(c) => Self::InternalError(
+                "Constraint violation in read-only query".to_string(),
+                sqlx::Error::Protocol(format!("Constraint violation in read-only query: {:?}", c)),
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for ErrorReadOnly {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorReadOnly::RowNotFound => write!(f, "Row not found"),
+            ErrorReadOnly::PoolTimeout => write!(f, "Pool timeout"),
+            ErrorReadOnly::InternalError(msg, err) => {
+                write!(f, "Internal error: {}, caused by: {}", msg, err)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ErrorReadOnly {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InternalError(_, err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+"#
+    .to_string()
+}
+
+/// Generate per-query constraint enum with From<ErrorConstraintInfo> implementation
+pub fn generate_query_constraint_enum(
+    enum_name: &str,
+    constraints: &[crate::config::ConstraintInfo],
+) -> String {
+    use std::collections::HashSet;
+
+    let mut code = String::new();
+
+    // Deduplicate constraints by name
+    let mut seen_constraints: HashSet<String> = HashSet::new();
+    let mut unique_constraints = Vec::new();
+    for constraint in constraints {
+        if !seen_constraints.contains(&constraint.name) {
+            seen_constraints.insert(constraint.name.clone());
+            unique_constraints.push(constraint);
+        }
+    }
+
+    code.push_str(&format!(
+        "/// Constraint violations specific to this query\n"
+    ));
+    code.push_str("#[derive(Debug)]\n");
+    code.push_str(&format!("pub enum {} {{\n", enum_name));
+
+    // Generate a variant for each unique constraint
+    for constraint in &unique_constraints {
+        let variant_name = to_pascal_case(&constraint.name);
+        code.push_str(&format!(
+            "    /// Constraint: {} on table {}\n",
+            constraint.name, constraint.table_name
+        ));
+        code.push_str(&format!("    {},\n", variant_name));
+    }
+
+    // Add a catch-all variant for unknown constraints
+    code.push_str("    /// Unknown constraint violation\n");
+    code.push_str("    Unknown {\n");
+    code.push_str("        constraint_name: String,\n");
+    code.push_str("        table_name: String,\n");
+    code.push_str("    },\n");
+    code.push_str("}\n\n");
+
+    // Generate From<ErrorConstraintInfo> implementation
+    code.push_str(&format!(
+        "impl From<super::ErrorConstraintInfo> for {} {{\n",
+        enum_name
+    ));
+    code.push_str("    fn from(info: super::ErrorConstraintInfo) -> Self {\n");
+    code.push_str("        match info.constraint_name.as_str() {\n");
+
+    for constraint in &unique_constraints {
+        let variant_name = to_pascal_case(&constraint.name);
+        code.push_str(&format!(
+            "            \"{}\" => Self::{},\n",
+            constraint.name, variant_name
+        ));
+    }
+
+    code.push_str("            _ => Self::Unknown {\n");
+    code.push_str("                constraint_name: info.constraint_name,\n");
+    code.push_str("                table_name: info.table_name,\n");
+    code.push_str("            },\n");
+    code.push_str("        }\n");
+    code.push_str("    }\n");
+    code.push_str("}\n");
+
+    code
+}
+
 /// Generate tracing::instrument attribute for a function
 fn generate_tracing_attribute(query: &QueryDefinition, param_names: &[String]) -> String {
     use std::collections::HashSet;
@@ -148,8 +401,30 @@ pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
     emitted_struct_names: &mut std::collections::HashSet<String>,
+    constraints: &[crate::config::ConstraintInfo],
 ) -> Result<String> {
     let mut code = String::new();
+
+    // Generate per-query constraint enum if there are constraints
+    let constraint_enum_name = if !constraints.is_empty() {
+        // Determine the enum name from error_type config or use default
+        let enum_name = if let Some(ref custom_name) = query.error_type {
+            custom_name.to_string()
+        } else {
+            format!("{}Constraints", to_pascal_case(&query.name))
+        };
+
+        // Only generate the enum if it hasn't been emitted yet
+        if !emitted_struct_names.contains(&enum_name) {
+            code.push_str(&generate_query_constraint_enum(&enum_name, constraints));
+            code.push('\n');
+            emitted_struct_names.insert(enum_name.clone());
+        }
+
+        Some(enum_name)
+    } else {
+        None
+    };
 
     // Extract clean parameter names directly from the SQL for function signature
     let original_param_names = parse_parameter_names_from_sql(&query.sql);
@@ -246,12 +521,8 @@ pub fn generate_function_code_without_enums(
 
     // Generate result struct if needed (but no enums)
     if type_info.output_types.len() > 1 {
-        let result_struct_name = if let Some(ref rt) = query.return_type {
-            if let Some(custom_name) = rt.get_struct_name() {
-                custom_name.to_string()
-            } else {
-                format!("{}Item", to_pascal_case(&query.name))
-            }
+        let result_struct_name = if let Some(ref custom_name) = query.return_type {
+            custom_name.to_string()
         } else {
             format!("{}Item", to_pascal_case(&query.name))
         };
@@ -295,12 +566,8 @@ pub fn generate_function_code_without_enums(
 
     let base_return_type = if type_info.output_types.len() > 1 {
         // Multi-column result - use struct name
-        if let Some(ref rt) = query.return_type {
-            if let Some(custom_name) = rt.get_struct_name() {
-                custom_name.to_string()
-            } else {
-                format!("{}Item", to_pascal_case(&query.name))
-            }
+        if let Some(ref custom_name) = query.return_type {
+            custom_name.to_string()
         } else {
             format!("{}Item", to_pascal_case(&query.name))
         }
@@ -321,13 +588,28 @@ pub fn generate_function_code_without_enums(
 
     let return_type = match query.expect {
         ExpectedResult::ExactlyOne => {
-            format!("Result<{}, sqlx::Error>", base_return_type)
+            let error_type = if let Some(ref enum_name) = constraint_enum_name {
+                format!("super::Error<{}>", enum_name)
+            } else {
+                "super::ErrorReadOnly".to_string()
+            };
+            format!("Result<{}, {}>", base_return_type, error_type)
         }
         ExpectedResult::PossibleOne => {
-            format!("Result<Option<{}>, sqlx::Error>", base_return_type)
+            let error_type = if let Some(ref enum_name) = constraint_enum_name {
+                format!("super::Error<{}>", enum_name)
+            } else {
+                "super::ErrorReadOnly".to_string()
+            };
+            format!("Result<Option<{}>, {}>", base_return_type, error_type)
         }
         ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
-            format!("Result<Vec<{}>, sqlx::Error>", base_return_type)
+            let error_type = if let Some(ref enum_name) = constraint_enum_name {
+                format!("super::Error<{}>", enum_name)
+            } else {
+                "super::ErrorReadOnly".to_string()
+            };
+            format!("Result<Vec<{}>, {}>", base_return_type, error_type)
         }
     };
 
@@ -790,6 +1072,9 @@ fn generate_query_execution(
     type_info: &QueryTypeInfo,
     return_type: &str,
 ) {
+    // Always use .map_err(Into::into) since both Error<C> and ErrorReadOnly have From<sqlx::Error>
+    let map_err_suffix = ".map_err(Into::into)";
+
     if type_info.output_types.is_empty() {
         // For queries that don't return data (INSERT, UPDATE, DELETE)
         body.push_str("    query.execute(executor).await?;\n");
@@ -821,7 +1106,7 @@ fn generate_query_execution(
             ExpectedResult::AtLeastOne => {
                 body.push_str("    let rows = query.fetch_all(executor).await?;\n");
                 body.push_str("    if rows.is_empty() {\n");
-                body.push_str("        return Err(sqlx::Error::RowNotFound);\n");
+                body.push_str("        return Err(sqlx::Error::RowNotFound.into());\n");
                 body.push_str("    }\n");
                 body.push_str(
                     "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
@@ -830,7 +1115,7 @@ fn generate_query_execution(
                     generate_sqlx_value_extraction(&type_info.output_types[0], 0);
                 body.push_str(&format!("        Ok({})\n", value_extraction));
                 body.push_str("    }).collect();\n");
-                body.push_str("    result\n");
+                body.push_str(&format!("    result{}\n", map_err_suffix));
             }
             ExpectedResult::Multiple => {
                 body.push_str("    let rows = query.fetch_all(executor).await?;\n");
@@ -841,7 +1126,7 @@ fn generate_query_execution(
                     generate_sqlx_value_extraction(&type_info.output_types[0], 0);
                 body.push_str(&format!("        Ok({})\n", value_extraction));
                 body.push_str("    }).collect();\n");
-                body.push_str("    result\n");
+                body.push_str(&format!("    result{}\n", map_err_suffix));
             }
         }
     } else {
@@ -854,7 +1139,7 @@ fn generate_query_execution(
                     generate_sqlx_struct_creation(return_type, &type_info.output_types);
                 body.push_str(&format!("        Ok({})\n", struct_creation));
                 body.push_str("    })();\n");
-                body.push_str("    result\n");
+                body.push_str(&format!("    result{}\n", map_err_suffix));
             }
             ExpectedResult::PossibleOne => {
                 body.push_str("    let row = query.fetch_optional(executor).await?;\n");
@@ -865,7 +1150,7 @@ fn generate_query_execution(
                     generate_sqlx_struct_creation(return_type, &type_info.output_types);
                 body.push_str(&format!("                Ok({})\n", struct_creation));
                 body.push_str("            })();\n");
-                body.push_str("            result.map(Some)\n");
+                body.push_str(&format!("            result.map(Some){}\n", map_err_suffix));
                 body.push_str("        },\n");
                 body.push_str("        None => Ok(None),\n");
                 body.push_str("    }\n");
@@ -873,7 +1158,7 @@ fn generate_query_execution(
             ExpectedResult::AtLeastOne => {
                 body.push_str("    let rows = query.fetch_all(executor).await?;\n");
                 body.push_str("    if rows.is_empty() {\n");
-                body.push_str("        return Err(sqlx::Error::RowNotFound);\n");
+                body.push_str("        return Err(sqlx::Error::RowNotFound.into());\n");
                 body.push_str("    }\n");
                 body.push_str(
                     "    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {\n",
@@ -882,7 +1167,7 @@ fn generate_query_execution(
                     generate_sqlx_struct_creation(return_type, &type_info.output_types);
                 body.push_str(&format!("        Ok({})\n", struct_creation));
                 body.push_str("    }).collect();\n");
-                body.push_str("    result\n");
+                body.push_str(&format!("    result{}\n", map_err_suffix));
             }
             ExpectedResult::Multiple => {
                 body.push_str("    let rows = query.fetch_all(executor).await?;\n");
@@ -893,7 +1178,7 @@ fn generate_query_execution(
                     generate_sqlx_struct_creation(return_type, &type_info.output_types);
                 body.push_str(&format!("        Ok({})\n", struct_creation));
                 body.push_str("    }).collect();\n");
-                body.push_str("    result\n");
+                body.push_str(&format!("    result{}\n", map_err_suffix));
             }
         }
     }

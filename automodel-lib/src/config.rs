@@ -53,25 +53,6 @@ impl ConditionsType {
     }
 }
 
-/// Return type configuration - can be either a boolean or a struct name
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum ReturnType {
-    /// Auto-generate return type struct with name {QueryName}Item (default behavior)
-    Default(bool),
-    /// Use or generate a return type struct with the given name
-    Named(String),
-}
-
-impl ReturnType {
-    pub fn get_struct_name(&self) -> Option<&str> {
-        match self {
-            ReturnType::Default(_) => None,
-            ReturnType::Named(name) => Some(name.as_str()),
-        }
-    }
-}
-
 /// Expected result type for a query
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -140,6 +121,22 @@ impl Default for ExpectedResult {
     }
 }
 
+/// Constraint information extracted from database schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConstraintInfo {
+    /// Constraint name
+    pub name: String,
+    /// Constraint type: unique, primary_key, foreign_key, check, not_null
+    pub constraint_type: String,
+    /// Table name
+    pub table_name: String,
+    /// Column names involved in the constraint
+    pub column_names: Vec<String>,
+    /// For foreign keys: referenced table and columns
+    pub referenced_table: Option<String>,
+    pub referenced_columns: Option<Vec<String>>,
+}
+
 /// Represents a single SQL query definition from the YAML file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryDefinition {
@@ -187,11 +184,16 @@ pub struct QueryDefinition {
     #[serde(default)]
     pub parameters_type: Option<ParametersType>,
     /// Type of struct to use for return values
-    /// When false or not specified, uses default {QueryName}Item naming
-    /// When a string, uses or generates a struct with the given name
-    /// Defaults to false (use default naming)
+    /// When None or not specified, uses default {QueryName}Item naming
+    /// When Some(name), uses or generates a struct with the given name
     #[serde(default)]
-    pub return_type: Option<ReturnType>,
+    pub return_type: Option<String>,
+    /// Type of constraint enum to use for errors
+    /// When None or not specified, uses default {QueryName}Constraints naming
+    /// When Some(name), uses or generates a constraint enum with the given name
+    /// Only applies to mutation queries
+    #[serde(default)]
+    pub error_type: Option<String>,
 }
 
 /// Per-query telemetry configuration

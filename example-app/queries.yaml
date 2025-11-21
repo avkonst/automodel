@@ -3,7 +3,7 @@ defaults:
   telemetry:
     level: debug           # none, info, debug, trace
     include_sql: true      # Include SQL queries in spans by default
-  ensure_indexes: true     # Enable query analysis to test conditional syntax handling - test
+  ensure_indexes: true     # Enable query analysis to test conditional syntax handling - test - rebuild3
 
 queries:
   - name: get_current_time
@@ -510,13 +510,12 @@ queries:
     expect: "multiple"
     return_type: "UserDetails"
 
-  # Test return_type: false to disable custom struct generation
+  # Test default return_type (omitted = use default {QueryName}Item naming)
   - name: get_user_count_and_avg_age
     sql: "SELECT COUNT(*) as count, AVG(age) as avg_age FROM users"
-    description: "Get user count and average age - uses default return struct instead of custom"
+    description: "Get user count and average age - uses default GetUserCountAndAvgAgeItem struct"
     module: "analytics"
     expect: "exactly_one"
-    return_type: false
 
   # Test combining parameters_type and return_type
   - name: find_user_by_criteria
@@ -534,6 +533,7 @@ queries:
     module: "user_model"
     expect: "exactly_one"
     return_type: "UserModel"
+    error_type: UserContentConstraints
 
   - name: update_user_full
     sql: "UPDATE users SET name = ${name}, email = ${email}, age = ${age?} WHERE id = ${id} RETURNING id, name, email, age"
@@ -542,6 +542,7 @@ queries:
     expect: "exactly_one"
     parameters_type: "UserModel"
     return_type: "UserModel"
+    error_type: UserContentConstraints
 
   - name: update_user_partial
     sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${id} RETURNING id, name, email, age"
@@ -550,6 +551,7 @@ queries:
     expect: "exactly_one"
     conditions_type: UserModel
     return_type: "UserModel"
+    error_type: UserContentConstraints
 
   - name: find_user_by_email
     sql: "SELECT id, name, email, age FROM users WHERE email = ${email}"
@@ -557,6 +559,11 @@ queries:
     module: "user_model"
     expect: "possible_one"
     return_type: "UserModel"
+
+
+
+
+
 
 
 
