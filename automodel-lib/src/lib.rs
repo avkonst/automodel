@@ -437,6 +437,7 @@ impl AutoModel {
                             &conditional_param_names,
                             &conditional_param_types,
                             &generated_structs,
+                            true, // is_conditional_diff - allow flexible type matching
                         )?;
                     }
                 } else if cd.is_enabled() && type_info.parsed_sql.is_some() {
@@ -475,7 +476,7 @@ impl AutoModel {
                         for (i, param_name) in param_names.iter().enumerate() {
                             let clean_param = param_name.trim_end_matches('?');
                             if let Some(param_type) = type_info.input_types.get(i) {
-                                let type_str = if param_type.is_nullable {
+                                let type_str = if param_type.is_nullable || param_type.is_optional {
                                     format!("Option<{}>", param_type.rust_type)
                                 } else {
                                     param_type.rust_type.clone()
@@ -494,6 +495,7 @@ impl AutoModel {
                             &param_names,
                             &type_info.input_types,
                             &generated_structs,
+                            false, // not conditional_diff - require exact type match
                         )?;
                     }
                 } else if sp.is_enabled() {
@@ -504,7 +506,7 @@ impl AutoModel {
                     for (i, param_name) in param_names.iter().enumerate() {
                         let clean_param = param_name.trim_end_matches('?');
                         if let Some(param_type) = type_info.input_types.get(i) {
-                            let type_str = if param_type.is_nullable {
+                            let type_str = if param_type.is_nullable || param_type.is_optional {
                                 format!("Option<{}>", param_type.rust_type)
                             } else {
                                 param_type.rust_type.clone()

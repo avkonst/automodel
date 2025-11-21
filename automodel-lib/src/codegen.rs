@@ -993,6 +993,7 @@ pub fn validate_struct_reference(
     query_params: &[String],
     query_param_types: &[crate::type_extraction::RustType],
     available_structs: &std::collections::HashMap<String, Vec<(String, String)>>,
+    is_conditional_diff: bool,
 ) -> Result<()> {
     // Check if the struct exists
     let struct_fields = available_structs.get(struct_name).ok_or_else(|| {
@@ -1008,7 +1009,7 @@ pub fn validate_struct_reference(
     for (i, param_name) in query_params.iter().enumerate() {
         let clean_param = param_name.trim_end_matches('?');
         if let Some(param_type) = query_param_types.get(i) {
-            let type_str = if param_type.is_nullable {
+            let type_str = if param_type.is_nullable || param_type.is_optional {
                 format!("Option<{}>", param_type.rust_type)
             } else {
                 param_type.rust_type.clone()
@@ -1035,7 +1036,20 @@ pub fn validate_struct_reference(
                 )
             })?;
 
-        if &struct_field.1 != param_type {
+        // For conditional diff, allow flexible type matching
+        // The struct can have String while query has Option<String>, since we're comparing old vs new
+        let types_match = if is_conditional_diff {
+            // Check if types are compatible: exact match OR struct is non-nullable and query is nullable
+            &struct_field.1 == param_type || 
+                (param_type.starts_with("Option<") && 
+                 param_type.ends_with(">") &&
+                 &struct_field.1 == &param_type[7..param_type.len()-1])
+        } else {
+            // For non-conditional, require exact match
+            &struct_field.1 == param_type
+        };
+
+        if !types_match {
             anyhow::bail!(
                 "Type mismatch for parameter '{}' in struct '{}': expected '{}', but query requires '{}'",
                 param_name,

@@ -26,6 +26,8 @@ pub struct RustType {
     pub rust_type: String,
     /// Whether this type is nullable
     pub is_nullable: bool,
+    /// Whether this type is optional (conditional) parameter in a query
+    pub is_optional: bool,
     /// Whether this is a custom type that needs JSON wrapper
     pub needs_json_wrapper: bool,
     /// If this is an enum type, contains the enum variants
@@ -150,18 +152,21 @@ async fn extract_input_types(
             if let Some(custom_type) = custom_type {
                 rust_type = RustType {
                     rust_type: custom_type,
-                    is_nullable: is_optional_param,
+                    is_nullable: false,
+                    is_optional: is_optional_param,
                     needs_json_wrapper: true, // Custom input parameters need JSON serialization
                     enum_variants: None,
                     pg_type_name: None,
                 };
             } else if is_optional_param {
                 // If it's an optional parameter but no custom type, mark as nullable
-                rust_type.is_nullable = true;
+                rust_type.is_nullable = false;
+                rust_type.is_optional = true;
             }
         } else if is_optional_param {
             // If no mappings and it's optional parameter, mark as nullable
-            rust_type.is_nullable = true;
+            rust_type.is_nullable = false;
+            rust_type.is_optional = true;
         }
 
         input_types.push(rust_type);
@@ -291,6 +296,7 @@ async fn extract_output_types(
                 RustType {
                     rust_type: custom_type, // Store base type without Option<>
                     is_nullable: base_rust_type.is_nullable,
+                    is_optional: false,
                     needs_json_wrapper: true, // Custom types need JSON wrapper
                     enum_variants: None,
                     pg_type_name: None,
@@ -481,6 +487,7 @@ async fn pg_type_to_rust_type(
                 return Ok(RustType {
                     rust_type: enum_name,
                     is_nullable,
+                    is_optional: false,
                     needs_json_wrapper: false,
                     enum_variants: Some(enum_info.variants),
                     pg_type_name: Some(enum_info.type_name),
@@ -489,6 +496,7 @@ async fn pg_type_to_rust_type(
             return Ok(RustType {
                 rust_type: format!("/* Unknown type: {} */ String", pg_type.name()),
                 is_nullable,
+                is_optional: false,
                 needs_json_wrapper: false,
                 enum_variants: None,
                 pg_type_name: None,
@@ -499,6 +507,7 @@ async fn pg_type_to_rust_type(
     Ok(RustType {
         rust_type: base_type.to_string(),
         is_nullable,
+        is_optional: false,
         needs_json_wrapper: false,
         enum_variants: None,
         pg_type_name: None,
@@ -532,7 +541,7 @@ pub fn generate_input_params_with_names(
 
         // Only add if we haven't seen this parameter name before
         if !unique_params.contains_key(&clean_param_name) {
-            let final_type = if rust_type.is_nullable {
+            let final_type = if rust_type.is_nullable || rust_type.is_optional {
                 format!("Option<{}>", rust_type.rust_type)
             } else {
                 rust_type.rust_type.clone()
