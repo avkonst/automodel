@@ -548,7 +548,7 @@ queries:
     description: "Partial update using diff-based comparison - auto-generates params struct for old/new comparison "
     module: "user_model"
     expect: "exactly_one"
-    conditions_type: ShouldGenerateThisStructIfItIsReferencedFirstTime
+    conditions_type: UserModel2
     return_type: "UserModel"
 
   - name: find_user_by_email
