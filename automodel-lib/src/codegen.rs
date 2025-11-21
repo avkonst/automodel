@@ -10,23 +10,45 @@ use anyhow::Result;
 
 /// Generate the generic Error<C> type for mod.rs
 pub fn generate_generic_error_type() -> String {
-    r#"#[derive(Debug)]
+    r#"#[derive(Debug, Clone)]
 pub struct ErrorConstraintInfo {
     /// Name of the violated constraint
     pub constraint_name: String,
     pub table_name: String,
-    pub kind: sqlx::error::ErrorKind,
+    pub kind: ErrorConstraintKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorConstraintKind {
+    UniqueViolation,
+    ForeignKeyViolation,
+    NotNullViolation,
+    CheckViolation,
+    Other,
+}
+
+impl From<sqlx::error::ErrorKind> for ErrorConstraintKind {
+    fn from(kind: sqlx::error::ErrorKind) -> Self {
+        match kind {
+            sqlx::error::ErrorKind::UniqueViolation => Self::UniqueViolation,
+            sqlx::error::ErrorKind::ForeignKeyViolation => Self::ForeignKeyViolation,
+            sqlx::error::ErrorKind::NotNullViolation => Self::NotNullViolation,
+            sqlx::error::ErrorKind::CheckViolation => Self::CheckViolation,
+            _ => Self::Other,
+        }
+    }
 }
 
 /// Generic error type
 #[derive(Debug)]
-pub enum Error<C: From<ErrorConstraintInfo>> {
+pub enum Error<C: TryFrom<ErrorConstraintInfo>> {
     /// Catches the cases when a mutation query violates a constraint
     /// Type C would be an enum specific to each query.
     /// It would enumerate variants in pascal case for each constraint that can be violated.
     /// The list of constaints is inferred automatically by the automodel based on the table schema
     /// involved in the query.
-    ConstraintViolation(C),
+    /// The Option<C> is None when the constraint name is not recognized (unknown constraint).
+    ConstraintViolation(Option<C>, ErrorConstraintInfo),
 
     /// Row not found error
     RowNotFound,
@@ -37,7 +59,7 @@ pub enum Error<C: From<ErrorConstraintInfo>> {
     InternalError(String, sqlx::Error),
 }
 
-impl<C: From<ErrorConstraintInfo>> From<sqlx::Error> for Error<C> {
+impl<C: TryFrom<ErrorConstraintInfo>> From<sqlx::Error> for Error<C> {
     fn from(error: sqlx::Error) -> Self {
         match &error {
             sqlx::Error::RowNotFound => Self::RowNotFound,
@@ -53,9 +75,9 @@ impl<C: From<ErrorConstraintInfo>> From<sqlx::Error> for Error<C> {
                 let violation = ErrorConstraintInfo {
                     constraint_name,
                     table_name,
-                    kind,
+                    kind: kind.into(),
                 };
-                Self::ConstraintViolation(violation.into())
+                Self::ConstraintViolation(violation.clone().try_into().ok(), violation)
             }
             sqlx::Error::Configuration(_) => {
                 Self::InternalError("Configuration error".to_string(), error)
@@ -98,11 +120,17 @@ impl<C: From<ErrorConstraintInfo>> From<sqlx::Error> for Error<C> {
 
 impl<C> std::fmt::Display for Error<C>
 where
-    C: std::fmt::Debug + From<ErrorConstraintInfo>,
+    C: std::fmt::Debug + TryFrom<ErrorConstraintInfo>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::ConstraintViolation(c) => write!(f, "Constraint violation: {:#?}", c),
+            Error::ConstraintViolation(constraint, info) => {
+                if let Some(c) = constraint {
+                    write!(f, "Constraint violation: {:#?}", c)
+                } else {
+                    write!(f, "Unknown constraint violation: {} on table {}", info.constraint_name, info.table_name)
+                }
+            }
             Error::RowNotFound => write!(f, "Row not found"),
             Error::PoolTimeout => write!(f, "Pool timeout"),
             Error::InternalError(msg, err) => {
@@ -114,7 +142,7 @@ where
 
 impl<C> std::error::Error for Error<C>
 where
-    C: std::fmt::Debug + From<ErrorConstraintInfo>,
+    C: std::fmt::Debug + TryFrom<ErrorConstraintInfo>,
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -158,9 +186,12 @@ impl From<Error<ErrorConstraintInfo>> for ErrorReadOnly {
             Error::RowNotFound => Self::RowNotFound,
             Error::PoolTimeout => Self::PoolTimeout,
             Error::InternalError(msg, err) => Self::InternalError(msg, err),
-            Error::ConstraintViolation(c) => Self::InternalError(
+            Error::ConstraintViolation(c, info) => Self::InternalError(
                 "Constraint violation in read-only query".to_string(),
-                sqlx::Error::Protocol(format!("Constraint violation in read-only query: {:?}", c)),
+                sqlx::Error::Protocol(format!(
+                    "Constraint violation in read-only query: constraint={}, table={}, parsed={:?}",
+                    info.constraint_name, info.table_name, c
+                )),
             ),
         }
     }
@@ -191,7 +222,7 @@ impl std::error::Error for ErrorReadOnly {
     .to_string()
 }
 
-/// Generate per-query constraint enum with From<ErrorConstraintInfo> implementation
+/// Generate per-query constraint enum with TryFrom<ErrorConstraintInfo> implementation
 pub fn generate_query_constraint_enum(
     enum_name: &str,
     constraints: &[crate::config::ConstraintInfo],
@@ -226,34 +257,28 @@ pub fn generate_query_constraint_enum(
         code.push_str(&format!("    {},\n", variant_name));
     }
 
-    // Add a catch-all variant for unknown constraints
-    code.push_str("    /// Unknown constraint violation\n");
-    code.push_str("    Unknown {\n");
-    code.push_str("        constraint_name: String,\n");
-    code.push_str("        table_name: String,\n");
-    code.push_str("    },\n");
     code.push_str("}\n\n");
 
-    // Generate From<ErrorConstraintInfo> implementation
+    // Generate TryFrom<ErrorConstraintInfo> implementation
     code.push_str(&format!(
-        "impl From<super::ErrorConstraintInfo> for {} {{\n",
+        "impl TryFrom<super::ErrorConstraintInfo> for {} {{\n",
         enum_name
     ));
-    code.push_str("    fn from(info: super::ErrorConstraintInfo) -> Self {\n");
+    code.push_str("    type Error = ();\n\n");
+    code.push_str(
+        "    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {\n",
+    );
     code.push_str("        match info.constraint_name.as_str() {\n");
 
     for constraint in &unique_constraints {
         let variant_name = to_pascal_case(&constraint.name);
         code.push_str(&format!(
-            "            \"{}\" => Self::{},\n",
+            "            \"{}\" => Ok(Self::{}),\n",
             constraint.name, variant_name
         ));
     }
 
-    code.push_str("            _ => Self::Unknown {\n");
-    code.push_str("                constraint_name: info.constraint_name,\n");
-    code.push_str("                table_name: info.table_name,\n");
-    code.push_str("            },\n");
+    code.push_str("            _ => Err(()),\n");
     code.push_str("        }\n");
     code.push_str("    }\n");
     code.push_str("}\n");

@@ -30,22 +30,16 @@ pub enum InsertAllTypesTestConstraints {
     AllTypesTestPkey,
     /// Constraint: all_types_test_id_not_null on table all_types_test
     AllTypesTestIdNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for InsertAllTypesTestConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for InsertAllTypesTestConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "all_types_test_pkey" => Self::AllTypesTestPkey,
-            "all_types_test_id_not_null" => Self::AllTypesTestIdNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "all_types_test_pkey" => Ok(Self::AllTypesTestPkey),
+            "all_types_test_id_not_null" => Ok(Self::AllTypesTestIdNotNull),
+            _ => Err(()),
         }
     }
 }

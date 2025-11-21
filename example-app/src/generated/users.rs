@@ -72,26 +72,20 @@ pub enum InsertUserConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for InsertUserConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for InsertUserConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -145,26 +139,20 @@ pub enum InsertUsersBatchConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for InsertUsersBatchConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for InsertUsersBatchConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -303,26 +291,20 @@ pub enum UpdateUserProfileConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserProfileConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserProfileConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -656,26 +638,20 @@ pub enum UpdateUserStatusConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserStatusConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserStatusConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -719,26 +695,20 @@ pub enum UpdateUserFieldsConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserFieldsConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserFieldsConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -840,26 +810,20 @@ pub enum UpdateUserFieldsDiffConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserFieldsDiffConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserFieldsDiffConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -968,26 +932,20 @@ pub enum InsertUserStructuredConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for InsertUserStructuredConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for InsertUserStructuredConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -1187,26 +1145,20 @@ pub enum DeleteUserByIdAndEmailConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for DeleteUserByIdAndEmailConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for DeleteUserByIdAndEmailConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -1250,26 +1202,20 @@ pub enum UpdateUserContactInfoConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserContactInfoConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserContactInfoConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -1316,26 +1262,20 @@ pub enum UpdateUserProfileDiffConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserProfileDiffConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserProfileDiffConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }
@@ -1435,26 +1375,20 @@ pub enum UpdateUserMetadataDiffConstraints {
     UsersNameNotNull,
     /// Constraint: users_email_not_null on table users
     UsersEmailNotNull,
-    /// Unknown constraint violation
-    Unknown {
-        constraint_name: String,
-        table_name: String,
-    },
 }
 
-impl From<super::ErrorConstraintInfo> for UpdateUserMetadataDiffConstraints {
-    fn from(info: super::ErrorConstraintInfo) -> Self {
+impl TryFrom<super::ErrorConstraintInfo> for UpdateUserMetadataDiffConstraints {
+    type Error = ();
+
+    fn try_from(info: super::ErrorConstraintInfo) -> Result<Self, Self::Error> {
         match info.constraint_name.as_str() {
-            "users_email_key" => Self::UsersEmailKey,
-            "users_pkey" => Self::UsersPkey,
-            "users_referrer_id_fkey" => Self::UsersReferrerIdFkey,
-            "users_id_not_null" => Self::UsersIdNotNull,
-            "users_name_not_null" => Self::UsersNameNotNull,
-            "users_email_not_null" => Self::UsersEmailNotNull,
-            _ => Self::Unknown {
-                constraint_name: info.constraint_name,
-                table_name: info.table_name,
-            },
+            "users_email_key" => Ok(Self::UsersEmailKey),
+            "users_pkey" => Ok(Self::UsersPkey),
+            "users_referrer_id_fkey" => Ok(Self::UsersReferrerIdFkey),
+            "users_id_not_null" => Ok(Self::UsersIdNotNull),
+            "users_name_not_null" => Ok(Self::UsersNameNotNull),
+            "users_email_not_null" => Ok(Self::UsersEmailNotNull),
+            _ => Err(()),
         }
     }
 }

@@ -1252,7 +1252,7 @@ CREATE TABLE users (
 
 AutoModel generates:
 ```rust
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum InsertUserConstraints {
     UsersPkey,                    // PRIMARY KEY constraint
     UsersEmailKey,                // UNIQUE constraint on email
@@ -1262,16 +1262,32 @@ pub enum InsertUserConstraints {
     UsersEmailNotNull,            // NOT NULL constraint on email
 }
 
-impl From<ErrorConstraintInfo> for InsertUserConstraints {
-    fn from(info: ErrorConstraintInfo) -> Self {
-        match info.constraint.as_str() {
-            "users_pkey" => InsertUserConstraints::UsersPkey,
-            "users_email_key" => InsertUserConstraints::UsersEmailKey,
-            "users_age_check" => InsertUserConstraints::UsersAgeCheck,
-            "users_organization_id_fkey" => InsertUserConstraints::UsersOrganizationIdFkey,
-            _ => panic!("Unknown constraint: {}", info.constraint),
+impl TryFrom<ErrorConstraintInfo> for InsertUserConstraints {
+    type Error = ();
+    
+    fn try_from(info: ErrorConstraintInfo) -> Result<Self, Self::Error> {
+        match info.constraint_name.as_str() {
+            "users_pkey" => Ok(InsertUserConstraints::UsersPkey),
+            "users_email_key" => Ok(InsertUserConstraints::UsersEmailKey),
+            "users_age_check" => Ok(InsertUserConstraints::UsersAgeCheck),
+            "users_organization_id_fkey" => Ok(InsertUserConstraints::UsersOrganizationIdFkey),
+            "users_id_not_null" => Ok(InsertUserConstraints::UsersIdNotNull),
+            "users_email_not_null" => Ok(InsertUserConstraints::UsersEmailNotNull),
+            _ => Err(()),  // Unknown constraints return error instead of panicking
         }
     }
+}
+```
+
+The generic `Error<C>` type handles constraint violations gracefully:
+```rust
+pub enum Error<C: TryFrom<ErrorConstraintInfo>> {
+    /// Contains Some(C) when constraint is recognized, None for unknown constraints
+    /// The ErrorConstraintInfo always contains the raw constraint details from PostgreSQL
+    ConstraintViolation(Option<C>, ErrorConstraintInfo),
+    RowNotFound,
+    PoolTimeout,
+    InternalError(String, sqlx::Error),
 }
 ```
 
@@ -1288,12 +1304,19 @@ By default, AutoModel generates error type names based on the query name (e.g., 
 
 **Generated Code:**
 ```rust
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum UserError {
     UsersPkey,
     UsersEmailKey,
     UsersAgeCheck,
     // ... other constraints
+}
+
+impl TryFrom<ErrorConstraintInfo> for UserError {
+    type Error = ();
+    fn try_from(info: ErrorConstraintInfo) -> Result<Self, Self::Error> {
+        // ... conversion logic
+    }
 }
 
 pub async fn insert_user(
