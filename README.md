@@ -97,6 +97,8 @@ anyhow = "1.0"
 
 ### Create a build.rs for automatic code generation
 
+**Option 1: Using YAML files**
+
 ```rust
 use automodel::AutoModel;
 
@@ -108,7 +110,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Create queries.yaml
+**Option 2: Using the builder pattern (no YAML file)**
+
+```rust
+use automodel::{AutoModel, AutoModelBuilder, QueryBuilder, TelemetryLevel};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let builder = AutoModelBuilder::new()
+        .default_telemetry(TelemetryLevel::Debug)
+        .query(
+            QueryBuilder::new("get_user", "SELECT id, name FROM users WHERE id = ${id}")
+                .module("users")
+                .expect_one()
+        )
+        .query(
+            QueryBuilder::new("insert_user", "INSERT INTO users (name, email) VALUES (${name}, ${email})")
+                .module("users")
+                .error_type("UserError")
+        );
+    
+    AutoModel::generate_from_builder_at_build_time(builder, "src/generated").await?;
+    Ok(())
+}
+```
+
+### Create queries.yaml (for YAML approach)
 
 ```yaml
 queries:

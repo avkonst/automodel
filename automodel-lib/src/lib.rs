@@ -1,8 +1,11 @@
+mod builder;
 mod codegen;
 mod config;
 mod type_extraction;
 mod yaml_parser;
 
+pub use builder::{AutoModelBuilder, QueryBuilder};
+pub use config::{ExpectedResult, TelemetryLevel};
 use codegen::*;
 use config::*;
 use type_extraction::*;
@@ -173,16 +176,84 @@ impl AutoModel {
         yaml_file: &str,
         output_dir: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Tell cargo to rerun if the input YAML file changes
+        println!("cargo:rerun-if-changed={}", yaml_file);
+
+        // Load YAML and create AutoModel instance
+        let automodel = AutoModel::new(yaml_file).await?;
+        
+        // Reuse the common build-time generation logic
+        Self::generate_at_build_time_impl(automodel, output_dir).await
+    }
+
+    /// Generate code at build time from an AutoModelBuilder instead of a YAML file
+    ///
+    /// This allows you to define queries programmatically using the builder pattern.
+    ///
+    /// # Example
+    ///
+    /// In your `build.rs`:
+    /// ```no_run
+    /// use automodel::{AutoModel, AutoModelBuilder, QueryBuilder, ExpectedResult};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let builder = AutoModelBuilder::new()
+    ///         .default_telemetry(automodel::TelemetryLevel::Debug)
+    ///         .query(
+    ///             QueryBuilder::new("get_user", "SELECT id, name FROM users WHERE id = ${id}")
+    ///                 .module("users")
+    ///                 .expect_one()
+    ///         )
+    ///         .query(
+    ///             QueryBuilder::new("insert_user", "INSERT INTO users (name) VALUES (${name})")
+    ///                 .module("users")
+    ///         );
+    ///     
+    ///     AutoModel::generate_from_builder_at_build_time(builder, "src/generated").await?;
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn generate_from_builder_at_build_time(
+        builder: AutoModelBuilder,
+        output_dir: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Create AutoModel instance from builder
+        let queries = builder.get_queries();
+        
+        // Calculate a hash based on the queries
+        let mut hasher = DefaultHasher::new();
+        for query in &queries {
+            query.name.hash(&mut hasher);
+            query.sql.hash(&mut hasher);
+            if let Some(ref module) = query.module {
+                module.hash(&mut hasher);
+            }
+        }
+        let file_hash = hasher.finish();
+
+        let automodel = AutoModel {
+            queries,
+            file_hash,
+        };
+
+        // Reuse the common build-time generation logic
+        Self::generate_at_build_time_impl(automodel, output_dir).await
+    }
+
+    /// Common implementation for build-time generation
+    async fn generate_at_build_time_impl(
+        automodel: AutoModel,
+        output_dir: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         use std::env;
         use std::path::Path;
 
         let output_path = Path::new(output_dir);
-
-        // Tell cargo to rerun if the input YAML file changes
-        println!("cargo:rerun-if-changed={}", yaml_file);
-
-        // Load current YAML to determine modules for cleanup (even if cached)
-        let automodel = AutoModel::new(yaml_file).await?;
         let modules = automodel.get_modules();
 
         for module in &modules {
@@ -195,20 +266,16 @@ impl AutoModel {
                 if !Self::is_generated_code_up_to_date(automodel.file_hash, &module_file)
                     .unwrap_or(false)
                 {
-                    // File exists but hash is invalid/missing, delete it to force regeneration
                     let _ = std::fs::remove_file(&module_file);
                 }
             }
         }
+        
         let mod_file = output_path.join("mod.rs");
-        // Tell cargo to rerun if the mod.rs file is manually modified
         println!("cargo:rerun-if-changed={}", mod_file.display());
 
         // Check if generated code is up to date
-        if Self::is_generated_code_up_to_date(automodel.file_hash, &output_path.join("mod.rs"))
-            .unwrap_or(false)
-        {
-            // Also verify all module files have valid hashes
+        if Self::is_generated_code_up_to_date(automodel.file_hash, &mod_file).unwrap_or(false) {
             let mut all_modules_valid = true;
             for module in &modules {
                 let module_file = output_path.join(format!("{}.rs", module));
