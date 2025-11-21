@@ -5,9 +5,9 @@ mod type_extraction;
 mod yaml_parser;
 
 pub use builder::{AutoModelBuilder, QueryBuilder};
-pub use config::{ExpectedResult, TelemetryLevel};
 use codegen::*;
 use config::*;
+pub use config::{ExpectedResult, TelemetryLevel};
 use type_extraction::*;
 use yaml_parser::*;
 
@@ -181,7 +181,7 @@ impl AutoModel {
 
         // Load YAML and create AutoModel instance
         let automodel = AutoModel::new(yaml_file).await?;
-        
+
         // Reuse the common build-time generation logic
         Self::generate_at_build_time_impl(automodel, output_dir).await
     }
@@ -224,7 +224,7 @@ impl AutoModel {
 
         // Create AutoModel instance from builder
         let queries = builder.get_queries();
-        
+
         // Calculate a hash based on the queries
         let mut hasher = DefaultHasher::new();
         for query in &queries {
@@ -236,10 +236,7 @@ impl AutoModel {
         }
         let file_hash = hasher.finish();
 
-        let automodel = AutoModel {
-            queries,
-            file_hash,
-        };
+        let automodel = AutoModel { queries, file_hash };
 
         // Reuse the common build-time generation logic
         Self::generate_at_build_time_impl(automodel, output_dir).await
@@ -270,7 +267,7 @@ impl AutoModel {
                 }
             }
         }
-        
+
         let mod_file = output_path.join("mod.rs");
         println!("cargo:rerun-if-changed={}", mod_file.display());
 

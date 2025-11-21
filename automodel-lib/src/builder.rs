@@ -297,14 +297,20 @@ mod tests {
 
     #[test]
     fn test_query_builder_with_types() {
-        let query = QueryBuilder::new("insert_user", "INSERT INTO users (profile) VALUES (${profile})")
-            .map_type("profile", "crate::models::UserProfile")
-            .expect_one()
-            .build();
+        let query = QueryBuilder::new(
+            "insert_user",
+            "INSERT INTO users (profile) VALUES (${profile})",
+        )
+        .map_type("profile", "crate::models::UserProfile")
+        .expect_one()
+        .build();
 
         assert!(query.types.is_some());
         let types = query.types.unwrap();
-        assert_eq!(types.get("profile"), Some(&"crate::models::UserProfile".to_string()));
+        assert_eq!(
+            types.get("profile"),
+            Some(&"crate::models::UserProfile".to_string())
+        );
     }
 
     #[test]
@@ -314,21 +320,27 @@ mod tests {
             .default_include_sql(true)
             .query(
                 QueryBuilder::new("get_user", "SELECT * FROM users WHERE id = ${id}")
-                    .module("users")
+                    .module("users"),
             )
             .query(
                 QueryBuilder::new("insert_user", "INSERT INTO users (name) VALUES (${name})")
                     .module("users")
-                    .telemetry(TelemetryLevel::Trace)
+                    .telemetry(TelemetryLevel::Trace),
             );
 
         let queries = builder.get_queries();
         assert_eq!(queries.len(), 2);
-        
+
         // First query should have default telemetry level
-        assert_eq!(queries[0].telemetry.as_ref().unwrap().level, Some(TelemetryLevel::Debug));
-        
+        assert_eq!(
+            queries[0].telemetry.as_ref().unwrap().level,
+            Some(TelemetryLevel::Debug)
+        );
+
         // Second query should have its own telemetry level
-        assert_eq!(queries[1].telemetry.as_ref().unwrap().level, Some(TelemetryLevel::Trace));
+        assert_eq!(
+            queries[1].telemetry.as_ref().unwrap().level,
+            Some(TelemetryLevel::Trace)
+        );
     }
 }
