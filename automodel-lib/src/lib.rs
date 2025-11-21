@@ -947,30 +947,100 @@ impl AutoModel {
                 continue;
             }
 
+            // Handle range types - these need special casting
+            if param_type.name().ends_with("range") {
+                let type_name = param_type.name();
+                special_params.push((
+                    dummy_params.len(),
+                    type_name.to_string(),
+                    "empty".to_string(),
+                ));
+                dummy_params.push(Box::new("RANGE_PLACEHOLDER".to_string()));
+                continue;
+            }
+
+            // Handle geometric types - these need special casting
+            let geometric_default = match param_type.name() {
+                "point" => Some("(0,0)"),
+                "line" => Some("{0,0,0}"),
+                "lseg" => Some("[(0,0),(0,0)]"),
+                "box" => Some("((0,0),(0,0))"),
+                "path" => Some("[(0,0)]"),
+                "polygon" => Some("((0,0))"),
+                "circle" => Some("<(0,0),0>"),
+                _ => None,
+            };
+            if let Some(default_value) = geometric_default {
+                let type_name = param_type.name();
+                special_params.push((
+                    dummy_params.len(),
+                    type_name.to_string(),
+                    default_value.to_string(),
+                ));
+                dummy_params.push(Box::new("GEOMETRIC_PLACEHOLDER".to_string()));
+                continue;
+            }
+
             // Handle built-in PostgreSQL types
             let dummy_value: Box<dyn tokio_postgres::types::ToSql + Sync> = match param_type {
+                // Boolean & Numeric Types
                 &Type::BOOL => Box::new(false),
+                &Type::CHAR => Box::new(0i8),
                 &Type::INT2 => Box::new(0i16),
                 &Type::INT4 => Box::new(0i32),
                 &Type::INT8 => Box::new(0i64),
                 &Type::FLOAT4 => Box::new(0.0f32),
                 &Type::FLOAT8 => Box::new(0.0f64),
+                &Type::OID | &Type::REGPROC | &Type::XID | &Type::CID => Box::new(0u32),
+
+                // String & Text Types
                 &Type::TEXT
                 | &Type::VARCHAR
-                | &Type::CHAR
                 | &Type::BPCHAR
                 | &Type::NAME
+                | &Type::XML
                 | &Type::UNKNOWN => Box::new("dummy".to_string()),
+
+                // Binary & Bit Types
                 &Type::BYTEA => Box::new(vec![0u8]),
+
+                // JSON Types
                 &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
+
+                // Date & Time Types
                 &Type::TIMESTAMPTZ => Box::new(chrono::Utc::now()),
-                &Type::TIMESTAMP => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap()),
-                &Type::DATE => Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()),
-                &Type::TIME | &Type::TIMETZ => {
-                    Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+                &Type::TIMESTAMP => {
+                    Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc())
                 }
+                &Type::DATE => Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()),
+                &Type::TIME => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
+
+                // UUID
                 &Type::UUID => Box::new(uuid::Uuid::nil()),
-                _ => Box::new("dummy".to_string()), // Fallback for unknown types
+
+                // Array types - use empty arrays
+                &Type::BOOL_ARRAY => Box::new(Vec::<bool>::new()),
+                &Type::CHAR_ARRAY => Box::new(Vec::<i8>::new()),
+                &Type::INT2_ARRAY => Box::new(Vec::<i16>::new()),
+                &Type::INT4_ARRAY => Box::new(Vec::<i32>::new()),
+                &Type::INT8_ARRAY => Box::new(Vec::<i64>::new()),
+                &Type::FLOAT4_ARRAY => Box::new(Vec::<f32>::new()),
+                &Type::FLOAT8_ARRAY => Box::new(Vec::<f64>::new()),
+                &Type::TEXT_ARRAY
+                | &Type::VARCHAR_ARRAY
+                | &Type::BPCHAR_ARRAY
+                | &Type::NAME_ARRAY
+                | &Type::XML_ARRAY => Box::new(Vec::<String>::new()),
+                &Type::BYTEA_ARRAY => Box::new(Vec::<Vec<u8>>::new()),
+                &Type::JSON_ARRAY | &Type::JSONB_ARRAY => Box::new(Vec::<serde_json::Value>::new()),
+                &Type::DATE_ARRAY => Box::new(Vec::<chrono::NaiveDate>::new()),
+                &Type::TIME_ARRAY => Box::new(Vec::<chrono::NaiveTime>::new()),
+                &Type::TIMESTAMP_ARRAY => Box::new(Vec::<chrono::NaiveDateTime>::new()),
+                &Type::TIMESTAMPTZ_ARRAY => Box::new(Vec::<chrono::DateTime<chrono::Utc>>::new()),
+                &Type::UUID_ARRAY => Box::new(Vec::<uuid::Uuid>::new()),
+
+                // Fallback for unknown types - use string
+                _ => Box::new("dummy".to_string()),
             };
             dummy_params.push(dummy_value);
         }
