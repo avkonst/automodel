@@ -492,6 +492,9 @@ AutoModel provides three powerful configuration options that allow you to custom
 | `conditions_type` | Diff-based conditional parameters | `false` | `true` or struct name | `{QueryName}Params` struct with old/new comparison |
 | `return_type` | Custom name for return type struct | auto | `false` or struct name | Custom named or `{QueryName}Item` struct |
 
+Any structure generated either for return type or parameters / conditions type can be after referenced by other queries either as a return type or parameters / conditions type.
+The AutoModel will ensure correct type assignability and compatibility between the referenced type and the one required by a query.
+
 ### parameters_type: Structured Parameters
 
 Group all query parameters into a single struct instead of passing them individually. Makes function calls cleaner and enables parameter reuse.
@@ -614,7 +617,7 @@ queries:
 
 ### return_type: Custom Return Type Names
 
-Customize the name of return type structs (generated for multi-column SELECT queries) and enable struct reuse across queries that return the same columns.
+Customize the name of return type structs (generated for multi-column SELECT queries) and enable struct reuse across queries.
 
 **Basic Usage:**
 
