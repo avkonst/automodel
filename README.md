@@ -124,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .module("users")
                 .expect_one()
         )
+        .query(QueryBuilder::from_file("get_user", "queries/get_user.sql"))
         .query(
             QueryBuilder::new("insert_user", "INSERT INTO users (name, email) VALUES (${name}, ${email})")
                 .module("users")

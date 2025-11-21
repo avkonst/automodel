@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct QueryBuilder {
     name: String,
     sql: String,
+    sql_file: Option<String>,
     description: Option<String>,
     module: Option<String>,
     expect: ExpectedResult,
@@ -28,6 +29,7 @@ impl QueryBuilder {
         Self {
             name: name.into(),
             sql: sql.into(),
+            sql_file: None,
             description: None,
             module: None,
             expect: ExpectedResult::ExactlyOne,
@@ -40,6 +42,52 @@ impl QueryBuilder {
             return_type: None,
             error_type: None,
         }
+    }
+
+    /// Create a new query builder with SQL loaded from a file at compile time
+    /// 
+    /// The file path is relative to the project root (where Cargo.toml is located).
+    /// The SQL file will be read at build time and embedded using `include_str!` macro.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// use automodel::QueryBuilder;
+    /// 
+    /// let query = QueryBuilder::from_file("get_user", "queries/get_user.sql");
+    /// ```
+    pub fn from_file(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            sql: String::new(),
+            sql_file: Some(path.into()),
+            description: None,
+            module: None,
+            expect: ExpectedResult::ExactlyOne,
+            types: HashMap::new(),
+            telemetry: None,
+            ensure_indexes: None,
+            multiunzip: None,
+            conditions_type: None,
+            parameters_type: None,
+            return_type: None,
+            error_type: None,
+        }
+    }
+
+    /// Set the SQL from a file path (uses include_str! at compile time)
+    /// 
+    /// The file path is relative to the project root (where Cargo.toml is located).
+    /// 
+    /// # Example
+    /// ```no_run
+    /// use automodel::QueryBuilder;
+    /// 
+    /// let query = QueryBuilder::new("get_user", "")
+    ///     .sql_from_file("queries/get_user.sql");
+    /// ```
+    pub fn sql_from_file(mut self, path: impl Into<String>) -> Self {
+        self.sql_file = Some(path.into());
+        self
     }
 
     /// Set the query description
@@ -167,9 +215,17 @@ impl QueryBuilder {
 
     /// Build the QueryDefinition
     pub fn build(self) -> QueryDefinition {
+        // If sql_file is specified, read the file content at build time
+        let sql = if let Some(ref path) = self.sql_file {
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("Failed to read SQL file '{}': {}", path, e))
+        } else {
+            self.sql
+        };
+
         QueryDefinition {
             name: self.name,
-            sql: self.sql,
+            sql,
             description: self.description,
             module: self.module,
             expect: self.expect,
