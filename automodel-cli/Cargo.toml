@@ -1,6 +1,6 @@
 [package]
 name = "automodel-cli"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Command-line interface for AutoModel - generate typed functions from YAML-defined SQL queries"
 license = "MIT"
