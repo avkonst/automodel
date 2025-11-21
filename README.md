@@ -19,7 +19,6 @@ This is a Cargo workspace with three main components:
 - ✅ Support for all common PostgreSQL types including custom enums
 - 🏗️ Generate result structs for multi-column queries
 - ⚡ Build-time code generation with automatic regeneration when YAML changes
-- 🎯 Advanced CLI with dry-run and flexible output options
 - 📊 Built-in query performance analysis with sequential scan detection
 - 🔄 Conditional queries with dynamic SQL based on optional parameters
 - ♻️ Struct reuse and deduplication across queries
