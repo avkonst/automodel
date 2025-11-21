@@ -1040,10 +1040,10 @@ pub fn validate_struct_reference(
         // The struct can have String while query has Option<String>, since we're comparing old vs new
         let types_match = if is_conditional_diff {
             // Check if types are compatible: exact match OR struct is non-nullable and query is nullable
-            &struct_field.1 == param_type || 
-                (param_type.starts_with("Option<") && 
-                 param_type.ends_with(">") &&
-                 &struct_field.1 == &param_type[7..param_type.len()-1])
+            &struct_field.1 == param_type
+                || (param_type.starts_with("Option<")
+                    && param_type.ends_with(">")
+                    && &struct_field.1 == &param_type[7..param_type.len() - 1])
         } else {
             // For non-conditional, require exact match
             &struct_field.1 == param_type
