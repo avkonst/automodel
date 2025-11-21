@@ -45,14 +45,14 @@ impl QueryBuilder {
     }
 
     /// Create a new query builder with SQL loaded from a file at compile time
-    /// 
+    ///
     /// The file path is relative to the project root (where Cargo.toml is located).
     /// The SQL file will be read at build time and embedded using `include_str!` macro.
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use automodel::QueryBuilder;
-    /// 
+    ///
     /// let query = QueryBuilder::from_file("get_user", "queries/get_user.sql");
     /// ```
     pub fn from_file(name: impl Into<String>, path: impl Into<String>) -> Self {
@@ -75,13 +75,13 @@ impl QueryBuilder {
     }
 
     /// Set the SQL from a file path (uses include_str! at compile time)
-    /// 
+    ///
     /// The file path is relative to the project root (where Cargo.toml is located).
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use automodel::QueryBuilder;
-    /// 
+    ///
     /// let query = QueryBuilder::new("get_user", "")
     ///     .sql_from_file("queries/get_user.sql");
     /// ```
