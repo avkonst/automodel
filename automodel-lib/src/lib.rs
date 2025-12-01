@@ -176,79 +176,14 @@ impl AutoModel {
         yaml_file: &str,
         output_dir: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::env;
+        use std::path::Path;
+
         // Tell cargo to rerun if the input YAML file changes
         println!("cargo:rerun-if-changed={}", yaml_file);
 
         // Load YAML and create AutoModel instance
         let automodel = AutoModel::new(yaml_file).await?;
-
-        // Reuse the common build-time generation logic
-        Self::generate_at_build_time_impl(automodel, output_dir).await
-    }
-
-    /// Generate code at build time from an AutoModelBuilder instead of a YAML file
-    ///
-    /// This allows you to define queries programmatically using the builder pattern.
-    ///
-    /// # Example
-    ///
-    /// In your `build.rs`:
-    /// ```no_run
-    /// use automodel::{AutoModel, AutoModelBuilder, QueryBuilder, ExpectedResult};
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let builder = AutoModelBuilder::new()
-    ///         .default_telemetry(automodel::TelemetryLevel::Debug)
-    ///         .query(
-    ///             QueryBuilder::new("get_user", "SELECT id, name FROM users WHERE id = ${id}")
-    ///                 .module("users")
-    ///                 .expect_one()
-    ///         )
-    ///         .query(
-    ///             QueryBuilder::new("insert_user", "INSERT INTO users (name) VALUES (${name})")
-    ///                 .module("users")
-    ///         );
-    ///     
-    ///     AutoModel::generate_from_builder_at_build_time(builder, "src/generated").await?;
-    ///     
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn generate_from_builder_at_build_time(
-        builder: AutoModelBuilder,
-        output_dir: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        // Create AutoModel instance from builder
-        let queries = builder.get_queries();
-
-        // Calculate a hash based on the queries
-        let mut hasher = DefaultHasher::new();
-        for query in &queries {
-            query.name.hash(&mut hasher);
-            query.sql.hash(&mut hasher);
-            if let Some(ref module) = query.module {
-                module.hash(&mut hasher);
-            }
-        }
-        let file_hash = hasher.finish();
-
-        let automodel = AutoModel { queries, file_hash };
-
-        // Reuse the common build-time generation logic
-        Self::generate_at_build_time_impl(automodel, output_dir).await
-    }
-
-    /// Common implementation for build-time generation
-    async fn generate_at_build_time_impl(
-        automodel: AutoModel,
-        output_dir: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use std::env;
-        use std::path::Path;
 
         let output_path = Path::new(output_dir);
         let modules = automodel.get_modules();
@@ -301,6 +236,74 @@ impl AutoModel {
             .await?;
 
         Ok(())
+    }
+
+    /// Generate code at build time from an AutoModelBuilder instead of a YAML file
+    ///
+    /// This allows you to define queries programmatically using the builder pattern.
+    /// The builder will create a YAML file for documentation and then use it for code generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `builder` - The AutoModelBuilder containing query definitions
+    /// * `yaml_output_path` - Path where the YAML file will be written (relative to build.rs, typically "queries.yaml")
+    /// * `code_output_dir` - Path to the directory where module files will be written (relative to build.rs, typically "src/generated")
+    ///
+    /// # Example
+    ///
+    /// In your `build.rs`:
+    /// ```no_run
+    /// use automodel::{AutoModel, AutoModelBuilder, QueryBuilder, ExpectedResult};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let builder = AutoModelBuilder::new()
+    ///         .default_telemetry(automodel::TelemetryLevel::Debug)
+    ///         .query(
+    ///             QueryBuilder::new("get_user", "SELECT id, name FROM users WHERE id = ${id}")
+    ///                 .module("users")
+    ///                 .expect_one()
+    ///         )
+    ///         .query(
+    ///             QueryBuilder::new("insert_user", "INSERT INTO users (name) VALUES (${name})")
+    ///                 .module("users")
+    ///         );
+    ///     
+    ///     AutoModel::generate_from_builder_at_build_time(
+    ///         builder,
+    ///         "queries.yaml",
+    ///         "src/generated"
+    ///     ).await?;
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn generate_from_builder_at_build_time(
+        builder: AutoModelBuilder,
+        yaml_output_path: &str,
+        code_output_dir: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs;
+        use std::path::Path;
+
+        // Build config from builder
+        let config = builder.build();
+
+        // Serialize to YAML
+        let yaml_content = format!(
+            "# This file was automatically generated by AutoModelBuilder in build.rs\n# Do not edit manually - changes will be overwritten\n\n{}",
+            serde_yaml::to_string(&config)?
+        );
+
+        // Only write YAML file if content has changed
+        if !Path::new(yaml_output_path).exists()
+            || fs::read_to_string(yaml_output_path)? != yaml_content
+        {
+            fs::write(yaml_output_path, yaml_content)?;
+        }
+
+        // Now just use the standard YAML-based generation
+        Self::generate_at_build_time(yaml_output_path, code_output_dir).await
     }
 
     /// Get all unique module names from the loaded queries

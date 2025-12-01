@@ -303,8 +303,12 @@ impl AutoModelBuilder {
         self
     }
 
-    /// Get the queries (internal use)
-    pub(crate) fn get_queries(self) -> Vec<QueryDefinition> {
+    /// Build the configuration
+    ///
+    /// Converts the builder into a `Config` structure that can be serialized to YAML
+    /// or used for code generation. This applies all default settings to queries that
+    /// don't have them explicitly set.
+    pub fn build(self) -> crate::config::Config {
         let mut queries = self.queries;
 
         // Apply defaults to queries that don't have them set
@@ -328,7 +332,17 @@ impl AutoModelBuilder {
             }
         }
 
-        queries
+        crate::config::Config {
+            defaults: crate::config::DefaultsConfig {
+                telemetry: crate::config::DefaultsTelemetryConfig {
+                    level: self.default_telemetry_level,
+                    include_sql: self.default_include_sql,
+                },
+                ensure_indexes: self.default_ensure_indexes,
+                module: self.default_module,
+            },
+            queries,
+        }
     }
 }
 
@@ -384,18 +398,18 @@ mod tests {
                     .telemetry(TelemetryLevel::Trace),
             );
 
-        let queries = builder.get_queries();
-        assert_eq!(queries.len(), 2);
+        let config = builder.build();
+        assert_eq!(config.queries.len(), 2);
 
         // First query should have default telemetry level
         assert_eq!(
-            queries[0].telemetry.as_ref().unwrap().level,
+            config.queries[0].telemetry.as_ref().unwrap().level,
             Some(TelemetryLevel::Debug)
         );
 
         // Second query should have its own telemetry level
         assert_eq!(
-            queries[1].telemetry.as_ref().unwrap().level,
+            config.queries[1].telemetry.as_ref().unwrap().level,
             Some(TelemetryLevel::Trace)
         );
     }
