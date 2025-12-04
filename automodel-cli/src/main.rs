@@ -102,23 +102,19 @@ async fn generate_command(matches: &ArgMatches) -> Result<()> {
 
     let telemetry_include_sql = matches.get_flag("telemetry-include-sql");
     let ensure_indexes = matches.get_flag("ensure-indexes");
-    let default_module = matches
-        .get_one::<String>("default-module")
-        .map(|s| s.to_string());
 
     let defaults = DefaultsConfig {
         telemetry: DefaultsTelemetryConfig {
-            level: Some(telemetry_level),
-            include_sql: Some(telemetry_include_sql),
+            level: telemetry_level,
+            include_sql: telemetry_include_sql,
         },
-        ensure_indexes: Some(ensure_indexes),
-        module: default_module,
+        ensure_indexes: ensure_indexes,
     };
 
     println!("Loading queries from: {}", queries_dir);
     println!("Output directory: {}", output_dir);
-    println!("Telemetry level: {:?}", telemetry_level);
-    println!("Ensure indexes: {}", ensure_indexes);
+    println!("Default telemetry level: {:?}", telemetry_level);
+    println!("Default ensure indexes: {}", ensure_indexes);
 
     // Set the database URL environment variable for code generation
     unsafe { std::env::set_var("AUTOMODEL_DATABASE_URL", database_url) };

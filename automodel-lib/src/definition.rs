@@ -4,7 +4,7 @@ use std::collections::HashMap;
 /// Parameters type configuration - can be either a boolean or a struct name
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
-pub enum ParametersType {
+pub(crate) enum ParametersType {
     /// Auto-generate a new struct with name {QueryName}Params
     Enabled(bool),
     /// Use or generate a struct with the given name
@@ -27,10 +27,16 @@ impl ParametersType {
     }
 }
 
+impl Default for ParametersType {
+    fn default() -> Self {
+        ParametersType::Enabled(false)
+    }
+}
+
 /// Conditions type configuration - can be either a boolean or a struct name
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
-pub enum ConditionsType {
+pub(crate) enum ConditionsType {
     /// Auto-generate a new struct with name {QueryName}Params
     Enabled(bool),
     /// Use or generate a struct with the given name
@@ -53,10 +59,16 @@ impl ConditionsType {
     }
 }
 
+impl Default for ConditionsType {
+    fn default() -> Self {
+        ConditionsType::Enabled(false)
+    }
+}
+
 /// Expected result type for a query
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum ExpectedResult {
+pub(crate) enum ExpectedResult {
     /// Exactly one row must be returned (uses query_one, fails if 0 or >1 rows)
     ExactlyOne,
     /// Zero or one row expected (uses query_opt, returns Option)
@@ -93,93 +105,65 @@ impl Default for ExpectedResult {
     }
 }
 
-/// Constraint information extracted from database schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConstraintInfo {
-    /// Constraint name
-    pub name: String,
-    /// Constraint type: unique, primary_key, foreign_key, check, not_null
-    pub constraint_type: String,
-    /// Table name
-    pub table_name: String,
-    /// Column names involved in the constraint
-    pub column_names: Vec<String>,
-    /// For foreign keys: referenced table and columns
-    pub referenced_table: Option<String>,
-    pub referenced_columns: Option<Vec<String>>,
-}
-
 /// Represents a single SQL query definition from the YAML file
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryDefinition {
+#[derive(Debug, Clone)]
+pub(crate) struct QueryDefinition {
     /// The name of the query, which will be used as the function name
     pub name: String,
     /// The SQL query string
     pub sql: String,
     /// Optional description of what the query does
     pub description: Option<String>,
-    /// Optional module name where this function should be generated
-    /// If not specified, the function will be generated in queries.rs by default
-    /// Must be a valid Rust module name (alphanumeric + underscore, starting with letter/underscore)
+    /// Module name where this function should be generated
     pub module: String,
     /// Expected result type - controls fetch method and error handling
     /// Defaults to "exactly_one" if not specified
-    #[serde(default)]
     pub expect: ExpectedResult,
     /// Optional per-query field type mappings
     /// Key: field name (e.g., "profile", "metadata", "status")
     /// Value: Rust type to use (e.g., "crate::models::UserProfile", "MyStruct")
     pub types: Option<HashMap<String, String>>,
     /// Optional telemetry configuration for this query
-    pub telemetry: Option<QueryTelemetryConfig>,
+    pub telemetry: QueryTelemetryConfig,
     /// Whether to analyze this query's performance (overrides global setting)
     /// Defaults to None (use global setting)
-    #[serde(default)]
-    pub ensure_indexes: Option<bool>,
+    pub ensure_indexes: bool,
     /// Whether to use multiunzip pattern for array parameters
     /// When true, the function accepts a Vec of tuples and unzips them into separate arrays
     /// for binding to UNNEST(...) style queries
     /// Defaults to false
-    #[serde(default)]
-    pub multiunzip: Option<bool>,
+    pub multiunzip: bool,
     /// Whether to use diff-based conditional parameters
     /// When true, generates two struct parameters (old and new) and automatically diffs them
     /// When a string, uses or generates a struct with the given name
     /// Defaults to false
-    #[serde(default)]
-    pub conditions_type: Option<ConditionsType>,
+    pub conditions_type: ConditionsType,
     /// Type of struct to use for parameters
     /// When true, all query parameters are passed as a single struct
     /// When a string, uses or generates a struct with the given name
     /// Ignored if conditions_type is enabled
     /// Defaults to false
-    #[serde(default)]
-    pub parameters_type: Option<ParametersType>,
+    pub parameters_type: ParametersType,
     /// Type of struct to use for return values
     /// When None or not specified, uses default {QueryName}Item naming
     /// When Some(name), uses or generates a struct with the given name
-    #[serde(default)]
     pub return_type: Option<String>,
     /// Type of constraint enum to use for errors
     /// When None or not specified, uses default {QueryName}Constraints naming
     /// When Some(name), uses or generates a constraint enum with the given name
     /// Only applies to mutation queries
-    #[serde(default)]
     pub error_type: Option<String>,
 }
 
 /// Per-query telemetry configuration
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct QueryTelemetryConfig {
+#[derive(Debug, Default, Clone)]
+pub(crate) struct QueryTelemetryConfig {
     /// Override global telemetry level for this query
-    #[serde(default)]
-    pub level: Option<TelemetryLevel>,
+    pub level: TelemetryLevel,
     /// List of input parameter names to include in the span
     /// If not specified or empty, all parameters will be skipped (skip_all)
-    #[serde(default)]
     pub include_params: Option<Vec<String>>,
     /// Whether to include the SQL query as a field in the span
     /// Defaults to false
-    #[serde(default)]
-    pub include_sql: Option<bool>,
+    pub include_sql: bool,
 }

@@ -1,4 +1,3 @@
-use crate::config::ConstraintInfo;
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -8,6 +7,18 @@ use tokio_postgres::Statement;
 
 // Global cache for enum type information to avoid repeated database queries
 static ENUM_CACHE: OnceLock<Mutex<HashMap<u32, Option<EnumTypeInfo>>>> = OnceLock::new();
+
+/// Constraint information extracted from database schema
+#[derive(Debug, Clone)]
+pub struct ConstraintInfo {
+    /// Constraint name
+    pub name: String,
+    /// Constraint type: unique, primary_key, foreign_key, check, not_null
+    #[allow(unused)]
+    pub constraint_type: String,
+    /// Table name
+    pub table_name: String,
+}
 
 /// Information about a SQL query's input and output types
 #[derive(Debug, Clone)]
@@ -251,7 +262,6 @@ async fn query_table_constraints(
         let constraint_type_str: String = row.get(1);
         let constraint_type_char: char = constraint_type_str.chars().next().unwrap_or('?');
         let table_name: String = row.get(2);
-        let column_names: Vec<String> = row.get(3);
 
         let constraint_type = match constraint_type_char {
             'u' => "unique",
@@ -266,9 +276,6 @@ async fn query_table_constraints(
             name: constraint_name,
             constraint_type,
             table_name,
-            column_names,
-            referenced_table: None,
-            referenced_columns: None,
         });
     }
 
@@ -299,17 +306,11 @@ async fn query_table_constraints(
     for row in fk_rows {
         let constraint_name: String = row.get(0);
         let table_name: String = row.get(1);
-        let column_names: Vec<String> = row.get(2);
-        let referenced_table: String = row.get(3);
-        let referenced_columns: Vec<String> = row.get(4);
 
         constraints.push(ConstraintInfo {
             name: constraint_name,
             constraint_type: "foreign_key".to_string(),
             table_name,
-            column_names,
-            referenced_table: Some(referenced_table),
-            referenced_columns: Some(referenced_columns),
         });
     }
 
@@ -339,9 +340,6 @@ async fn query_table_constraints(
             name: format!("{}_{}_not_null", table_name, column_name),
             constraint_type: "not_null".to_string(),
             table_name,
-            column_names: vec![column_name],
-            referenced_table: None,
-            referenced_columns: None,
         });
     }
 

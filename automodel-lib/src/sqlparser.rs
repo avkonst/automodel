@@ -1,60 +1,7 @@
-use crate::config::QueryDefinition;
+use crate::definition::QueryDefinition;
 use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
-
-/// Public function to scan SQL files from a queries directory
-pub async fn scan_sql_files_from_path(queries_dir: &Path) -> Result<Vec<QueryDefinition>> {
-    scan_sql_files(queries_dir).await
-}
-
-/// Public function to calculate hash of all SQL files in a queries directory
-pub fn calculate_queries_dir_hash(queries_dir: &Path) -> Result<u64, std::io::Error> {
-    use sha2::{Digest, Sha256};
-    use std::fs;
-
-    let mut hasher = Sha256::new();
-
-    if queries_dir.exists() && queries_dir.is_dir() {
-        // Collect all SQL files and sort them for deterministic hashing
-        let mut sql_files = Vec::new();
-        for module_entry in fs::read_dir(queries_dir)? {
-            let module_entry = module_entry?;
-            let module_path = module_entry.path();
-
-            if module_path.is_dir() {
-                for sql_entry in fs::read_dir(&module_path)? {
-                    let sql_entry = sql_entry?;
-                    let sql_path = sql_entry.path();
-
-                    if sql_path.extension().and_then(|e| e.to_str()) == Some("sql") {
-                        sql_files.push(sql_path);
-                    }
-                }
-            }
-        }
-
-        // Sort for deterministic hashing
-        sql_files.sort();
-
-        // Hash each SQL file
-        for sql_file in sql_files {
-            let sql_contents = fs::read(&sql_file)?;
-            hasher.update(&sql_contents);
-        }
-    }
-
-    let result = hasher.finalize();
-
-    // Convert first 8 bytes of SHA-256 to u64 for a stable hash
-    let hash_bytes = &result[0..8];
-    let mut hash_u64 = 0u64;
-    for (i, &byte) in hash_bytes.iter().enumerate() {
-        hash_u64 |= (byte as u64) << (i * 8);
-    }
-
-    Ok(hash_u64)
-}
 
 /// Validates that a module name is a valid Rust identifier
 fn validate_module_name(module_name: &str) -> Result<(), String> {
@@ -195,16 +142,16 @@ fn is_rust_keyword(name: &str) -> bool {
 ///
 /// UPDATE users SET profile = ${profile} WHERE id = ${user_id}
 /// ```
-async fn parse_sql_file(path: &Path, module: &str, name: &str) -> Result<QueryDefinition> {
+async fn parse_sql_file(
+    path: &Path,
+    module: &str,
+    name: &str,
+    defaults: crate::DefaultsConfig,
+) -> Result<QueryDefinition> {
     let content = fs::read_to_string(path)
         .await
         .with_context(|| format!("Failed to read SQL file: {}", path.display()))?;
 
-    parse_sql_string(&content, module, name)
-}
-
-/// Parse SQL string with embedded YAML metadata
-fn parse_sql_string(content: &str, module: &str, name: &str) -> Result<QueryDefinition> {
     let mut in_metadata = false;
     let mut yaml_lines = Vec::new();
     let mut sql_lines = Vec::new();
@@ -245,17 +192,38 @@ fn parse_sql_string(content: &str, module: &str, name: &str) -> Result<QueryDefi
     let yaml_str = yaml_lines.join("\n");
 
     // Create a temporary QueryDefinition with minimal info
+    #[derive(Default, serde::Deserialize)]
+    struct TelemetryMetadata {
+        #[serde(default)]
+        pub level: Option<crate::definition::TelemetryLevel>,
+        #[serde(default)]
+        pub include_params: Option<Vec<String>>,
+        #[serde(default)]
+        pub include_sql: Option<bool>,
+    }
+
+    // Create a temporary QueryDefinition with minimal info
     #[derive(serde::Deserialize)]
     struct QueryMetadata {
+        #[serde(default)]
         description: Option<String>,
-        expect: Option<crate::config::ExpectedResult>,
+        #[serde(default)]
+        expect: Option<crate::definition::ExpectedResult>,
+        #[serde(default)]
         types: Option<std::collections::HashMap<String, String>>,
-        telemetry: Option<crate::config::QueryTelemetryConfig>,
+        #[serde(default)]
+        telemetry: TelemetryMetadata,
+        #[serde(default)]
         ensure_indexes: Option<bool>,
+        #[serde(default)]
         multiunzip: Option<bool>,
-        conditions_type: Option<crate::config::ConditionsType>,
-        parameters_type: Option<crate::config::ParametersType>,
+        #[serde(default)]
+        conditions_type: Option<crate::definition::ConditionsType>,
+        #[serde(default)]
+        parameters_type: Option<crate::definition::ParametersType>,
+        #[serde(default)]
         return_type: Option<String>,
+        #[serde(default)]
         error_type: Option<String>,
     }
 
@@ -285,11 +253,18 @@ fn parse_sql_string(content: &str, module: &str, name: &str) -> Result<QueryDefi
         module: module.to_string(),
         expect: metadata.expect.unwrap_or_default(),
         types: metadata.types,
-        telemetry: metadata.telemetry,
-        ensure_indexes: metadata.ensure_indexes,
-        multiunzip: metadata.multiunzip,
-        conditions_type: metadata.conditions_type,
-        parameters_type: metadata.parameters_type,
+        telemetry: crate::definition::QueryTelemetryConfig {
+            level: metadata.telemetry.level.unwrap_or(defaults.telemetry.level),
+            include_params: metadata.telemetry.include_params,
+            include_sql: metadata
+                .telemetry
+                .include_sql
+                .unwrap_or(defaults.telemetry.include_sql),
+        },
+        ensure_indexes: metadata.ensure_indexes.unwrap_or(defaults.ensure_indexes),
+        multiunzip: metadata.multiunzip.unwrap_or(false),
+        conditions_type: metadata.conditions_type.unwrap_or_default(),
+        parameters_type: metadata.parameters_type.unwrap_or_default(),
         return_type: metadata.return_type,
         error_type: metadata.error_type,
     })
@@ -297,7 +272,10 @@ fn parse_sql_string(content: &str, module: &str, name: &str) -> Result<QueryDefi
 
 /// Scan for SQL files in a queries directory and load them as QueryDefinitions
 /// Directory structure: queries/{module}/{query_name}.sql
-async fn scan_sql_files(queries_dir: &Path) -> Result<Vec<QueryDefinition>> {
+pub async fn scan_sql_files(
+    queries_dir: &Path,
+    defaults: crate::DefaultsConfig,
+) -> Result<Vec<QueryDefinition>> {
     let mut queries = Vec::new();
 
     // Check if queries directory exists
@@ -381,7 +359,8 @@ async fn scan_sql_files(queries_dir: &Path) -> Result<Vec<QueryDefinition>> {
             );
         }
 
-        let query_def = parse_sql_file(&sql_path, &module_name, &query_name).await?;
+        let query_def =
+            parse_sql_file(&sql_path, &module_name, &query_name, defaults.clone()).await?;
         queries.push(query_def);
     }
 

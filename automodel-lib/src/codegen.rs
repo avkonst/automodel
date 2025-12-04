@@ -1,4 +1,4 @@
-use crate::config::{ExpectedResult, QueryDefinition, TelemetryLevel};
+use crate::definition::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::type_extraction::{
     convert_named_params_to_positional, generate_conditional_diff_params,
     generate_conditional_diff_struct, generate_input_params_with_names,
@@ -225,7 +225,7 @@ impl std::error::Error for ErrorReadOnly {
 /// Generate per-query constraint enum with TryFrom<ErrorConstraintInfo> implementation
 pub fn generate_query_constraint_enum(
     enum_name: &str,
-    constraints: &[crate::config::ConstraintInfo],
+    constraints: &[crate::type_extraction::ConstraintInfo],
 ) -> String {
     use std::collections::HashSet;
 
@@ -290,12 +290,7 @@ pub fn generate_query_constraint_enum(
 fn generate_tracing_attribute(query: &QueryDefinition, param_names: &[String]) -> String {
     use std::collections::HashSet;
 
-    let telemetry_level = query
-        .telemetry
-        .as_ref()
-        .and_then(|qt| qt.level.clone())
-        .unwrap_or_default();
-
+    let telemetry_level = query.telemetry.level;
     if telemetry_level == TelemetryLevel::None {
         return String::new();
     }
@@ -318,36 +313,31 @@ fn generate_tracing_attribute(query: &QueryDefinition, param_names: &[String]) -
     skip_params.insert("executor".to_string());
 
     // Parameter inclusion logic (independent of telemetry level)
-    if let Some(query_telemetry) = &query.telemetry {
-        if let Some(include_params) = &query_telemetry.include_params {
-            if include_params.is_empty() {
-                // Empty include_params list means skip all parameters
-                skip_params.extend(param_names.iter().cloned());
-            } else {
-                let included: Vec<String> = include_params
-                    .iter()
-                    .filter(|param| param_names.contains(param))
-                    .cloned()
-                    .collect();
-
-                if !included.is_empty() {
-                    // Skip parameters not in the include list
-                    for param in param_names {
-                        if !included.contains(param) {
-                            skip_params.insert(param.clone());
-                        }
-                    }
-                } else {
-                    // No valid included parameters, skip all
-                    skip_params.extend(param_names.iter().cloned());
-                }
-            }
-        } else {
-            // No include_params specified, skip all parameters
+    if let Some(include_params) = &query.telemetry.include_params {
+        if include_params.is_empty() {
+            // Empty include_params list means skip all parameters
             skip_params.extend(param_names.iter().cloned());
+        } else {
+            let included: Vec<String> = include_params
+                .iter()
+                .filter(|param| param_names.contains(param))
+                .cloned()
+                .collect();
+
+            if !included.is_empty() {
+                // Skip parameters not in the include list
+                for param in param_names {
+                    if !included.contains(param) {
+                        skip_params.insert(param.clone());
+                    }
+                }
+            } else {
+                // No valid included parameters, skip all
+                skip_params.extend(param_names.iter().cloned());
+            }
         }
     } else {
-        // No query telemetry, skip all parameters
+        // No include_params specified, skip all parameters
         skip_params.extend(param_names.iter().cloned());
     }
 
@@ -368,12 +358,7 @@ fn generate_tracing_attribute(query: &QueryDefinition, param_names: &[String]) -
     }
 
     // Determine whether to include SQL based on configuration (default false)
-    let should_include_sql = query
-        .telemetry
-        .as_ref()
-        .map(|i| i.include_sql.unwrap_or_default())
-        .unwrap_or_default();
-
+    let should_include_sql = query.telemetry.include_sql;
     if should_include_sql {
         let escaped_sql = query
             .sql
@@ -426,7 +411,7 @@ pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
     emitted_struct_names: &mut std::collections::HashSet<String>,
-    constraints: &[crate::config::ConstraintInfo],
+    constraints: &[crate::type_extraction::ConstraintInfo],
 ) -> Result<String> {
     let mut code = String::new();
 
@@ -464,25 +449,21 @@ pub fn generate_function_code_without_enums(
         })
         .collect();
 
-    let use_multiunzip = query.multiunzip.unwrap_or(false);
+    let use_multiunzip = query.multiunzip;
 
     // Determine if conditions_type is enabled and get the struct name override
     let (use_conditional_diff, diff_struct_name_override) = match &query.conditions_type {
-        Some(cd) => match cd {
-            crate::config::ConditionsType::Enabled(true) => (true, None),
-            crate::config::ConditionsType::Named(name) => (true, Some(name.as_str())),
-            _ => (false, None),
-        },
+        crate::definition::ConditionsType::Enabled(true) => (true, None),
+        crate::definition::ConditionsType::Named(name) => (true, Some(name.as_str())),
         _ => (false, None),
     };
 
     // Determine if parameters_type is enabled and get the struct name
     let (use_structured_params, struct_name_override) = match &query.parameters_type {
-        Some(sp) if !use_conditional_diff => match sp {
-            crate::config::ParametersType::Enabled(true) => (true, None),
-            crate::config::ParametersType::Named(name) => (true, Some(name.as_str())),
-            _ => (false, None),
-        },
+        crate::definition::ParametersType::Enabled(true) if !use_conditional_diff => (true, None),
+        crate::definition::ParametersType::Named(name) if !use_conditional_diff => {
+            (true, Some(name.as_str()))
+        }
         _ => (false, None),
     };
 
@@ -681,16 +662,9 @@ fn generate_static_function_body(
     type_info: &QueryTypeInfo,
     return_type: &str,
 ) -> Result<()> {
-    let use_multiunzip = query.multiunzip.unwrap_or(false);
-    let use_conditional_diff = query
-        .conditions_type
-        .as_ref()
-        .map_or(false, |cd| cd.is_enabled());
-    let use_structured_params = query
-        .parameters_type
-        .as_ref()
-        .map_or(false, |sp| sp.is_enabled() && !use_conditional_diff);
-
+    let use_multiunzip = query.multiunzip;
+    let use_conditional_diff = query.conditions_type.is_enabled();
+    let use_structured_params = query.parameters_type.is_enabled() && !use_conditional_diff;
     // Add itertools import if using multiunzip
     if use_multiunzip {
         body.push_str("    use itertools::Itertools;\n");
@@ -860,15 +834,8 @@ fn generate_conditional_function_body(
 ) -> Result<()> {
     use crate::type_extraction::parse_parameter_names_from_sql;
 
-    let use_conditional_diff = query
-        .conditions_type
-        .as_ref()
-        .map_or(false, |cd| cd.is_enabled());
-    let use_structured_params = query
-        .parameters_type
-        .as_ref()
-        .map_or(false, |sp| sp.is_enabled() && !use_conditional_diff);
-
+    let use_conditional_diff = query.conditions_type.is_enabled();
+    let use_structured_params = query.parameters_type.is_enabled() && !use_conditional_diff;
     // Parse all parameters from the original SQL to get their order and types
     let all_params = parse_parameter_names_from_sql(&query.sql);
 
