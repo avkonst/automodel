@@ -26,10 +26,10 @@ impl AutoModel {
         defaults: DefaultsConfig,
     ) -> Result<Self> {
         let queries_dir_path = queries_dir.as_ref();
-        
+
         // Scan SQL files from the queries directory
         let mut queries = scan_sql_files_from_path(queries_dir_path).await?;
-        
+
         // Apply defaults to all queries
         for query in &mut queries {
             if query.telemetry.is_none() {
@@ -59,10 +59,7 @@ impl AutoModel {
         // Calculate hash of all SQL files
         let file_hash = calculate_queries_dir_hash(queries_dir_path).unwrap_or(0);
 
-        Ok(Self {
-            queries,
-            file_hash,
-        })
+        Ok(Self { queries, file_hash })
     }
 
     /// Create a new AutoModel instance by loading queries from a YAML file
@@ -342,9 +339,8 @@ impl AutoModel {
         }
 
         // Generated code is out of date - need to regenerate
-        let database_url = env::var("AUTOMODEL_DATABASE_URL").map_err(|_| {
-            anyhow::anyhow!("AUTOMODEL_DATABASE_URL environment variable not set")
-        })?;
+        let database_url = env::var("AUTOMODEL_DATABASE_URL")
+            .map_err(|_| anyhow::anyhow!("AUTOMODEL_DATABASE_URL environment variable not set"))?;
 
         println!(
             "cargo:warning=AUTOMODEL_DATABASE_URL environment variable must be set for code generation"
