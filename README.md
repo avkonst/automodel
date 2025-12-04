@@ -121,6 +121,94 @@ queries:
     description: "Create a new user and return the generated ID"
 ```
 
+### Alternative: Define Queries in SQL Files
+
+Instead of defining queries in YAML, you can organize them as separate SQL files with embedded YAML metadata. This approach provides better SQL syntax highlighting and editor support.
+
+**Directory Structure:**
+
+Create a `queries/` directory adjacent to your `queries.yaml` file:
+
+```
+my-project/
+├── queries.yaml          # Can be empty or contain additional queries
+├── queries/              # SQL files organized by module
+│   └── users/
+│       ├── get_user_simple.sql
+│       └── update_user_profile_diff.sql
+├── build.rs
+└── src/
+    └── main.rs
+```
+
+**SQL File Format:**
+
+Each SQL file contains YAML metadata in SQL comments followed by the query:
+
+```sql
+-- @automodel
+--    description: Update user profile with conditional name/email
+--    expect: exactly_one
+--    conditions_type: true
+--    types:
+--      users.profile: "crate::models::UserProfile"
+--      profile: "crate::models::UserProfile"
+-- @end
+
+UPDATE users 
+SET profile = ${profile}, updated_at = NOW() 
+$[, name = ${name?}] 
+$[, email = ${email?}] 
+WHERE id = ${user_id} 
+RETURNING id, name, email, profile, updated_at
+```
+
+**File Naming Convention:**
+- File path: `queries/{module_name}/{function_name}.sql`
+- Module name: The directory name (e.g., `users`)
+- Function name: The file name without extension (e.g., `update_user_profile_diff`)
+
+Both module and function names must be valid Rust identifiers.
+
+**Metadata Format:**
+
+All YAML metadata is optional and follows the same structure as YAML query definitions:
+
+```sql
+-- @automodel
+--    description: Optional query description
+--    expect: exactly_one | possible_one | at_least_one | multiple
+--    module: custom_module  # Overrides directory-based module name
+--    types:
+--      field_name: "CustomType"
+--    telemetry:
+--      level: debug
+--      include_params: [param1, param2]
+--    conditions_type: true | "CustomStructName"
+--    parameters_type: true | "CustomStructName"
+--    return_type: "CustomReturnType"
+--    error_type: "CustomErrorType"
+--    ensure_indexes: true
+--    multiunzip: true
+-- @end
+
+SELECT * FROM table WHERE id = ${id}
+```
+
+**Benefits:**
+- ✅ SQL syntax highlighting in your editor
+- ✅ Better code organization for large projects
+- ✅ Easy to version control individual queries
+- ✅ Can mix YAML and SQL file definitions
+- ✅ Automatic build regeneration when SQL files change
+
+**Mixing YAML and SQL Files:**
+
+You can use both formats simultaneously. Queries defined in SQL files will be combined with queries from the YAML file. This is useful for:
+- Migrating existing queries incrementally
+- Keeping simple queries in YAML while complex ones in separate files
+- Organizing queries by team or feature area
+
 ### Use the generated functions
 
 ```rust

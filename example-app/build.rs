@@ -1,8 +1,17 @@
-use automodel::AutoModel;
+use automodel::{AutoModel, DefaultsConfig, DefaultsTelemetryConfig, TelemetryLevel};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
+    let defaults = DefaultsConfig {
+        telemetry: DefaultsTelemetryConfig {
+            level: Some(TelemetryLevel::Debug),
+            include_sql: Some(true),
+        },
+        ensure_indexes: Some(true),
+        module: None,
+    };
+
+    AutoModel::generate_from_queries_dir("queries", "src/generated", defaults).await?;
 
     Ok(())
 }
