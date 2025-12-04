@@ -5,12 +5,33 @@ mod yaml_parser;
 
 use codegen::*;
 use config::*;
-pub use config::{DefaultsConfig, DefaultsTelemetryConfig, ExpectedResult, TelemetryLevel};
+pub use config::{ExpectedResult, TelemetryLevel};
 use type_extraction::*;
 use yaml_parser::*;
 
 use anyhow::Result;
 use std::path::Path;
+
+
+/// Default configuration for telemetry and analysis
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DefaultsConfig {
+    /// Global telemetry defaults
+    pub telemetry: DefaultsTelemetryConfig,
+    /// Whether to analyze query performance and warn about sequential scans
+    /// Defaults to false
+    pub ensure_indexes: bool,
+}
+
+/// Default configuration for telemetry and analysis
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DefaultsTelemetryConfig {
+    /// Global telemetry level
+    pub level: TelemetryLevel,
+    /// Whether to include SQL queries as fields in spans by default
+    /// Defaults to false
+    pub include_sql: bool,
+}
 
 /// Main entry point for the automodel library
 pub struct AutoModel {
@@ -21,7 +42,7 @@ pub struct AutoModel {
 impl AutoModel {
     /// Create a new AutoModel instance by loading queries from SQL files in a directory
     /// with explicit defaults configuration (no YAML file required)
-    pub async fn from_queries_dir<P: AsRef<Path>>(
+    pub async fn new<P: AsRef<Path>>(
         queries_dir: P,
         defaults: DefaultsConfig,
     ) -> Result<Self> {
@@ -37,22 +58,14 @@ impl AutoModel {
             }
             if let Some(telemetry) = query.telemetry.as_mut() {
                 if telemetry.level.is_none() {
-                    telemetry.level = defaults.telemetry.level;
+                    telemetry.level = Some(defaults.telemetry.level);
                 }
                 if telemetry.include_sql.is_none() {
-                    telemetry.include_sql = defaults.telemetry.include_sql;
+                    telemetry.include_sql = Some(defaults.telemetry.include_sql);
                 }
             }
             if query.ensure_indexes.is_none() {
-                query.ensure_indexes = defaults.ensure_indexes;
-            }
-            if query.module.is_none() {
-                query.module = Some(
-                    defaults
-                        .module
-                        .clone()
-                        .unwrap_or(String::from("queries.rs")),
-                );
+                query.ensure_indexes = Some(defaults.ensure_indexes);
             }
         }
 
@@ -62,126 +75,8 @@ impl AutoModel {
         Ok(Self { queries, file_hash })
     }
 
-    /// Create a new AutoModel instance by loading queries from a YAML file
-    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut config = parse_yaml_file(path.as_ref()).await?;
-        for query in &mut config.queries {
-            if query.telemetry.is_none() {
-                query.telemetry = Some(QueryTelemetryConfig::default());
-            }
-            if let Some(telemetry) = query.telemetry.as_mut() {
-                if telemetry.level.is_none() {
-                    telemetry.level = config.defaults.telemetry.level;
-                }
-                if telemetry.include_sql.is_none() {
-                    telemetry.include_sql = config.defaults.telemetry.include_sql;
-                }
-            }
-            if query.ensure_indexes.is_none() {
-                query.ensure_indexes = config.defaults.ensure_indexes;
-            }
-            if query.module.is_none() {
-                query.module = Some(
-                    config
-                        .defaults
-                        .module
-                        .clone()
-                        .unwrap_or(String::from("queries.rs")),
-                );
-            }
-        }
-
-        /// Calculate SHA-256 hash of a file's contents
-        #[allow(dead_code)]
-        pub fn calculate_file_hash<P: AsRef<Path>>(file_path: P) -> Result<u64, std::io::Error> {
-            use sha2::{Digest, Sha256};
-            use std::fs;
-
-            let contents = fs::read(file_path)?;
-            let mut hasher = Sha256::new();
-            hasher.update(&contents);
-            let result = hasher.finalize();
-
-            // Convert first 8 bytes of SHA-256 to u64 for a stable hash
-            let hash_bytes = &result[0..8];
-            let mut hash_u64 = 0u64;
-            for (i, &byte) in hash_bytes.iter().enumerate() {
-                hash_u64 |= (byte as u64) << (i * 8);
-            }
-
-            Ok(hash_u64)
-        }
-
-        /// Calculate combined hash of YAML file and all SQL files in queries directory
-        pub fn calculate_combined_hash<P: AsRef<Path>>(
-            yaml_path: P,
-        ) -> Result<u64, std::io::Error> {
-            use sha2::{Digest, Sha256};
-            use std::fs;
-
-            let mut hasher = Sha256::new();
-
-            // Hash the YAML file
-            let yaml_contents = fs::read(yaml_path.as_ref())?;
-            hasher.update(&yaml_contents);
-
-            // Hash all SQL files in the queries directory
-            let queries_dir = yaml_path
-                .as_ref()
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("queries");
-
-            if queries_dir.exists() && queries_dir.is_dir() {
-                // Collect all SQL files and sort them for deterministic hashing
-                let mut sql_files = Vec::new();
-                for module_entry in fs::read_dir(&queries_dir)? {
-                    let module_entry = module_entry?;
-                    let module_path = module_entry.path();
-
-                    if module_path.is_dir() {
-                        for sql_entry in fs::read_dir(&module_path)? {
-                            let sql_entry = sql_entry?;
-                            let sql_path = sql_entry.path();
-
-                            if sql_path.extension().and_then(|e| e.to_str()) == Some("sql") {
-                                sql_files.push(sql_path);
-                            }
-                        }
-                    }
-                }
-
-                // Sort for deterministic hashing
-                sql_files.sort();
-
-                // Hash each SQL file
-                for sql_file in sql_files {
-                    let sql_contents = fs::read(&sql_file)?;
-                    hasher.update(&sql_contents);
-                }
-            }
-
-            let result = hasher.finalize();
-
-            // Convert first 8 bytes of SHA-256 to u64 for a stable hash
-            let hash_bytes = &result[0..8];
-            let mut hash_u64 = 0u64;
-            for (i, &byte) in hash_bytes.iter().enumerate() {
-                hash_u64 |= (byte as u64) << (i * 8);
-            }
-
-            Ok(hash_u64)
-        }
-
-        Ok(Self {
-            queries: config.queries,
-            file_hash: calculate_combined_hash(&path).unwrap_or(0),
-        })
-    }
-
     /// Generate code to output directory with provided database URL
-    /// This is a CLI-friendly version that doesn't use environment variables
-    pub async fn generate_to_directory(
+    async fn generate_to_directory(
         &self,
         database_url: &str,
         output_dir: &str,
@@ -249,110 +144,6 @@ impl AutoModel {
         Ok(())
     }
 
-    /// Build script helper for generating code from SQL files only (no YAML file required)
-    ///
-    /// This function should be called from your build.rs script. It will:
-    /// - Calculate hash of SQL files and check if generated code is up to date
-    /// - If generated code is up to date, skip database connection entirely
-    /// - If not up to date and AUTOMODEL_DATABASE_URL is set, regenerate code
-    /// - If not up to date and no AUTOMODEL_DATABASE_URL, fail the build
-    ///
-    /// # Arguments
-    ///
-    /// * `queries_dir` - Path to the directory containing SQL files organized by module
-    /// * `output_dir` - Path to the directory where module files will be written
-    /// * `defaults` - Default configuration (telemetry, ensure_indexes, etc.)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// // build.rs
-    /// use automodel::{AutoModel, DefaultsConfig, DefaultsTelemetryConfig, TelemetryLevel};
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let defaults = DefaultsConfig {
-    ///         telemetry: DefaultsTelemetryConfig {
-    ///             level: Some(TelemetryLevel::Debug),
-    ///             include_sql: Some(true),
-    ///         },
-    ///         ensure_indexes: Some(true),
-    ///         module: None,
-    ///     };
-    ///     
-    ///     AutoModel::generate_from_queries_dir("queries", "src/generated", defaults).await?;
-    ///     
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn generate_from_queries_dir(
-        queries_dir: &str,
-        output_dir: &str,
-        defaults: DefaultsConfig,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use std::env;
-        use std::path::Path;
-
-        let queries_path = Path::new(queries_dir);
-
-        // Tell cargo to rerun if any SQL files in queries directory change
-        if queries_path.exists() && queries_path.is_dir() {
-            Self::register_sql_file_watches(queries_path)?;
-        }
-
-        // Load queries from SQL files
-        let automodel = AutoModel::from_queries_dir(queries_dir, defaults).await?;
-
-        let output_path = Path::new(output_dir);
-        let modules = automodel.get_modules();
-
-        for module in &modules {
-            let module_file = output_path.join(format!("{}.rs", module));
-            // Tell cargo to rerun if any module file is manually modified
-            println!("cargo:rerun-if-changed={}", module_file.display());
-
-            // Clean up module file if it exists but doesn't have a valid hash
-            if module_file.exists() {
-                if !Self::is_generated_code_up_to_date(automodel.file_hash, &module_file)
-                    .unwrap_or(false)
-                {
-                    let _ = std::fs::remove_file(&module_file);
-                }
-            }
-        }
-
-        // Check if all module files are up to date
-        let all_up_to_date = modules.iter().all(|module| {
-            let module_file = output_path.join(format!("{}.rs", module));
-            module_file.exists()
-                && Self::is_generated_code_up_to_date(automodel.file_hash, &module_file)
-                    .unwrap_or(false)
-        });
-
-        if all_up_to_date {
-            println!(
-                "cargo:warning=Generated code is up to date (hash: {}), skipping database connection",
-                automodel.file_hash
-            );
-            // TODO temporary off
-            // return Ok(());
-        }
-
-        // Generated code is out of date - need to regenerate
-        let database_url = env::var("AUTOMODEL_DATABASE_URL")
-            .map_err(|_| anyhow::anyhow!("AUTOMODEL_DATABASE_URL environment variable not set"))?;
-
-        println!(
-            "cargo:warning=AUTOMODEL_DATABASE_URL environment variable must be set for code generation"
-        );
-
-        automodel
-            .generate_to_directory(&database_url, output_dir)
-            .await?;
-
-        Ok(())
-    }
-
     /// Build script helper for automatically generating code at build time.
     ///
     /// This function should be called from your build.rs script. It will:
@@ -380,28 +171,22 @@ impl AutoModel {
     /// }
     /// ```
     pub async fn generate_at_build_time(
-        yaml_file: &str,
+        queries_dir: &str,
         output_dir: &str,
+        defaults: DefaultsConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use std::env;
         use std::path::Path;
 
-        // Tell cargo to rerun if the input YAML file changes
-        println!("cargo:rerun-if-changed={}", yaml_file);
+        let queries_path = Path::new(queries_dir);
 
         // Tell cargo to rerun if any SQL files in queries directory change
-        let yaml_path = Path::new(yaml_file);
-        let queries_dir = yaml_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("queries");
-
-        if queries_dir.exists() && queries_dir.is_dir() {
-            Self::register_sql_file_watches(&queries_dir)?;
+        if queries_path.exists() && queries_path.is_dir() {
+            Self::register_sql_file_watches(queries_path)?;
         }
 
-        // Load YAML and create AutoModel instance
-        let automodel = AutoModel::new(yaml_file).await?;
+        // Load queries from SQL files
+        let automodel = AutoModel::new(queries_dir, defaults).await?;
 
         let output_path = Path::new(output_dir);
         let modules = automodel.get_modules();
@@ -492,7 +277,7 @@ impl AutoModel {
         let mut modules: Vec<String> = self
             .queries
             .iter()
-            .filter_map(|q| q.module.clone())
+            .map(|q| q.module.clone())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -582,7 +367,7 @@ impl AutoModel {
         let module_queries: Vec<&QueryDefinition> = self
             .queries
             .iter()
-            .filter(|q| q.module.as_deref() == Some(module))
+            .filter(|q| q.module == module)
             .collect();
 
         if module_queries.is_empty() {

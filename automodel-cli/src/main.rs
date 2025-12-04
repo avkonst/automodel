@@ -121,10 +121,10 @@ async fn generate_command(matches: &ArgMatches) -> Result<()> {
     println!("Ensure indexes: {}", ensure_indexes);
 
     // Set the database URL environment variable for code generation
-    std::env::set_var("AUTOMODEL_DATABASE_URL", database_url);
+    unsafe { std::env::set_var("AUTOMODEL_DATABASE_URL", database_url) };
 
     // Use the same method as build.rs
-    AutoModel::generate_from_queries_dir(queries_dir, output_dir, defaults)
+    AutoModel::generate_at_build_time(queries_dir, output_dir, defaults)
         .await
         .map_err(|e| anyhow::anyhow!("Code generation failed: {}", e))?;
 

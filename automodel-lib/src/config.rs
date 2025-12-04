@@ -87,34 +87,6 @@ impl Default for TelemetryLevel {
     }
 }
 
-/// Default configuration for telemetry and analysis
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct DefaultsConfig {
-    /// Global telemetry defaults
-    #[serde(default)]
-    pub telemetry: DefaultsTelemetryConfig,
-    /// Whether to analyze query performance and warn about sequential scans
-    /// Defaults to false
-    #[serde(default)]
-    pub ensure_indexes: Option<bool>,
-    /// Default module for queries without a module specified
-    /// If not specified, the function will be generated in queries.rs by default
-    #[serde(default)]
-    pub module: Option<String>,
-}
-
-/// Default configuration for telemetry and analysis
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct DefaultsTelemetryConfig {
-    /// Global telemetry level
-    #[serde(default)]
-    pub level: Option<TelemetryLevel>,
-    /// Whether to include SQL queries as fields in spans by default
-    /// Defaults to false
-    #[serde(default)]
-    pub include_sql: Option<bool>,
-}
-
 impl Default for ExpectedResult {
     fn default() -> Self {
         ExpectedResult::ExactlyOne
@@ -149,7 +121,7 @@ pub struct QueryDefinition {
     /// Optional module name where this function should be generated
     /// If not specified, the function will be generated in queries.rs by default
     /// Must be a valid Rust module name (alphanumeric + underscore, starting with letter/underscore)
-    pub module: Option<String>,
+    pub module: String,
     /// Expected result type - controls fetch method and error handling
     /// Defaults to "exactly_one" if not specified
     #[serde(default)]
@@ -210,15 +182,4 @@ pub struct QueryTelemetryConfig {
     /// Defaults to false
     #[serde(default)]
     pub include_sql: Option<bool>,
-}
-
-/// Root structure for the YAML file containing multiple queries
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Config {
-    /// List of SQL queries
-    #[serde(default)]
-    pub queries: Vec<QueryDefinition>,
-    /// Default configuration for telemetry and analysis
-    #[serde(default)]
-    pub defaults: DefaultsConfig,
 }

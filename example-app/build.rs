@@ -8,10 +8,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             include_sql: Some(true),
         },
         ensure_indexes: Some(true),
-        module: None,
     };
 
-    AutoModel::generate_from_queries_dir("queries", "src/generated", defaults).await?;
+    AutoModel::generate_at_build_time("queries", "src/generated", defaults).await?;
 
     Ok(())
 }

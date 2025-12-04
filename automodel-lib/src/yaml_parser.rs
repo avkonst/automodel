@@ -1,4 +1,4 @@
-use crate::config::{Config, QueryDefinition};
+use crate::config::QueryDefinition;
 use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
@@ -98,63 +98,6 @@ fn validate_module_name(module_name: &str) -> Result<(), String> {
         ));
     }
 
-    Ok(())
-}
-
-/// Parse a YAML file and return the full configuration including queries and type mappings
-/// Also scans for SQL files in a "queries" directory adjacent to the YAML file
-/// SQL files should be organized as: queries/{module}/{query_name}.sql
-pub async fn parse_yaml_file<P: AsRef<Path>>(path: P) -> Result<Config> {
-    let content = fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("Failed to read YAML file: {}", path.as_ref().display()))?;
-
-    let mut config = parse_yaml_string(&content)?;
-
-    // Scan for SQL files in a "queries" directory adjacent to the YAML file
-    let yaml_path = path.as_ref();
-    let queries_dir = yaml_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("queries");
-
-    if queries_dir.exists() && queries_dir.is_dir() {
-        let sql_queries = scan_sql_files(&queries_dir).await?;
-        config.queries.extend(sql_queries);
-    }
-
-    // Validate query names during parsing
-    validate_query_names(&config.queries)?;
-
-    Ok(config)
-}
-
-/// Parse a YAML string and return the full configuration including queries and type mappings
-pub fn parse_yaml_string(content: &str) -> Result<Config> {
-    let config: Config =
-        serde_yaml::from_str(content).with_context(|| "Failed to parse YAML content")?;
-
-    Ok(config)
-}
-
-/// Validate that query names are valid Rust function names and module names are valid
-pub fn validate_query_names(queries: &[QueryDefinition]) -> Result<()> {
-    for query in queries {
-        // Validate query name
-        if !is_valid_rust_identifier(&query.name) {
-            anyhow::bail!(
-                "Query name '{}' is not a valid Rust function name. Use only alphanumeric characters and underscores, and start with a letter or underscore.",
-                query.name
-            );
-        }
-
-        // Validate module name if specified
-        if let Some(module_name) = &query.module {
-            if let Err(error) = validate_module_name(module_name) {
-                anyhow::bail!("Invalid module name in query '{}': {}", query.name, error);
-            }
-        }
-    }
     Ok(())
 }
 
@@ -339,7 +282,7 @@ fn parse_sql_string(content: &str, module: &str, name: &str) -> Result<QueryDefi
         name: name.to_string(),
         sql,
         description: metadata.description,
-        module: Some(module.to_string()),
+        module: module.to_string(),
         expect: metadata.expect.unwrap_or_default(),
         types: metadata.types,
         telemetry: metadata.telemetry,
