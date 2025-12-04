@@ -1,4 +1,4 @@
-use crate::definition::QueryDefinition;
+use crate::query_definition::QueryDefinition;
 use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
@@ -195,7 +195,7 @@ async fn parse_sql_file(
     #[derive(Default, serde::Deserialize)]
     struct TelemetryMetadata {
         #[serde(default)]
-        pub level: Option<crate::definition::TelemetryLevel>,
+        pub level: Option<crate::query_definition::TelemetryLevel>,
         #[serde(default)]
         pub include_params: Option<Vec<String>>,
         #[serde(default)]
@@ -208,7 +208,7 @@ async fn parse_sql_file(
         #[serde(default)]
         description: Option<String>,
         #[serde(default)]
-        expect: Option<crate::definition::ExpectedResult>,
+        expect: Option<crate::query_definition::ExpectedResult>,
         #[serde(default)]
         types: Option<std::collections::HashMap<String, String>>,
         #[serde(default)]
@@ -218,9 +218,9 @@ async fn parse_sql_file(
         #[serde(default)]
         multiunzip: Option<bool>,
         #[serde(default)]
-        conditions_type: Option<crate::definition::ConditionsType>,
+        conditions_type: Option<crate::query_definition::ConditionsType>,
         #[serde(default)]
-        parameters_type: Option<crate::definition::ParametersType>,
+        parameters_type: Option<crate::query_definition::ParametersType>,
         #[serde(default)]
         return_type: Option<String>,
         #[serde(default)]
@@ -253,7 +253,7 @@ async fn parse_sql_file(
         module: module.to_string(),
         expect: metadata.expect.unwrap_or_default(),
         types: metadata.types,
-        telemetry: crate::definition::QueryTelemetryConfig {
+        telemetry: crate::query_definition::QueryTelemetryConfig {
             level: metadata.telemetry.level.unwrap_or(defaults.telemetry.level),
             include_params: metadata.telemetry.include_params,
             include_sql: metadata

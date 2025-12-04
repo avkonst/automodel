@@ -1,17 +1,17 @@
 mod codegen;
-mod definition;
-mod sqlparser;
-mod type_extraction;
+mod query_definition;
+mod sqlfile_parser;
+mod types_extractor;
 
 use codegen::*;
-use definition::*;
-use sqlparser::*;
-use type_extraction::*;
+use query_definition::*;
+use sqlfile_parser::*;
+use types_extractor::*;
 
 use anyhow::Result;
 use std::path::Path;
 
-pub use definition::TelemetryLevel;
+pub use query_definition::TelemetryLevel;
 
 /// Default configuration for telemetry and analysis
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -315,7 +315,7 @@ impl AutoModel {
 
         // Collect type information for all queries in this module
         let mut type_infos = Vec::new();
-        let mut query_constraints: Vec<Vec<crate::type_extraction::ConstraintInfo>> = Vec::new();
+        let mut query_constraints: Vec<Vec<crate::types_extractor::ConstraintInfo>> = Vec::new();
 
         for query in &module_queries {
             let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
@@ -833,7 +833,7 @@ impl AutoModel {
         for param_type in param_types {
             // Check if this is an enum type and get actual enum values
             if let Ok(Some(enum_info)) =
-                crate::type_extraction::get_enum_type_info(client, param_type.oid()).await
+                crate::types_extractor::get_enum_type_info(client, param_type.oid()).await
             {
                 special_params.push((
                     dummy_params.len(),
@@ -1069,7 +1069,7 @@ impl AutoModel {
     ) -> Result<()> {
         // Convert named parameters ${param} to positional parameters $1, $2, etc.
         let (converted_sql, param_names) =
-            crate::type_extraction::convert_named_params_to_positional(sql);
+            crate::types_extractor::convert_named_params_to_positional(sql);
 
         // Execute EXPLAIN query with appropriate parameters
         let query_result = if !param_names.is_empty() {

@@ -1,5 +1,5 @@
-use crate::definition::{ExpectedResult, QueryDefinition, TelemetryLevel};
-use crate::type_extraction::{
+use crate::query_definition::{ExpectedResult, QueryDefinition, TelemetryLevel};
+use crate::types_extractor::{
     convert_named_params_to_positional, generate_conditional_diff_params,
     generate_conditional_diff_struct, generate_input_params_with_names,
     generate_multiunzip_input_struct, generate_multiunzip_param, generate_result_struct_with_name,
@@ -225,7 +225,7 @@ impl std::error::Error for ErrorReadOnly {
 /// Generate per-query constraint enum with TryFrom<ErrorConstraintInfo> implementation
 pub fn generate_query_constraint_enum(
     enum_name: &str,
-    constraints: &[crate::type_extraction::ConstraintInfo],
+    constraints: &[crate::types_extractor::ConstraintInfo],
 ) -> String {
     use std::collections::HashSet;
 
@@ -411,7 +411,7 @@ pub fn generate_function_code_without_enums(
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
     emitted_struct_names: &mut std::collections::HashSet<String>,
-    constraints: &[crate::type_extraction::ConstraintInfo],
+    constraints: &[crate::types_extractor::ConstraintInfo],
 ) -> Result<String> {
     let mut code = String::new();
 
@@ -453,15 +453,15 @@ pub fn generate_function_code_without_enums(
 
     // Determine if conditions_type is enabled and get the struct name override
     let (use_conditional_diff, diff_struct_name_override) = match &query.conditions_type {
-        crate::definition::ConditionsType::Enabled(true) => (true, None),
-        crate::definition::ConditionsType::Named(name) => (true, Some(name.as_str())),
+        crate::query_definition::ConditionsType::Enabled(true) => (true, None),
+        crate::query_definition::ConditionsType::Named(name) => (true, Some(name.as_str())),
         _ => (false, None),
     };
 
     // Determine if parameters_type is enabled and get the struct name
     let (use_structured_params, struct_name_override) = match &query.parameters_type {
-        crate::definition::ParametersType::Enabled(true) if !use_conditional_diff => (true, None),
-        crate::definition::ParametersType::Named(name) if !use_conditional_diff => {
+        crate::query_definition::ParametersType::Enabled(true) if !use_conditional_diff => (true, None),
+        crate::query_definition::ParametersType::Named(name) if !use_conditional_diff => {
             (true, Some(name.as_str()))
         }
         _ => (false, None),
@@ -829,10 +829,10 @@ fn generate_conditional_function_body(
     body: &mut String,
     query: &QueryDefinition,
     type_info: &QueryTypeInfo,
-    parsed_sql: &crate::type_extraction::ParsedSql,
+    parsed_sql: &crate::types_extractor::ParsedSql,
     return_type: &str,
 ) -> Result<()> {
-    use crate::type_extraction::parse_parameter_names_from_sql;
+    use crate::types_extractor::parse_parameter_names_from_sql;
 
     let use_conditional_diff = query.conditions_type.is_enabled();
     let use_structured_params = query.parameters_type.is_enabled() && !use_conditional_diff;
@@ -1268,7 +1268,7 @@ fn to_snake_case(s: &str) -> String {
 pub fn validate_struct_reference(
     struct_name: &str,
     query_params: &[String],
-    query_param_types: &[crate::type_extraction::RustType],
+    query_param_types: &[crate::types_extractor::RustType],
     available_structs: &std::collections::HashMap<String, Vec<(String, String)>>,
     is_conditional_diff: bool,
 ) -> Result<()> {
