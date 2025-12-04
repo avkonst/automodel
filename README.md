@@ -1,6 +1,6 @@
 # AutoModel Workspace
 
-A Rust workspace for automatically generating typed functions from YAML-defined SQL queries using PostgreSQL.
+A Rust workspace for automatically generating typed functions from SQL queries using PostgreSQL. Queries are defined in SQL files with embedded configuration in comments.
 
 ## Project Structure
 
@@ -12,18 +12,19 @@ This is a Cargo workspace with three main components:
 
 ## Features
 
-- 📝 Define SQL queries in YAML files with names and descriptions
+- 📝 Define SQL queries in `.sql` files with embedded configuration in comments
 - 🔌 Connect to PostgreSQL databases  
 - 🔍 Automatically extract input and output types from prepared statements
 - 🛠️ Generate Rust functions with proper type signatures at build time
 - ✅ Support for all common PostgreSQL types including custom enums
 - 🏗️ Generate result structs for multi-column queries
-- ⚡ Build-time code generation with automatic regeneration when YAML changes
+- ⚡ Build-time code generation with automatic regeneration when SQL files change
 - 📊 Built-in query performance analysis with sequential scan detection
 - 🔄 Conditional queries with dynamic SQL based on optional parameters
 - ♻️ Struct reuse and deduplication across queries
 - 🔀 Diff-based conditional updates for precise change tracking
 - 🎨 Custom struct naming for cleaner, domain-specific APIs
+- 💡 SQL syntax highlighting and editor support for query definitions
 
 ## Quick Start
 
@@ -42,21 +43,21 @@ The CLI tool provides several commands for different workflows:
 #### Generate code
 
 ```bash
-# Basic generation
-cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml
+# Basic generation from queries directory
+cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -q queries/
 
 # Generate with custom output file
-cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml -o src/db_functions.rs
+cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -q queries/ -o src/db_functions.rs
 
 # Dry run (see generated code without writing files)
-cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml --dry-run
+cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -q queries/ --dry-run
 ```
 
 #### Query Performance Analysis
 
 ```bash
-# Analysis is performed automatically during code generation (if analysis is enabled in the queries.yaml configuration file)
-cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -f queries.yaml
+# Analysis is performed automatically during code generation (if analysis is enabled in query metadata)
+cargo run -p automodel-cli -- generate -d postgresql://localhost/mydb -q queries/
 ```
 
 #### CLI Help
@@ -78,8 +79,9 @@ cargo run
 
 The example app demonstrates:
 - Build-time code generation via `build.rs`
-- Automatic regeneration when YAML files change
+- Automatic regeneration when SQL files change
 - How to use generated functions in your application
+- SQL files with embedded metadata configuration
 
 ## Library Usage (automodel-lib)
 
@@ -102,40 +104,27 @@ use automodel::AutoModel;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
+    AutoModel::generate_at_build_time("queries", "src/generated").await?;
 
     Ok(())
 }
 ```
 
-### Create queries.yaml
+### Define Queries in SQL Files
 
-```yaml
-queries:
-  - name: get_user_by_id
-    sql: "SELECT id, name, email FROM users WHERE id = ${id}"
-    description: "Retrieve a user by their ID"
-    
-  - name: create_user
-    sql: "INSERT INTO users (name, email) VALUES (${name}, ${email}) RETURNING id"
-    description: "Create a new user and return the generated ID"
-```
-
-### Alternative: Define Queries in SQL Files
-
-Instead of defining queries in YAML, you can organize them as separate SQL files with embedded YAML metadata. This approach provides better SQL syntax highlighting and editor support.
+Organize your queries as separate SQL files with embedded configuration in comments. This approach provides SQL syntax highlighting and better editor support.
 
 **Directory Structure:**
 
-Create a `queries/` directory adjacent to your `queries.yaml` file:
+Create a `queries/` directory in your project:
 
 ```
 my-project/
-├── queries.yaml          # Can be empty or contain additional queries
 ├── queries/              # SQL files organized by module
 │   └── users/
-│       ├── get_user_simple.sql
-│       └── update_user_profile_diff.sql
+│       ├── get_user_by_id.sql
+│       ├── create_user.sql
+│       └── update_user_profile.sql
 ├── build.rs
 └── src/
     └── main.rs
@@ -143,7 +132,20 @@ my-project/
 
 **SQL File Format:**
 
-Each SQL file contains YAML metadata in SQL comments followed by the query:
+Each SQL file contains configuration metadata in SQL comments followed by the query:
+
+```sql
+-- @automodel
+--    description: Retrieve a user by their ID
+--    expect: exactly_one
+-- @end
+
+SELECT id, name, email, created_at
+FROM users
+WHERE id = ${id}
+```
+
+**Advanced Example with Custom Types:**
 
 ```sql
 -- @automodel
@@ -151,7 +153,6 @@ Each SQL file contains YAML metadata in SQL comments followed by the query:
 --    expect: exactly_one
 --    conditions_type: true
 --    types:
---      users.profile: "crate::models::UserProfile"
 --      profile: "crate::models::UserProfile"
 -- @end
 
@@ -172,7 +173,7 @@ Both module and function names must be valid Rust identifiers.
 
 **Metadata Format:**
 
-All YAML metadata is optional and follows the same structure as YAML query definitions:
+All metadata is optional and specified in YAML format within SQL comments:
 
 ```sql
 -- @automodel
@@ -199,15 +200,9 @@ SELECT * FROM table WHERE id = ${id}
 - ✅ SQL syntax highlighting in your editor
 - ✅ Better code organization for large projects
 - ✅ Easy to version control individual queries
-- ✅ Can mix YAML and SQL file definitions
+- ✅ Configuration embedded directly with the SQL
 - ✅ Automatic build regeneration when SQL files change
-
-**Mixing YAML and SQL Files:**
-
-You can use both formats simultaneously. Queries defined in SQL files will be combined with queries from the YAML file. This is useful for:
-- Migrating existing queries incrementally
-- Keeping simple queries in YAML while complex ones in separate files
-- Organizing queries by team or feature area
+- ✅ Module organization based on directory structure
 
 ### Use the generated functions
 
@@ -226,36 +221,45 @@ async fn example(client: &Client) -> Result<(), tokio_postgres::Error> {
 
 ## Configuration Options
 
-AutoModel uses YAML files to define SQL queries and their associated metadata. Here's a comprehensive guide to all configuration options:
+AutoModel uses SQL files with embedded metadata to define queries and their configuration. Here's a comprehensive guide to all configuration options:
 
-### Root Configuration Structure
+### SQL File Structure
 
-```yaml
-# Default configuration for telemetry and analysis (optional)
-defaults:
-  telemetry:
-    level: debug           # Global telemetry level
-    include_sql: true      # Include SQL in spans globally
-  ensure_indexes: true     # Enable query performance analysis globally
+Each `.sql` file in the `queries/{module}/` directory contains:
+1. Optional metadata block (in YAML format within SQL comments)
+2. The SQL query
 
-# List of query definitions
-queries:
-  - name: query_name
-    sql: "SELECT ..."
-    # ... other query options
+```sql
+-- @automodel
+--    description: Query description
+--    expect: exactly_one
+--    # ... other configuration options
+-- @end
+
+SELECT * FROM users WHERE id = ${id}
 ```
 
 ### Default Configuration
 
-The `defaults` section configures global settings for telemetry and analysis:
+Defaults are configured in `build.rs` when calling `AutoModel::generate_at_build_time()`:
 
-```yaml
-defaults:
-  telemetry:
-    level: debug           # none | info | debug | trace (default: none)
-    include_sql: true      # true | false (default: false)
-  ensure_indexes: true     # true | false (default: false)
-  module: "database"       # Default module for queries without explicit module (optional)
+```rust
+use automodel::{AutoModel, DefaultsConfig, TelemetryConfig, TelemetryLevel};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let defaults = DefaultsConfig {
+        telemetry: TelemetryConfig {
+            level: TelemetryLevel::Debug,
+            include_sql: true,
+        },
+        ensure_indexes: true,
+        module: None, // Optional default module name
+    };
+    
+    AutoModel::generate_at_build_time("queries", "src/generated", defaults).await?;
+    Ok(())
+}
 ```
 
 **Telemetry Levels:**
@@ -270,58 +274,43 @@ defaults:
 
 ### Query Configuration
 
-Each query in the `queries` array supports these options:
+Each query is defined in its own `.sql` file: `queries/{module}/{query_name}.sql`
 
-#### Required Fields
+The metadata block supports these options:
 
-```yaml
-- name: get_user_by_id                    # Function name (must be valid Rust identifier)
-  sql: "SELECT id, name FROM users WHERE id = ${id}"  # SQL query with named parameters
+#### Minimal Example
+
+```sql
+-- @automodel
+-- @end
+
+SELECT id, name FROM users WHERE id = ${id}
 ```
 
-#### Optional Fields
+If no metadata is provided, sensible defaults are used.
 
-```yaml
-- name: get_user_by_id
-  sql: "SELECT id, name FROM users WHERE id = ${id}"
-  
-  # Optional description (becomes function documentation)
-  description: "Retrieve a user by their ID"
-  
-  # Optional module name (generates code in separate module)
-  module: "users"                         # Must be valid Rust module name
-  
-  # Expected result behavior (default: exactly_one)
-  expect: "exactly_one"                   # exactly_one | possible_one | at_least_one | multiple
-  
-  # Custom type mappings for fields
-  types:
-    "profile": "crate::models::UserProfile"     # Input/output field type override
-    "users.profile": "crate::models::UserProfile"  # Table-qualified field override
-  
-  # Per-query telemetry configuration
-  telemetry:
-    level: trace                          # Override global telemetry level
-    include_params: ["id", "name"]       # Specific parameters to include in spans
-    include_sql: false                    # Override global SQL inclusion
-  
-  # Per-query analysis configuration
-  ensure_indexes: true                     # Override global analysis setting for this query
-  
-  # Batch insert optimization with UNNEST pattern
-  multiunzip: false                        # Default: false. Enable for UNNEST-based batch inserts
-  
-  # Diff-based conditional parameters (for conditional queries with $[...])
-  conditions_type: false                   # Default: false. Use old/new struct comparison instead of Option<T>
-  
-  # Structured parameters - all params as single struct
-  parameters_type: false                   # Default: false. Group all parameters into one struct (ignored if conditions_type is true)
-  
-  # Custom return type name (for multi-column SELECT queries)
-  return_type: "UserInfo"                  # Default: auto-generated. Custom name or reuse existing struct
-  
-  # Custom error type name (for mutation queries with constraint violations)
-  error_type: "UserError"                  # Default: auto-generated. Custom name or reuse existing error type
+#### All Available Options
+
+```sql
+-- @automodel
+--    description: Retrieve a user by their ID  # Function documentation
+--    module: custom_module    # Override directory-based module name
+--    expect: exactly_one       # exactly_one | possible_one | at_least_one | multiple
+--    types:                    # Custom type mappings
+--      profile: "crate::models::UserProfile"
+--    telemetry:                # Per-query telemetry settings
+--      level: trace
+--      include_params: [id, name]
+--      include_sql: false
+--    ensure_indexes: true      # Enable performance analysis
+--    multiunzip: false         # Enable for UNNEST-based batch inserts
+--    conditions_type: false    # Use old/new struct for conditional queries
+--    parameters_type: false    # Group all parameters into one struct
+--    return_type: "UserInfo"   # Custom return type name
+--    error_type: "UserError"   # Custom error type name
+-- @end
+
+SELECT id, name FROM users WHERE id = ${id}
 ```
 
 ### Expected Result Types
@@ -374,97 +363,124 @@ sql: "SELECT * FROM posts WHERE user_id = ${user_id} AND (${category?} IS NULL O
 
 ### Per-Query Telemetry Configuration
 
-Override global telemetry settings for specific queries:
+Override global telemetry settings for specific queries in the metadata block:
 
-```yaml
-telemetry:
-  # Override global level for this query
-  level: trace                    # none | info | debug | trace
-  
-  # Specify which parameters to include in spans
-  include_params: ["user_id", "email"]   # Only these parameters will be logged
-  include_params: []                      # Empty array = skip all parameters
-  # If not specified, all parameters are skipped by default
-  
-  # Override SQL inclusion for this query
-  include_sql: true               # true | false
+```sql
+-- @automodel
+--    telemetry:
+--      level: trace              # none | info | debug | trace
+--      include_params: [user_id, email]  # Only these parameters logged
+--      include_sql: true         # Include SQL in spans
+-- @end
+
+SELECT * FROM users WHERE id = ${user_id}
 ```
 
 ### Per-Query Analysis Configuration
 
 Override global analysis settings for specific queries:
 
-```yaml
-ensure_indexes: true               # true | false - Enable/disable analysis for this query
+```sql
+-- @automodel
+--    ensure_indexes: true   # Enable/disable analysis for this query
+-- @end
+
+SELECT * FROM users WHERE email = ${email}
 ```
 
 ### Module Organization
 
-Organize generated functions into modules:
+Generated functions are organized into modules based on directory structure:
 
-```yaml
-queries:
-  - name: get_user
-    module: "users"               # Generated in src/generated/users.rs
-    
-  - name: get_post  
-    module: "posts"               # Generated in src/generated/posts.rs
-    
-  - name: health_check
-    # No module specified          # Generated in src/generated/mod.rs
+```
+queries/
+├── users/              # Generated as src/generated/users.rs
+│   ├── get_user.sql
+│   └── create_user.sql
+├── posts/              # Generated as src/generated/posts.rs
+│   └── get_post.sql
+└── admin/              # Generated as src/generated/admin.rs
+    └── health_check.sql
 ```
 
-### Complete Example
+You can override the module name in the metadata:
 
-```yaml
-# Global configuration
-defaults:
-  telemetry:
-    level: debug
-    include_sql: false
-  ensure_indexes: true           # Enable query performance analysis
+```sql
+-- @automodel
+--    module: custom_module  # Override directory-based module name
+-- @end
+```
 
-queries:
-  # Simple query with custom type
-  - name: get_user_profile
-    sql: "SELECT id, name, profile FROM users WHERE id = ${user_id}"
-    description: "Get user profile with custom JSON type"
-    module: "users"
-    expect: "possible_one"
-    types:
-      "profile": "crate::models::UserProfile"
-    telemetry:
-      level: trace
-      include_params: ["user_id"]
-      include_sql: true
-    ensure_indexes: true           # Enable analysis for this specific query
-  
-  # Query with optional parameter
-  - name: search_posts
-    sql: "SELECT * FROM posts WHERE user_id = ${user_id} AND (${category?} IS NULL OR category = ${category?})"
-    description: "Search posts with optional category filter"
-    module: "posts"
-    expect: "multiple"
-    types:
-      "category": "PostCategory"
-      "metadata": "crate::models::PostMetadata"
-    ensure_indexes: true           # Check for sequential scans on posts table
-  
-  - name: create_sessions_table
-    sql: "CREATE TABLE IF NOT EXISTS sessions (id UUID PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW())"
-    description: "Create sessions table"
-    module: "setup"
-    ensure_indexes: false # force DDL query to be skipped from analysis
-  
-  # Bulk operation with minimal telemetry
-  - name: cleanup_old_sessions
-    sql: "DELETE FROM sessions WHERE created_at < ${cutoff_date}"
-    description: "Remove sessions older than cutoff date"
-    module: "admin" 
-    expect: "exactly_one"
-    telemetry:
-      include_params: []          # Skip all parameters for privacy
-      include_sql: false
+### Complete Examples
+
+**Simple query with custom type:**
+
+`queries/users/get_user_profile.sql`:
+```sql
+-- @automodel
+--    description: Get user profile with custom JSON type
+--    expect: possible_one
+--    types:
+--      profile: "crate::models::UserProfile"
+--    telemetry:
+--      level: trace
+--      include_params: [user_id]
+--      include_sql: true
+--    ensure_indexes: true
+-- @end
+
+SELECT id, name, profile 
+FROM users 
+WHERE id = ${user_id}
+```
+
+**Query with optional parameter:**
+
+`queries/posts/search_posts.sql`:
+```sql
+-- @automodel
+--    description: Search posts with optional category filter
+--    expect: multiple
+--    types:
+--      category: "PostCategory"
+--      metadata: "crate::models::PostMetadata"
+--    ensure_indexes: true
+-- @end
+
+SELECT * FROM posts 
+WHERE user_id = ${user_id} 
+  AND (${category?} IS NULL OR category = ${category?})
+```
+
+**DDL query without analysis:**
+
+`queries/setup/create_sessions_table.sql`:
+```sql
+-- @automodel
+--    description: Create sessions table
+--    ensure_indexes: false
+-- @end
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id UUID PRIMARY KEY, 
+  created_at TIMESTAMPTZ DEFAULT NOW()
+)
+```
+
+**Bulk operation with minimal telemetry:**
+
+`queries/admin/cleanup_old_sessions.sql`:
+```sql
+-- @automodel
+--    description: Remove sessions older than cutoff date
+--    expect: exactly_one
+--    telemetry:
+--      include_params: []  # Skip all parameters for privacy
+--      include_sql: false
+-- @end
+
+DELETE FROM sessions 
+WHERE created_at < ${cutoff_date}
 ```
 
 ## Conditional Queries
@@ -475,10 +491,18 @@ AutoModel supports **conditional queries** that dynamically include or exclude S
 
 Use the `$[...]` syntax to wrap optional SQL parts:
 
-```yaml
-- name: search_users
-  sql: "SELECT id, name, email FROM users WHERE 1=1 $[AND name ILIKE ${name_pattern?}] $[AND age >= ${min_age?}] ORDER BY created_at DESC"
-  description: "Search users with optional name and age filters"
+`queries/users/search_users.sql`:
+```sql
+-- @automodel
+--    description: Search users with optional name and age filters
+-- @end
+
+SELECT id, name, email 
+FROM users 
+WHERE 1=1 
+  $[AND name ILIKE ${name_pattern?}] 
+  $[AND age >= ${min_age?}] 
+ORDER BY created_at DESC
 ```
 
 **Key Components:**
@@ -516,10 +540,19 @@ search_users(executor, None, None).await?;
 
 You can mix conditional and non-conditional parameters:
 
-```yaml
-- name: find_users_complex
-  sql: "SELECT id, name, email, age FROM users WHERE name ILIKE ${name_pattern} $[AND age >= ${min_age?}] AND email IS NOT NULL $[AND created_at >= ${since?}] ORDER BY name"
-  description: "Complex search with required name pattern and optional filters"
+`queries/users/find_users_complex.sql`:
+```sql
+-- @automodel
+--    description: Complex search with required name pattern and optional filters
+-- @end
+
+SELECT id, name, email, age 
+FROM users 
+WHERE name ILIKE ${name_pattern} 
+  $[AND age >= ${min_age?}] 
+  AND email IS NOT NULL 
+  $[AND created_at >= ${since?}] 
+ORDER BY name
 ```
 
 This generates a function with signature:
@@ -927,18 +960,19 @@ RETURNING id, name, email, age, created_at;
 
 ### Using UNNEST with AutoModel
 
-Define a batch insert query in your `queries.yaml`:
+Define a batch insert query in a SQL file:
 
-```yaml
-- name: insert_users_batch
-  sql: |
-    INSERT INTO users (name, email, age)
-    SELECT * FROM UNNEST(${name}::text[], ${email}::text[], ${age}::int4[])
-    RETURNING id, name, email, age, created_at
-  description: "Insert multiple users using UNNEST pattern"
-  module: "users"
-  expect: "multiple"
-  multiunzip: true
+`queries/users/insert_users_batch.sql`:
+```sql
+-- @automodel
+--    description: Insert multiple users using UNNEST pattern
+--    expect: multiple
+--    multiunzip: true
+-- @end
+
+INSERT INTO users (name, email, age)
+SELECT * FROM UNNEST(${name}::text[], ${email}::text[], ${age}::int4[])
+RETURNING id, name, email, age, created_at
 ```
 
 **Key Points:**
@@ -1025,22 +1059,22 @@ let query = query.bind(age);
 
 ### Complete Example
 
-**queries.yaml:**
-```yaml
-- name: insert_posts_batch
-  sql: |
-    INSERT INTO posts (title, content, author_id, published_at)
-    SELECT * FROM UNNEST(
-      ${title}::text[],
-      ${content}::text[],
-      ${author_id}::int4[],
-      ${published_at}::timestamptz[]
-    )
-    RETURNING id, title, author_id, created_at
-  description: "Batch insert multiple posts"
-  module: "posts"
-  expect: "multiple"
-  multiunzip: true
+`queries/posts/insert_posts_batch.sql`:
+```sql
+-- @automodel
+--    description: Batch insert multiple posts
+--    expect: multiple
+--    multiunzip: true
+-- @end
+
+INSERT INTO posts (title, content, author_id, published_at)
+SELECT * FROM UNNEST(
+  ${title}::text[],
+  ${content}::text[],
+  ${author_id}::int4[],
+  ${published_at}::timestamptz[]
+)
+RETURNING id, title, author_id, created_at
 ```
 
 **Usage:**
@@ -1099,24 +1133,24 @@ DO UPDATE SET age = EXCLUDED.age WHERE users.age < EXCLUDED.age
 
 Use `ON CONFLICT` to update existing rows when a conflict occurs:
 
-**queries.yaml:**
-```yaml
-- name: upsert_user
-  sql: |
-    INSERT INTO users (email, name, age, profile)
-    VALUES (${email}, ${name}, ${age}, ${profile})
-    ON CONFLICT (email) 
-    DO UPDATE SET 
-      name = EXCLUDED.name,
-      age = EXCLUDED.age,
-      profile = EXCLUDED.profile,
-      updated_at = NOW()
-    RETURNING id, email, name, age, created_at, updated_at
-  description: "Insert a new user or update if email already exists"
-  module: "users"
-  expect: "exactly_one"
-  types:
-    "profile": "crate::models::UserProfile"
+`queries/users/upsert_user.sql`:
+```sql
+-- @automodel
+--    description: Insert a new user or update if email already exists
+--    expect: exactly_one
+--    types:
+--      profile: "crate::models::UserProfile"
+-- @end
+
+INSERT INTO users (email, name, age, profile)
+VALUES (${email}, ${name}, ${age}, ${profile})
+ON CONFLICT (email) 
+DO UPDATE SET 
+  name = EXCLUDED.name,
+  age = EXCLUDED.age,
+  profile = EXCLUDED.profile,
+  updated_at = NOW()
+RETURNING id, email, name, age, created_at, updated_at
 ```
 
 **Usage:**
@@ -1150,26 +1184,26 @@ assert_eq!(user.id, updated_user.id);
 
 Combine `UNNEST` with `ON CONFLICT` for efficient batch upserts:
 
-**queries.yaml:**
-```yaml
-- name: upsert_users_batch
-  sql: |
-    INSERT INTO users (email, name, age)
-    SELECT * FROM UNNEST(
-      ${email}::text[],
-      ${name}::text[],
-      ${age}::int4[]
-    )
-    ON CONFLICT (email)
-    DO UPDATE SET
-      name = EXCLUDED.name,
-      age = EXCLUDED.age,
-      updated_at = NOW()
-    RETURNING id, email, name, age, created_at, updated_at
-  description: "Batch upsert users - insert new or update existing by email"
-  module: "users"
-  expect: "multiple"
-  multiunzip: true
+`queries/users/upsert_users_batch.sql`:
+```sql
+-- @automodel
+--    description: Batch upsert users - insert new or update existing by email
+--    expect: multiple
+--    multiunzip: true
+-- @end
+
+INSERT INTO users (email, name, age)
+SELECT * FROM UNNEST(
+  ${email}::text[],
+  ${name}::text[],
+  ${age}::int4[]
+)
+ON CONFLICT (email)
+DO UPDATE SET
+  name = EXCLUDED.name,
+  age = EXCLUDED.age,
+  updated_at = NOW()
+RETURNING id, email, name, age, created_at, updated_at
 ```
 
 **Usage:**
@@ -1209,7 +1243,7 @@ println!("Upserted {} users", results.len());
 
 #### Generate Command
 - `-d, --database-url <URL>` - Database connection URL
-- `-f, --file <FILE>` - YAML file with query definitions
+- `-q, --queries-dir <DIR>` - Directory containing SQL query files
 - `-o, --output <FILE>` - Custom output file path
 - `-m, --module <NAME>` - Module name for generated code
 - `--dry-run` - Preview generated code without writing files
@@ -1217,10 +1251,10 @@ println!("Upserted {} users", results.len());
 
 ## Examples
 
-The `examples/` directory contains:
+The `example-app/` directory contains:
 
-- `queries.yaml` - Sample query definitions
-- `schema.sql` - Database schema for testing
+- `queries/` - SQL files with query definitions organized by module
+- `migrations/` - Database schema migrations for testing
 
 ## Workspace Commands
 
