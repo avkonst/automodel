@@ -100,13 +100,34 @@ anyhow = "1.0"
 ### Create a build.rs for automatic code generation
 
 ```rust
-use automodel::AutoModel;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    AutoModel::generate_at_build_time("queries", "src/generated").await?;
-
-    Ok(())
+    let defaults = automodel::DefaultsConfig {
+        telemetry: automodel::DefaultsTelemetryConfig {
+            level: automodel::TelemetryLevel::Debug,
+            include_sql: true,
+        },
+        ensure_indexes: true,
+    };
+    automodel::AutoModel::generate(
+        || {
+            if std::env::var("CI").is_err() {
+                std::env::var("AUTOMODEL_DATABASE_URL").map_err(|_| {
+                    "AUTOMODEL_DATABASE_URL environment variable must be set for code generation"
+                        .to_string()
+                })
+            } else {
+                Err(
+                    "Detecting not up to date AutoModel generated code in CI environment"
+                        .to_string(),
+                )
+            }
+        },
+        "queries",
+        "src/generated",
+        defaults,
+    )
+    .await
 }
 ```
 
@@ -241,24 +262,37 @@ SELECT * FROM users WHERE id = ${id}
 
 ### Default Configuration
 
-Defaults are configured in `build.rs` when calling `AutoModel::generate_at_build_time()`:
+Defaults are configured in `build.rs` when calling `AutoModel::generate()`:
 
 ```rust
-use automodel::{AutoModel, DefaultsConfig, TelemetryConfig, TelemetryLevel};
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let defaults = DefaultsConfig {
-        telemetry: TelemetryConfig {
-            level: TelemetryLevel::Debug,
+    let defaults = automodel::DefaultsConfig {
+        telemetry: automodel::DefaultsTelemetryConfig {
+            level: automodel::TelemetryLevel::Debug,
             include_sql: true,
         },
         ensure_indexes: true,
-        module: None, // Optional default module name
     };
-    
-    AutoModel::generate_at_build_time("queries", "src/generated", defaults).await?;
-    Ok(())
+    automodel::AutoModel::generate(
+        || {
+            if std::env::var("CI").is_err() {
+                std::env::var("AUTOMODEL_DATABASE_URL").map_err(|_| {
+                    "AUTOMODEL_DATABASE_URL environment variable must be set for code generation"
+                        .to_string()
+                })
+            } else {
+                Err(
+                    "Detecting not up to date AutoModel generated code in CI environment"
+                        .to_string(),
+                )
+            }
+        },
+        "queries",
+        "src/generated",
+        defaults,
+    )
+    .await
 }
 ```
 

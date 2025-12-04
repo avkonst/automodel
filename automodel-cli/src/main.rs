@@ -116,13 +116,15 @@ async fn generate_command(matches: &ArgMatches) -> Result<()> {
     println!("Default telemetry level: {:?}", telemetry_level);
     println!("Default ensure indexes: {}", ensure_indexes);
 
-    // Set the database URL environment variable for code generation
-    unsafe { std::env::set_var("AUTOMODEL_DATABASE_URL", database_url) };
-
     // Use the same method as build.rs
-    AutoModel::generate_at_build_time(queries_dir, output_dir, defaults)
-        .await
-        .map_err(|e| anyhow::anyhow!("Code generation failed: {}", e))?;
+    AutoModel::generate(
+        || Ok(database_url.to_string()),
+        queries_dir,
+        output_dir,
+        defaults,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Code generation failed: {}", e))?;
 
     println!("✓ Code generation complete!");
 

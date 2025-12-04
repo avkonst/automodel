@@ -15,7 +15,8 @@ use std::path::Path;
 pub use query_definition::TelemetryLevel;
 
 use crate::codegen::{
-    generate_enum_definition, generate_function_code_without_enums, generate_root_module, validate_struct_reference
+    generate_enum_definition, generate_function_code_without_enums, generate_root_module,
+    validate_struct_reference,
 };
 
 /// Default configuration for telemetry and analysis
@@ -74,16 +75,27 @@ impl AutoModel {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     AutoModel::generate_at_build_time("queries.yaml", "src/generated").await?;
-    ///     
+    ///     AutoModel::generate(|| {
+    ///         if std::env::var("CI").is_err() {
+    ///             std::env::var("AUTOMODEL_DATABASE_URL").map_err(|_| {
+    ///                 "AUTOMODEL_DATABASE_URL environment variable must be set for code generation"
+    ///             })
+    ///         } else {
+    ///             Err("Detecting not up to date AutoModel generated code in CI environment")
+    ///         }
+    ///     }, "queries.yaml", "src/generated").await?;
     ///     Ok(())
     /// }
     /// ```
-    pub async fn generate_at_build_time(
+    pub async fn generate<F>(
+        database_url_cb: F,
         queries_dir: &str,
         output_dir: &str,
         defaults: crate::DefaultsConfig,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: FnOnce() -> Result<String, String>,
+    {
         use sha2::{Digest, Sha256};
         use std::fs;
 
@@ -143,11 +155,10 @@ impl AutoModel {
             return Ok(());
         }
 
-        let database_url = std::env::var("AUTOMODEL_DATABASE_URL")
-            .map_err(|_| {
-                println!("cargo:error=AUTOMODEL_DATABASE_URL environment variable must be set for code generation");
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "AUTOMODEL_DATABASE_URL environment variable not set")
-            })?;
+        let database_url = database_url_cb().map_err(|e| {
+            println!("cargo:error={}", e);
+            std::io::Error::new(std::io::ErrorKind::NotConnected, e)
+        })?;
 
         let automodel = AutoModel::new(queries_dir, defaults).await?;
         automodel
