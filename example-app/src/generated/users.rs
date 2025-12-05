@@ -317,13 +317,18 @@ pub struct UpdateUserProfileItem {
 }
 
 /// Update a user's profile by their ID
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = #{profile}, updated_at = NOW() \nWHERE id = #{user_id} \nRETURNING id, name, email, age, profile, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users\nSET profile = #{profile}, updated_at = NOW() \nWHERE id = #{user_id} \nRETURNING id,\n    name,\n    email,\n    age,\n    profile,\n    updated_at"))]
 pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileItem, super::Error<UpdateUserProfileConstraints>> {
     let query = sqlx::query(
-        r"UPDATE public.users 
+        r"UPDATE public.users
         SET profile = $1, updated_at = NOW() 
         WHERE id = $2 
-        RETURNING id, name, email, age, profile, updated_at"
+        RETURNING id,
+            name,
+            email,
+            age,
+            profile,
+            updated_at"
     );
     let query = query.bind(serde_json::to_value(&profile).map_err(|e| sqlx::Error::Encode(Box::new(e)))?);
     let query = query.bind(user_id);

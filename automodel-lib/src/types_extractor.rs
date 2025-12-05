@@ -760,7 +760,6 @@ async fn pg_type_to_rust_type(
     })
 }
 
-
 /// Parse SQL to extract meaningful parameter names from named parameters
 pub fn parse_parameter_names_from_sql(sql: &str) -> Vec<String> {
     // Look for named parameters in the format #{param_name}
@@ -934,7 +933,6 @@ pub fn convert_named_params_to_positional(sql: &str) -> (String, Vec<String>) {
     }
 }
 
-
 /// Extract all unique enum types from input and output types
 pub fn extract_enum_types(
     input_types: &[RustType],
@@ -971,4 +969,3 @@ pub fn extract_enum_types(
         .map(|(rust_name, (variants, pg_name))| (rust_name, variants, pg_name))
         .collect()
 }
-
