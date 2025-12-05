@@ -7,8 +7,7 @@ use crate::codegen::types_generator::{
 use crate::query_definition::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::query_definition_rt::QueryDefinitionRuntime;
 use crate::types_extractor::{
-    extract_enum_types, parse_parameter_names_from_sql,
-    OutputColumn, QueryTypeInfo,
+    extract_enum_types, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
 };
 use crate::utils::{to_pascal_case, to_snake_case};
 use anyhow::Result;

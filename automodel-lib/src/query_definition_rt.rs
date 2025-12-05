@@ -24,6 +24,12 @@ pub struct QueryDefinitionRuntime {
 
     /// Query execution plan analysis results (for ensure_indexes feature)
     pub performance_analysis: Option<PerformanceAnalysis>,
+
+    /// Pre-computed EXPLAIN query parameters for each variant
+    /// Each entry is: (explain_sql, special_params)
+    /// special_params: Vec<(param_index, type_name, value)> for enums/numeric types
+    /// None if variant has no parameters
+    pub explain_params: Vec<Option<(String, Vec<(usize, String, String)>)>>,
 }
 
 /// Performance analysis results from EXPLAIN
@@ -54,6 +60,7 @@ impl QueryDefinitionRuntime {
         is_mutation: bool,
         constraints: Vec<ConstraintInfo>,
         performance_analysis: Option<PerformanceAnalysis>,
+        explain_params: Vec<Option<(String, Vec<(usize, String, String)>)>>,
     ) -> Self {
         Self {
             definition,
@@ -61,6 +68,7 @@ impl QueryDefinitionRuntime {
             is_mutation,
             constraints,
             performance_analysis,
+            explain_params,
         }
     }
 

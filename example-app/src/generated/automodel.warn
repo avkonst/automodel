@@ -15,7 +15,7 @@ Query 'search_users_by_name_pattern (base)' performs sequential scan on table 'u
 Query 'search_users_advanced (base)' performs sequential scan on table 'users'
 Query 'search_users_advanced (variant 1)' performs sequential scan on table 'users'
 Query 'search_users_advanced (variant 3)' performs sequential scan on table 'users'
-Query 'get_users_by_status (base)' had EXPLAIN failed
+Query 'get_users_by_status (base)' performs sequential scan on table 'users'
 Query 'get_all_user_statuses (base)' performs sequential scan on table 'users'
 Query 'get_all_users_with_star (base)' performs sequential scan on table 'users'
 Query 'get_all_user_summaries (base)' performs sequential scan on table 'users'

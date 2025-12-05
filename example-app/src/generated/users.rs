@@ -38,7 +38,7 @@ impl std::fmt::Display for UserStatus {
 
 impl sqlx::Type<sqlx::Postgres> for UserStatus {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
-        sqlx::postgres::PgTypeInfo::with_name("user_status")
+        sqlx::postgres::PgTypeInfo::with_name("public.user_status")
     }
 }
 
@@ -709,6 +709,15 @@ pub struct GetUsersByStatusItem {
 }
 
 /// Get public.users by their status (enum parameter and enum output)
+///
+/// Query Plan:
+/// Sort
+///   Sort Key: name
+///   ->  Seq Scan on users
+///         Filter: (status = 'active'::public.user_status)
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, status \nFROM public.users \nWHERE status = #{user_status} \nORDER BY name"))]
 pub async fn get_users_by_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_status: UserStatus) -> Result<Vec<GetUsersByStatusItem>, super::ErrorReadOnly> {
     let query = sqlx::query(

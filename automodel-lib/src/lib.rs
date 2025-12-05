@@ -299,7 +299,7 @@ impl AutoModel {
     ) -> Result<Vec<QueryDefinitionRuntime>> {
         use futures::stream::{self, StreamExt};
 
-        // Process queries in parallel batches of 20
+        // Process queries in parallel batches of 40
         let analyzed_queries: Vec<QueryDefinitionRuntime> = stream::iter(&self.queries)
             .map(|query| async move {
                 println!("cargo:info=Analyzing query '{}'", query.name);
@@ -310,7 +310,8 @@ impl AutoModel {
 
                 // Analyze query with EXPLAIN to detect mutation and optionally get performance data
                 // EXPLAIN fails on mutations (INSERT/UPDATE/DELETE), so we use that to detect them
-                let (is_mutation, performance_analysis, constraints) =
+                // This also pre-computes EXPLAIN params during the analysis phase
+                let (is_mutation, performance_analysis, constraints, explain_params) =
                     Self::analyze_query_with_explain(client, query).await?;
 
                 let analyzed_query = QueryDefinitionRuntime::new(
@@ -319,11 +320,12 @@ impl AutoModel {
                     is_mutation,
                     constraints,
                     performance_analysis,
+                    explain_params,
                 );
 
                 Ok::<_, anyhow::Error>(analyzed_query)
             })
-            .buffered(40) // Process up to 20 queries in parallel while preserving order
+            .buffered(40) // Process up to 40 queries in parallel while preserving order
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -336,7 +338,7 @@ impl AutoModel {
     /// - First checks SQL keywords to quickly identify obvious mutations
     /// - For potential read-only queries: runs EXPLAIN to verify and optionally collect performance
     /// - If EXPLAIN fails on what looks like a SELECT: treat as mutation (edge case)
-    /// Returns (is_mutation, performance_analysis, constraints)
+    /// Returns (is_mutation, performance_analysis, constraints, explain_params)
     async fn analyze_query_with_explain(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
@@ -344,6 +346,7 @@ impl AutoModel {
         bool,
         Option<PerformanceAnalysis>,
         Vec<crate::types_extractor::ConstraintInfo>,
+        Vec<Option<(String, Vec<(usize, String, String)>)>>,
     )> {
         // Quick keyword-based detection first
         let sql_upper = query.sql.to_uppercase();
@@ -381,16 +384,41 @@ impl AutoModel {
                 }
             };
 
-            return Ok((true, None, constraints));
+            return Ok((true, None, constraints, Vec::new()));
+        }
+
+        // Pre-compute EXPLAIN parameters for all variants
+        let mut explain_params = Vec::new();
+        for (converted_sql, param_names, _variant_label) in &query.sql_variants {
+            if param_names.is_empty() {
+                explain_params.push(None);
+            } else {
+                match client.prepare(converted_sql).await {
+                    Ok(statement) => {
+                        let param_types = statement.params();
+                        match Self::prepare_explain_params_for_variant(
+                            client,
+                            converted_sql,
+                            param_types,
+                        )
+                        .await
+                        {
+                            Ok(params) => explain_params.push(Some(params)),
+                            Err(_) => explain_params.push(None),
+                        }
+                    }
+                    Err(_) => explain_params.push(None),
+                }
+            }
         }
 
         // Looks like a SELECT or read-only query - verify with EXPLAIN
         let explain_result = if query.ensure_indexes {
             // Run full performance analysis (which includes EXPLAIN)
-            Self::analyze_query_performance(client, query).await
+            Self::analyze_query_performance(client, query, &explain_params).await
         } else {
             // Just run a simple EXPLAIN to verify it's read-only
-            Self::detect_mutation_via_explain(client, query).await
+            Self::detect_mutation_via_explain(client, query, &explain_params).await
         };
 
         match explain_result {
@@ -401,12 +429,12 @@ impl AutoModel {
                 } else {
                     None
                 };
-                Ok((false, performance, Vec::new()))
+                Ok((false, performance, Vec::new(), explain_params))
             }
             Err(_) => {
                 // EXPLAIN failed on what looked like a SELECT - treat as mutation (edge case)
                 // Warning will be collected in performance analysis
-                Ok((true, None, Vec::new()))
+                Ok((true, None, Vec::new(), explain_params))
             }
         }
     }
@@ -416,30 +444,60 @@ impl AutoModel {
     async fn detect_mutation_via_explain(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
+        explain_params: &[Option<(String, Vec<(usize, String, String)>)>],
     ) -> Result<PerformanceAnalysis> {
         // Use first variant (base query) for detection
-        let (converted_sql, param_names, _label) = &query.sql_variants[0];
+        let (_converted_sql, param_names, _label) = &query.sql_variants[0];
 
-        // Try EXPLAIN with proper parameter handling
+        // Try EXPLAIN with pre-computed parameters
         let explain_result = if !param_names.is_empty() {
-            match client.prepare(converted_sql).await {
-                Ok(statement) => {
-                    let param_types = statement.params();
-
-                    // Create dummy parameters
-                    let (dummy_params, special_params) =
-                        Self::create_dummy_params(client, param_types).await?;
-
-                    // Prepare EXPLAIN query
-                    let (explain_query, param_refs) =
-                        Self::prepare_explain_query(converted_sql, &dummy_params, &special_params);
-
-                    client.query(&explain_query, &param_refs).await
+            if let Some((explain_sql, special_params)) = &explain_params[0] {
+                if special_params.is_empty() {
+                    // No special params, use dummy params for all parameters
+                    let (converted_sql, _param_names, _label) = &query.sql_variants[0];
+                    match client.prepare(converted_sql).await {
+                        Ok(statement) => {
+                            let param_types = statement.params();
+                            let (dummy_params, _) =
+                                crate::types_extractor::create_dummy_params(client, param_types)
+                                    .await?;
+                            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                                dummy_params.iter().map(|p| p.as_ref()).collect();
+                            client.query(explain_sql.as_str(), &param_refs).await
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    // Has special params - some are inlined, others need dummy values
+                    // Prepare to get param types for non-special params
+                    let (converted_sql, _param_names, _label) = &query.sql_variants[0];
+                    match client.prepare(converted_sql).await {
+                        Ok(statement) => {
+                            let param_types = statement.params();
+                            let (all_dummy_params, _) =
+                                crate::types_extractor::create_dummy_params(client, param_types)
+                                    .await?;
+                            
+                            // Filter to only non-special params
+                            let mut non_special_dummy_params = Vec::new();
+                            for (i, dummy_param) in all_dummy_params.iter().enumerate() {
+                                if !special_params.iter().any(|(idx, _, _)| *idx == i) {
+                                    non_special_dummy_params.push(dummy_param.as_ref());
+                                }
+                            }
+                            
+                            client.query(explain_sql.as_str(), &non_special_dummy_params).await
+                        }
+                        Err(e) => Err(e),
+                    }
                 }
-                Err(e) => Err(e),
+            } else {
+                // Pre-computation failed - cannot run EXPLAIN
+                return Err(anyhow::anyhow!("Statement preparation failed, cannot run EXPLAIN"));
             }
         } else {
-            // No parameters, execute EXPLAIN directly
+            // No parameters, execute directly
+            let (converted_sql, _, _) = &query.sql_variants[0];
             let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql);
             client.query(&explain_sql, &[]).await
         };
@@ -495,208 +553,73 @@ impl AutoModel {
         Ok(())
     }
 
-    /// Create dummy parameter values for EXPLAIN queries
-    /// Returns (dummy_params, special_params) where special_params contains info about enums and numeric types
-    async fn create_dummy_params(
+    /// Prepare EXPLAIN parameters for a single query variant (done once during Phase 1)
+    /// Returns (explain_sql, special_params) to be stored and reused
+    async fn prepare_explain_params_for_variant(
         client: &tokio_postgres::Client,
+        converted_sql: &str,
         param_types: &[tokio_postgres::types::Type],
-    ) -> Result<(
-        Vec<Box<dyn tokio_postgres::types::ToSql + Sync>>,
-        Vec<(usize, String, String)>,
-    )> {
-        use tokio_postgres::types::Type;
-
-        let mut dummy_params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
-        let mut special_params: Vec<(usize, String, String)> = Vec::new(); // (param_index, type_name, value)
-
-        for param_type in param_types {
-            // Check if this is an enum type and get actual enum values
-            if let Ok(Some(enum_info)) =
-                crate::types_extractor::get_enum_type_info(client, param_type.oid()).await
-            {
-                special_params.push((
-                    dummy_params.len(),
-                    enum_info.type_name.clone(),
-                    enum_info.variants[0].clone(),
-                ));
-                dummy_params.push(Box::new("ENUM_PLACEHOLDER".to_string()));
-                continue;
-            }
-
-            // Handle numeric type specially - PostgreSQL is strict about numeric conversion
-            if param_type.name() == "numeric" {
-                special_params.push((dummy_params.len(), "numeric".to_string(), "0".to_string()));
-                dummy_params.push(Box::new("NUMERIC_PLACEHOLDER".to_string()));
-                continue;
-            }
-
-            // Handle range types - these need special casting
-            if param_type.name().ends_with("range") {
-                let type_name = param_type.name();
-                special_params.push((
-                    dummy_params.len(),
-                    type_name.to_string(),
-                    "empty".to_string(),
-                ));
-                dummy_params.push(Box::new("RANGE_PLACEHOLDER".to_string()));
-                continue;
-            }
-
-            // Handle geometric types - these need special casting
-            let geometric_default = match param_type.name() {
-                "point" => Some("(0,0)"),
-                "line" => Some("{0,0,0}"),
-                "lseg" => Some("[(0,0),(0,0)]"),
-                "box" => Some("((0,0),(0,0))"),
-                "path" => Some("[(0,0)]"),
-                "polygon" => Some("((0,0))"),
-                "circle" => Some("<(0,0),0>"),
-                _ => None,
-            };
-            if let Some(default_value) = geometric_default {
-                let type_name = param_type.name();
-                special_params.push((
-                    dummy_params.len(),
-                    type_name.to_string(),
-                    default_value.to_string(),
-                ));
-                dummy_params.push(Box::new("GEOMETRIC_PLACEHOLDER".to_string()));
-                continue;
-            }
-
-            // Handle built-in PostgreSQL types
-            let dummy_value: Box<dyn tokio_postgres::types::ToSql + Sync> = match param_type {
-                // Boolean & Numeric Types
-                &Type::BOOL => Box::new(false),
-                &Type::CHAR => Box::new(0i8),
-                &Type::INT2 => Box::new(0i16),
-                &Type::INT4 => Box::new(0i32),
-                &Type::INT8 => Box::new(0i64),
-                &Type::FLOAT4 => Box::new(0.0f32),
-                &Type::FLOAT8 => Box::new(0.0f64),
-                &Type::OID | &Type::REGPROC | &Type::XID | &Type::CID => Box::new(0u32),
-
-                // String & Text Types
-                &Type::TEXT
-                | &Type::VARCHAR
-                | &Type::BPCHAR
-                | &Type::NAME
-                | &Type::XML
-                | &Type::UNKNOWN => Box::new("dummy".to_string()),
-
-                // Binary & Bit Types
-                &Type::BYTEA => Box::new(vec![0u8]),
-
-                // JSON Types
-                &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
-
-                // Date & Time Types
-                &Type::TIMESTAMPTZ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap()),
-                &Type::TIMESTAMP => {
-                    Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc())
-                }
-                &Type::DATE => Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()),
-                &Type::TIME => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-
-                // UUID
-                &Type::UUID => Box::new(uuid::Uuid::nil()),
-
-                // Array types - use empty arrays
-                &Type::BOOL_ARRAY => Box::new(Vec::<bool>::new()),
-                &Type::CHAR_ARRAY => Box::new(Vec::<i8>::new()),
-                &Type::INT2_ARRAY => Box::new(Vec::<i16>::new()),
-                &Type::INT4_ARRAY => Box::new(Vec::<i32>::new()),
-                &Type::INT8_ARRAY => Box::new(Vec::<i64>::new()),
-                &Type::FLOAT4_ARRAY => Box::new(Vec::<f32>::new()),
-                &Type::FLOAT8_ARRAY => Box::new(Vec::<f64>::new()),
-                &Type::TEXT_ARRAY
-                | &Type::VARCHAR_ARRAY
-                | &Type::BPCHAR_ARRAY
-                | &Type::NAME_ARRAY
-                | &Type::XML_ARRAY => Box::new(Vec::<String>::new()),
-                &Type::BYTEA_ARRAY => Box::new(Vec::<Vec<u8>>::new()),
-                &Type::JSON_ARRAY | &Type::JSONB_ARRAY => Box::new(Vec::<serde_json::Value>::new()),
-                &Type::DATE_ARRAY => Box::new(Vec::<chrono::NaiveDate>::new()),
-                &Type::TIME_ARRAY => Box::new(Vec::<chrono::NaiveTime>::new()),
-                &Type::TIMESTAMP_ARRAY => Box::new(Vec::<chrono::NaiveDateTime>::new()),
-                &Type::TIMESTAMPTZ_ARRAY => Box::new(Vec::<chrono::DateTime<chrono::Utc>>::new()),
-                &Type::UUID_ARRAY => Box::new(Vec::<uuid::Uuid>::new()),
-
-                // Fallback for unknown types - use string
-                _ => Box::new("dummy".to_string()),
-            };
-            dummy_params.push(dummy_value);
-        }
-
-        Ok((dummy_params, special_params))
-    }
-
-    /// Prepare EXPLAIN query with proper parameter handling
-    /// Returns (final_explain_sql, param_refs) ready for execution
-    fn prepare_explain_query<'a>(
-        base_sql: &str,
-        dummy_params: &'a [Box<dyn tokio_postgres::types::ToSql + Sync>],
-        special_params: &[(usize, String, String)],
-    ) -> (String, Vec<&'a (dyn tokio_postgres::types::ToSql + Sync)>) {
-        let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", base_sql);
-
-        if special_params.is_empty() {
-            // No special parameters, use original approach
-            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-                dummy_params.iter().map(|p| p.as_ref()).collect();
-            (explain_sql, param_refs)
+    ) -> Result<(String, Vec<(usize, String, String)>)> {
+        let (_dummy_params, special_params) =
+            crate::types_extractor::create_dummy_params(client, param_types).await?;
+        
+        // Build the EXPLAIN query with special param replacements
+        let explain_sql = if special_params.is_empty() {
+            format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql)
         } else {
-            // Replace special parameters (enums and numeric) with cast values
-            let mut modified_sql = base_sql.to_string();
+            // Replace special parameters with casted values and renumber remaining params
+            let mut modified_sql = converted_sql.to_string();
+            
+            // Replace special parameters from highest index to lowest (to avoid renumbering issues)
+            for (param_idx, type_name, value) in special_params.iter().rev() {
+                let param_placeholder = format!("${}", param_idx + 1);
+                // Don't quote numeric values
+                let casted_value = if type_name == "numeric" {
+                    format!("{}::{}", value, type_name)
+                } else {
+                    format!("'{}'::{}", value, type_name)
+                };
+                modified_sql = modified_sql.replace(&param_placeholder, &casted_value);
+            }
+            
+            // Renumber remaining parameters
+            // Build a mapping of non-special parameter indices
             let mut param_mapping = Vec::new();
-
-            // Build new parameter mapping (non-special parameters only)
-            for (i, _) in dummy_params.iter().enumerate() {
-                if !special_params
-                    .iter()
-                    .any(|(special_idx, _, _)| *special_idx == i)
-                {
+            for i in 0..param_types.len() {
+                if !special_params.iter().any(|(idx, _, _)| *idx == i) {
                     param_mapping.push(i);
                 }
             }
-
-            // Replace parameters from highest index to lowest to avoid position shifts
-            let mut sorted_special_params = special_params.to_vec();
-            sorted_special_params.sort_by(|a, b| b.0.cmp(&a.0));
-
-            for (param_index, param_type, param_value) in sorted_special_params {
-                let old_placeholder = format!("${}", param_index + 1);
-                let cast_value = if param_type == "numeric" {
-                    format!("{}::numeric", param_value)
-                } else {
-                    format!("'{}'::{}", param_value, param_type)
-                };
-                modified_sql = modified_sql.replace(&old_placeholder, &cast_value);
+            
+            // Renumber from highest to lowest to avoid conflicts
+            for (new_num, &original_idx) in param_mapping.iter().enumerate().rev() {
+                let old_placeholder = format!("${}", original_idx + 1);
+                let new_placeholder = format!("${}", new_num + 1);
+                if old_placeholder != new_placeholder {
+                    // Use a temporary placeholder to avoid conflicts
+                    let temp_placeholder = format!("__PARAM_{}__", new_num + 1);
+                    modified_sql = modified_sql.replace(&old_placeholder, &temp_placeholder);
+                }
             }
-
-            // Renumber remaining parameters
-            let mut new_param_num = 1;
-            for &original_index in &param_mapping {
-                let old_placeholder = format!("${}", original_index + 1);
-                let new_placeholder = format!("${}", new_param_num);
-                modified_sql = modified_sql.replace(&old_placeholder, &new_placeholder);
-                new_param_num += 1;
+            
+            // Replace temporary placeholders with final ones
+            for (new_num, _) in param_mapping.iter().enumerate() {
+                let temp_placeholder = format!("__PARAM_{}__", new_num + 1);
+                let final_placeholder = format!("${}", new_num + 1);
+                modified_sql = modified_sql.replace(&temp_placeholder, &final_placeholder);
             }
-
-            let final_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql);
-            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = param_mapping
-                .iter()
-                .map(|&i| dummy_params[i].as_ref())
-                .collect();
-
-            (final_sql, param_refs)
-        }
+            
+            format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql)
+        };
+        
+        Ok((explain_sql, special_params))
     }
 
-    /// Analyze query execution plan to detect potential performance issues
+    /// Analyze query performance using EXPLAIN (full analysis with query plan)
     async fn analyze_query_performance(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
+        explain_params: &[Option<(String, Vec<(usize, String, String)>)>],
     ) -> Result<PerformanceAnalysis> {
         let mut has_sequential_scan = false;
         let mut sequential_scan_tables = Vec::new();
@@ -710,7 +633,14 @@ impl AutoModel {
             let variant_name = format!("{} ({})", query.name, variant_label);
 
             let (variant_has_seq_scan, variant_tables, variant_warnings, variant_plan) =
-                Self::analyze_single_query(client, converted_sql, param_names, &variant_name).await?;
+                Self::analyze_single_query(
+                    client,
+                    converted_sql,
+                    param_names,
+                    &variant_name,
+                    explain_params.get(i).and_then(|p| p.as_ref()),
+                )
+                .await?;
 
             if variant_has_seq_scan {
                 has_sequential_scan = true;
@@ -744,11 +674,13 @@ impl AutoModel {
     /// Analyze a single SQL query variant
     /// sql: already converted to positional parameters ($1, $2, etc.)
     /// param_names: list of parameter names in order
+    /// explain_params: pre-computed EXPLAIN SQL and special params
     async fn analyze_single_query(
         client: &tokio_postgres::Client,
         sql: &str,
         param_names: &[String],
         query_name: &str,
+        explain_params: Option<&(String, Vec<(usize, String, String)>)>,
     ) -> Result<(bool, Vec<String>, Vec<String>, String)> {
         let mut has_sequential_scan = false;
         let mut sequential_scan_tables = Vec::new();
@@ -757,25 +689,87 @@ impl AutoModel {
 
         // Execute EXPLAIN query with appropriate parameters
         let query_result = if !param_names.is_empty() {
-            match client.prepare(sql).await {
-                Ok(statement) => {
-                    let param_types = statement.params();
-
-                    // Create dummy parameters with proper type handling
-                    let (dummy_params, special_params) =
-                        Self::create_dummy_params(client, param_types).await?;
-
-                    // Prepare EXPLAIN query
-                    let (explain_query, param_refs) =
-                        Self::prepare_explain_query(sql, &dummy_params, &special_params);
-
-                    client.query(&explain_query, &param_refs).await
+            if let Some((explain_sql, special_params)) = explain_params {
+                if special_params.is_empty() {
+                    // No special params, use dummy params
+                    match client.prepare(sql).await {
+                        Ok(statement) => {
+                            let param_types = statement.params();
+                            let (dummy_params, _) =
+                                crate::types_extractor::create_dummy_params(client, param_types)
+                                    .await?;
+                            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                                dummy_params.iter().map(|p| p.as_ref()).collect();
+                            client.query(explain_sql.as_str(), &param_refs).await
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to prepare statement for analysis: {}",
+                                e
+                            ));
+                        }
+                    }
+                } else {
+                    // Has special params - some are inlined, others need dummy values
+                    match client.prepare(sql).await {
+                        Ok(statement) => {
+                            let param_types = statement.params();
+                            let (all_dummy_params, _) =
+                                crate::types_extractor::create_dummy_params(client, param_types)
+                                    .await?;
+                            
+                            // Filter to only non-special params
+                            let mut non_special_dummy_params = Vec::new();
+                            for (i, dummy_param) in all_dummy_params.iter().enumerate() {
+                                if !special_params.iter().any(|(idx, _, _)| *idx == i) {
+                                    non_special_dummy_params.push(dummy_param.as_ref());
+                                }
+                            }
+                            
+                            client.query(explain_sql.as_str(), &non_special_dummy_params).await
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to prepare statement for analysis: {}",
+                                e
+                            ));
+                        }
+                    }
                 }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to prepare statement for analysis: {}",
-                        e
-                    ));
+            } else {
+                // Pre-computation failed, try to prepare on-the-fly
+                match client.prepare(sql).await {
+                    Ok(statement) => {
+                        let param_types = statement.params();
+                        let (dummy_params, special_params) =
+                            crate::types_extractor::create_dummy_params(client, param_types)
+                                .await?;
+                        
+                        if special_params.is_empty() {
+                            // No special params, use dummy params directly
+                            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", sql);
+                            let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                                dummy_params.iter().map(|p| p.as_ref()).collect();
+                            client.query(&explain_sql, &param_refs).await
+                        } else {
+                            // Has special params, inline them
+                            let mut modified_sql = sql.to_string();
+                            for (param_idx, type_name, value) in special_params.iter().rev() {
+                                let param_placeholder = format!("${}", param_idx + 1);
+                                let casted_value = if type_name == "numeric" {
+                                    format!("{}::{}", value, type_name)
+                                } else {
+                                    format!("'{}'::{}", value, type_name)
+                                };
+                                modified_sql = modified_sql.replace(&param_placeholder, &casted_value);
+                            }
+                            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql);
+                            client.query(&explain_sql, &[]).await
+                        }
+                    }
+                    Err(_) => {
+                        return Ok((false, Vec::new(), vec![format!("Query '{}' had EXPLAIN failed", query_name)], String::new()));
+                    }
                 }
             }
         } else {

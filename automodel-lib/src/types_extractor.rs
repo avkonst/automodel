@@ -480,11 +480,13 @@ pub async fn get_enum_type_info(
     let rows = client
         .query(
             r#"
-            SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as enum_values
+            SELECT n.nspname || '.' || t.typname as full_type_name, 
+                   array_agg(e.enumlabel ORDER BY e.enumsortorder) as enum_values
             FROM pg_type t
             JOIN pg_enum e ON t.oid = e.enumtypid
+            JOIN pg_namespace n ON t.typnamespace = n.oid
             WHERE t.oid = $1
-            GROUP BY t.typname
+            GROUP BY n.nspname, t.typname
             "#,
             &[&type_oid],
         )
@@ -729,14 +731,20 @@ async fn pg_type_to_rust_type(
         _ => {
             // Check if this is an enum type by trying to get enum info
             if let Some(enum_info) = get_enum_type_info(client, pg_type.oid()).await? {
-                let enum_name = to_pascal_case(&enum_info.type_name);
+                // Extract just the type name without schema for Rust enum name
+                let type_name_only = enum_info
+                    .type_name
+                    .split('.')
+                    .last()
+                    .unwrap_or(&enum_info.type_name);
+                let enum_name = to_pascal_case(type_name_only);
                 return Ok(RustType {
                     rust_type: enum_name,
                     is_nullable,
                     is_optional: false,
                     needs_json_wrapper: false,
                     enum_variants: Some(enum_info.variants),
-                    pg_type_name: Some(enum_info.type_name),
+                    pg_type_name: Some(enum_info.type_name), // Keep fully-qualified for SQL
                 });
             }
             return Ok(RustType {
@@ -968,4 +976,138 @@ pub fn extract_enum_types(
         .into_iter()
         .map(|(rust_name, (variants, pg_name))| (rust_name, variants, pg_name))
         .collect()
+}
+
+/// Create dummy parameter values for EXPLAIN queries
+/// Returns (dummy_params, special_params) where special_params contains info about enums and numeric types
+pub async fn create_dummy_params(
+    client: &tokio_postgres::Client,
+    param_types: &[tokio_postgres::types::Type],
+) -> Result<(
+    Vec<Box<dyn tokio_postgres::types::ToSql + Sync>>,
+    Vec<(usize, String, String)>,
+)> {
+    use tokio_postgres::types::Type;
+
+    let mut dummy_params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
+    let mut special_params: Vec<(usize, String, String)> = Vec::new(); // (param_index, type_name, value)
+
+    for param_type in param_types {
+        // Check if this is an enum type and get actual enum values
+        if let Ok(Some(enum_info)) = get_enum_type_info(client, param_type.oid()).await {
+            special_params.push((
+                dummy_params.len(),
+                enum_info.type_name.clone(),
+                enum_info.variants[0].clone(),
+            ));
+            dummy_params.push(Box::new("ENUM_PLACEHOLDER".to_string()));
+            continue;
+        }
+
+        // Handle numeric type specially - PostgreSQL is strict about numeric conversion
+        if param_type.name() == "numeric" {
+            special_params.push((dummy_params.len(), "numeric".to_string(), "0".to_string()));
+            dummy_params.push(Box::new("NUMERIC_PLACEHOLDER".to_string()));
+            continue;
+        }
+
+        // Handle range types - these need special casting
+        if param_type.name().ends_with("range") {
+            let type_name = param_type.name();
+            special_params.push((
+                dummy_params.len(),
+                type_name.to_string(),
+                "empty".to_string(),
+            ));
+            dummy_params.push(Box::new("RANGE_PLACEHOLDER".to_string()));
+            continue;
+        }
+
+        // Handle geometric types - these need special casting
+        let geometric_default = match param_type.name() {
+            "point" => Some("(0,0)"),
+            "line" => Some("{0,0,0}"),
+            "lseg" => Some("[(0,0),(0,0)]"),
+            "box" => Some("((0,0),(0,0))"),
+            "path" => Some("[(0,0)]"),
+            "polygon" => Some("((0,0))"),
+            "circle" => Some("<(0,0),0>"),
+            _ => None,
+        };
+        if let Some(default_value) = geometric_default {
+            let type_name = param_type.name();
+            special_params.push((
+                dummy_params.len(),
+                type_name.to_string(),
+                default_value.to_string(),
+            ));
+            dummy_params.push(Box::new("GEOMETRIC_PLACEHOLDER".to_string()));
+            continue;
+        }
+
+        // Handle built-in PostgreSQL types
+        let dummy_value: Box<dyn tokio_postgres::types::ToSql + Sync> = match param_type {
+            // Boolean & Numeric Types
+            &Type::BOOL => Box::new(false),
+            &Type::CHAR => Box::new(0i8),
+            &Type::INT2 => Box::new(0i16),
+            &Type::INT4 => Box::new(0i32),
+            &Type::INT8 => Box::new(0i64),
+            &Type::FLOAT4 => Box::new(0.0f32),
+            &Type::FLOAT8 => Box::new(0.0f64),
+            &Type::OID | &Type::REGPROC | &Type::XID | &Type::CID => Box::new(0u32),
+
+            // String & Text Types
+            &Type::TEXT
+            | &Type::VARCHAR
+            | &Type::BPCHAR
+            | &Type::NAME
+            | &Type::XML
+            | &Type::UNKNOWN => Box::new("dummy".to_string()),
+
+            // Binary & Bit Types
+            &Type::BYTEA => Box::new(vec![0u8]),
+
+            // JSON Types
+            &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
+
+            // Date & Time Types
+            &Type::TIMESTAMPTZ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap()),
+            &Type::TIMESTAMP => {
+                Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc())
+            }
+            &Type::DATE => Box::new(chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()),
+            &Type::TIME => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
+
+            // UUID
+            &Type::UUID => Box::new(uuid::Uuid::nil()),
+
+            // Array types - use empty arrays
+            &Type::BOOL_ARRAY => Box::new(Vec::<bool>::new()),
+            &Type::CHAR_ARRAY => Box::new(Vec::<i8>::new()),
+            &Type::INT2_ARRAY => Box::new(Vec::<i16>::new()),
+            &Type::INT4_ARRAY => Box::new(Vec::<i32>::new()),
+            &Type::INT8_ARRAY => Box::new(Vec::<i64>::new()),
+            &Type::FLOAT4_ARRAY => Box::new(Vec::<f32>::new()),
+            &Type::FLOAT8_ARRAY => Box::new(Vec::<f64>::new()),
+            &Type::TEXT_ARRAY
+            | &Type::VARCHAR_ARRAY
+            | &Type::BPCHAR_ARRAY
+            | &Type::NAME_ARRAY
+            | &Type::XML_ARRAY => Box::new(Vec::<String>::new()),
+            &Type::BYTEA_ARRAY => Box::new(Vec::<Vec<u8>>::new()),
+            &Type::JSON_ARRAY | &Type::JSONB_ARRAY => Box::new(Vec::<serde_json::Value>::new()),
+            &Type::DATE_ARRAY => Box::new(Vec::<chrono::NaiveDate>::new()),
+            &Type::TIME_ARRAY => Box::new(Vec::<chrono::NaiveTime>::new()),
+            &Type::TIMESTAMP_ARRAY => Box::new(Vec::<chrono::NaiveDateTime>::new()),
+            &Type::TIMESTAMPTZ_ARRAY => Box::new(Vec::<chrono::DateTime<chrono::Utc>>::new()),
+            &Type::UUID_ARRAY => Box::new(Vec::<uuid::Uuid>::new()),
+
+            // Fallback for unknown types - use string
+            _ => Box::new("dummy".to_string()),
+        };
+        dummy_params.push(dummy_value);
+    }
+
+    Ok((dummy_params, special_params))
 }
