@@ -17,18 +17,18 @@ pub struct GetUserActivitySummaryItem {
 /// Complex CTE query combining recent public.users with aggregate statistics
 ///
 /// Query Plan:
-/// Sort  (cost=20000000013.77..20000000013.91 rows=59 width=92)
-///   Sort Key: (row_number() OVER (?))
-///   ->  Nested Loop  (cost=20000000010.26..20000000012.03 rows=59 width=92)
-///         ->  WindowAgg  (cost=10000000005.79..10000000006.80 rows=59 width=68)
-///               Run Condition: (row_number() OVER (?) <= 10)
-///               ->  Sort  (cost=10000000005.77..10000000005.92 rows=59 width=60)
+/// Sort
+///   Sort Key: (row_number OVER (?))
+///   ->  Nested Loop
+///         ->  WindowAgg
+///               Run Condition: (row_number OVER (?) <= 10)
+///               ->  Sort
 ///                     Sort Key: users.created_at DESC
-///                     ->  Seq Scan on users  (cost=10000000000.00..10000000004.03 rows=59 width=60)
-///                           Filter: (created_at > (now() - '30 days'::interval))
-///         ->  Materialize  (cost=10000000004.48..10000000004.50 rows=1 width=24)
-///               ->  Aggregate  (cost=10000000004.48..10000000004.49 rows=1 width=24)
-///                     ->  Seq Scan on users users_1  (cost=10000000000.00..10000000003.59 rows=59 width=12)
+///                     ->  Seq Scan on users
+///                           Filter: (created_at > (now - '30 days'::interval))
+///         ->  Materialize
+///               ->  Aggregate
+///                     ->  Seq Scan on users users_1
 /// JIT:
 ///   Functions: 13
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -92,29 +92,29 @@ pub struct GetHierarchicalUserDataItem {
 /// Recursive CTE to build user hierarchy with referral relationships
 ///
 /// Query Plan:
-/// GroupAggregate  (cost=120000000220.69..120000000223.00 rows=77 width=1084)
+/// GroupAggregate
 ///   Group Key: uh.level, uh.name, uh.id, uh.email, uh.referrer_id, uh.path
 ///   CTE user_hierarchy
-///     ->  Recursive Union  (cost=10000000000.00..110000000208.30 rows=77 width=92)
-///           ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=57 width=92)
+///     ->  Recursive Union
+///           ->  Seq Scan on users
 ///                 Filter: (referrer_id IS NULL)
-///           ->  Hash Join  (cost=10000000015.20..10000000020.39 rows=2 width=92)
+///           ->  Hash Join
 ///                 Hash Cond: (u.referrer_id = uh_1.id)
 ///                 Join Filter: (u.id <> ALL (uh_1.path))
-///                 ->  Seq Scan on users u  (cost=10000000000.00..10000000003.59 rows=59 width=56)
-///                 ->  Hash  (cost=12.82..12.82 rows=190 width=40)
-///                       ->  WorkTable Scan on user_hierarchy uh_1  (cost=0.00..12.82 rows=190 width=40)
+///                 ->  Seq Scan on users u
+///                 ->  Hash
+///                       ->  WorkTable Scan on user_hierarchy uh_1
 ///                             Filter: (level < 5)
-///   ->  Sort  (cost=10000000012.39..10000000012.58 rows=77 width=1080)
+///   ->  Sort
 ///         Sort Key: uh.level, uh.name, uh.id, uh.email, uh.referrer_id, uh.path
-///         ->  Merge Left Join  (cost=10000000009.28..10000000009.98 rows=77 width=1080)
+///         ->  Merge Left Join
 ///               Merge Cond: (uh.id = referrals.referrer_id)
-///               ->  Sort  (cost=3.95..4.15 rows=77 width=1076)
+///               ->  Sort
 ///                     Sort Key: uh.id
-///                     ->  CTE Scan on user_hierarchy uh  (cost=0.00..1.54 rows=77 width=1076)
-///               ->  Sort  (cost=10000000005.33..10000000005.47 rows=59 width=8)
+///                     ->  CTE Scan on user_hierarchy uh
+///               ->  Sort
 ///                     Sort Key: referrals.referrer_id
-///                     ->  Seq Scan on users referrals  (cost=10000000000.00..10000000003.59 rows=59 width=8)
+///                     ->  Seq Scan on users referrals
 /// JIT:
 ///   Functions: 31
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -196,24 +196,23 @@ pub struct GetUserActivityWithPostsItem {
 /// Complex JOIN query with temporal filtering across multiple tables
 ///
 /// Query Plan:
-/// Sort  (cost=10000000161.58..10000000161.59 rows=1 width=176)
+/// Sort
 ///   Sort Key: p.created_at DESC, u.name
-///   ->  Merge Left Join  (cost=10000000071.46..10000000161.57 rows=1 width=176)
+///   ->  Merge Left Join
 ///         Merge Cond: (p.id = comments.post_id)
-///         ->  Nested Loop  (cost=0.29..78.22 rows=1 width=152)
-///               Join Filter: (u.id = p.author_id)
-///               ->  Index Scan using posts_pkey on posts p  (cost=0.15..62.15 rows=3 width=88)
-///                     Filter: ((published_at IS NOT NULL) AND (created_at >= '2025-12-05 05:49:34.43975+00'::timestamp with time zone) AND (created_at <= '2025-12-05 05:49:34.439752+00'::timestamp with time zone))
-///               ->  Materialize  (cost=0.14..16.03 rows=1 width=68)
-///                     ->  Index Scan using users_pkey on users u  (cost=0.14..16.03 rows=1 width=68)
-///                           Filter: (created_at > '2025-12-05 05:49:34.439743+00'::timestamp with time zone)
-///         ->  GroupAggregate  (cost=10000000071.17..10000000080.82 rows=200 width=12)
+///         ->  Nested Loop
+///               ->  Index Scan using posts_pkey on posts p
+///                     Filter: ((published_at IS NOT NULL) AND (created_at >= '1970-01-01 00:00:00+00'::timestamp with time zone) AND (created_at <= '1970-01-01 00:00:00+00'::timestamp with time zone))
+///               ->  Index Scan using users_pkey on users u
+///                     Index Cond: (id = p.author_id)
+///                     Filter: (created_at > '1970-01-01 00:00:00+00'::timestamp with time zone)
+///         ->  GroupAggregate
 ///               Group Key: comments.post_id
-///               ->  Sort  (cost=10000000071.17..10000000073.72 rows=1020 width=4)
+///               ->  Sort
 ///                     Sort Key: comments.post_id
-///                     ->  Seq Scan on comments  (cost=10000000000.00..10000000020.20 rows=1020 width=4)
+///                     ->  Seq Scan on comments
 /// JIT:
-///   Functions: 21
+///   Functions: 18
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT \n  u.id as user_id,\n  u.name,\n  u.email,\n  u.created_at as user_created_at,\n  u.updated_at as user_updated_at,\n  p.id as post_id,\n  p.title,\n  p.content,\n  p.created_at as post_created_at,\n  p.published_at,\n  c.comment_count,\n  EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,\n  DATE_TRUNC('day', p.created_at) as post_date\nFROM public.users u\nINNER JOIN public.posts p ON u.id = p.author_id\nLEFT JOIN (\n  SELECT post_id, COUNT(*) as comment_count\n  FROM public.comments \n  GROUP BY post_id\n) c ON p.id = c.post_id\nWHERE u.created_at > ${since}\n  AND p.published_at IS NOT NULL\n  AND p.created_at BETWEEN ${start_date} AND ${end_date}\nORDER BY p.created_at DESC, u.name"))]
 pub async fn get_user_activity_with_posts(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetUserActivityWithPostsItem>, super::ErrorReadOnly> {
@@ -289,36 +288,36 @@ pub struct GetUserEngagementMetricsItem {
 /// Complex multi-CTE query calculating user engagement metrics with temporal analysis
 ///
 /// Query Plan:
-/// Limit  (cost=20000000187.62..20000000187.69 rows=1 width=164)
-///   ->  Result  (cost=20000000187.62..20000000188.97 rows=20 width=164)
-///         ->  Sort  (cost=20000000187.62..20000000187.67 rows=20 width=132)
+/// Limit
+///   ->  Result
+///         ->  Sort
 ///               Sort Key: (((user_activity.post_count * 3) + user_activity.comment_count)) DESC, user_activity.name
-///               ->  WindowAgg  (cost=20000000186.69..20000000187.52 rows=20 width=132)
-///                     ->  Sort  (cost=20000000186.67..20000000186.72 rows=20 width=116)
+///               ->  WindowAgg
+///                     ->  Sort
 ///                           Sort Key: (((user_activity.post_count * 3) + user_activity.comment_count))
-///                           ->  WindowAgg  (cost=20000000185.81..20000000186.24 rows=20 width=116)
-///                                 ->  Sort  (cost=20000000185.79..20000000185.84 rows=20 width=108)
+///                           ->  WindowAgg
+///                                 ->  Sort
 ///                                       Sort Key: (((user_activity.post_count * 3) + user_activity.comment_count)) DESC
-///                                       ->  Subquery Scan on user_activity  (cost=20000000078.92..20000000185.36 rows=20 width=108)
-///                                             ->  GroupAggregate  (cost=20000000078.92..20000000185.26 rows=20 width=100)
+///                                       ->  Subquery Scan on user_activity
+///                                             ->  GroupAggregate
 ///                                                   Group Key: u.id
 ///                                                   Filter: (((count(DISTINCT p.id) * 3) + count(DISTINCT c.id)) > '0'::bigint)
-///                                                   ->  Incremental Sort  (cost=20000000078.92..20000000150.50 rows=1343 width=92)
+///                                                   ->  Incremental Sort
 ///                                                         Sort Key: u.id, p.id
 ///                                                         Presorted Key: u.id
-///                                                         ->  Merge Left Join  (cost=20000000078.00..20000000102.26 rows=1343 width=92)
+///                                                         ->  Merge Left Join
 ///                                                               Merge Cond: (u.id = c.author_id)
-///                                                               ->  Merge Left Join  (cost=10000000033.30..10000000051.04 rows=233 width=80)
+///                                                               ->  Merge Left Join
 ///                                                                     Merge Cond: (u.id = p.author_id)
-///                                                                     ->  Index Scan using users_pkey on users u  (cost=0.14..15.88 rows=59 width=60)
-///                                                                     ->  Sort  (cost=10000000033.16..10000000033.74 rows=233 width=24)
+///                                                                     ->  Index Scan using users_pkey on users u
+///                                                                     ->  Sort
 ///                                                                           Sort Key: p.author_id
-///                                                                           ->  Seq Scan on posts p  (cost=10000000000.00..10000000024.00 rows=233 width=24)
-///                                                                                 Filter: (created_at >= (date_trunc('month'::text, now()) - '3 mons'::interval))
-///                                                               ->  Sort  (cost=10000000044.70..10000000045.55 rows=340 width=16)
+///                                                                           ->  Seq Scan on posts p
+///                                                                                 Filter: (created_at >= (date_trunc('month'::text, now) - '3 mons'::interval))
+///                                                               ->  Sort
 ///                                                                     Sort Key: c.author_id
-///                                                                     ->  Seq Scan on comments c  (cost=10000000000.00..10000000030.40 rows=340 width=16)
-///                                                                           Filter: (created_at >= (date_trunc('month'::text, now()) - '3 mons'::interval))
+///                                                                     ->  Seq Scan on comments c
+///                                                                           Filter: (created_at >= (date_trunc('month'::text, now) - '3 mons'::interval))
 /// JIT:
 ///   Functions: 36
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -409,16 +408,16 @@ pub struct GetTimeSeriesUserRegistrationsItem {
 /// Time series analysis of user registrations with age demographics
 ///
 /// Query Plan:
-/// Sort  (cost=10000000003.97..10000000003.98 rows=1 width=96)
+/// Sort
 ///   Sort Key: time_series.period_start DESC
-///   ->  Subquery Scan on time_series  (cost=10000000003.90..10000000003.96 rows=1 width=96)
-///         ->  GroupAggregate  (cost=10000000003.90..10000000003.95 rows=1 width=88)
+///   ->  Subquery Scan on time_series
+///         ->  GroupAggregate
 ///               Group Key: (date_trunc('day'::text, users.created_at))
 ///               Filter: (count(*) >= '0'::bigint)
-///               ->  Sort  (cost=10000000003.90..10000000003.90 rows=1 width=20)
+///               ->  Sort
 ///                     Sort Key: (date_trunc('day'::text, users.created_at))
-///                     ->  Seq Scan on users  (cost=10000000000.00..10000000003.89 rows=1 width=20)
-///                           Filter: ((created_at >= '2025-12-05 05:49:33.515562+00'::timestamp with time zone) AND (created_at <= '2025-12-05 05:49:33.515568+00'::timestamp with time zone))
+///                     ->  Seq Scan on users
+///                           Filter: ((created_at >= '1970-01-01 00:00:00+00'::timestamp with time zone) AND (created_at <= '1970-01-01 00:00:00+00'::timestamp with time zone))
 /// JIT:
 ///   Functions: 11
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -485,10 +484,10 @@ pub struct GetUsersWithTimezoneInfoItem {
 /// Users with comprehensive timezone and temporal information
 ///
 /// Query Plan:
-/// Sort  (cost=10000000005.40..10000000005.41 rows=1 width=180)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000005.39 rows=1 width=180)
-///         Filter: ((created_at >= '2025-12-05 05:49:33.82012+00'::timestamp with time zone) AND (created_at <= '2025-12-05 05:49:33.820125+00'::timestamp with time zone) AND ((EXTRACT(epoch FROM age(now(), created_at)) / '86400'::numeric) >= '0'::numeric) AND ((EXTRACT(epoch FROM age(now(), created_at)) / '86400'::numeric) <= '0'::numeric))
+///   ->  Seq Scan on users
+///         Filter: ((created_at >= '1970-01-01 00:00:00+00'::timestamp with time zone) AND (created_at <= '1970-01-01 00:00:00+00'::timestamp with time zone) AND ((EXTRACT(epoch FROM age(now, created_at)) / '86400'::numeric) >= '0'::numeric) AND ((EXTRACT(epoch FROM age(now, created_at)) / '86400'::numeric) <= '0'::numeric))
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -548,9 +547,9 @@ pub struct GetUserCountAndAvgAgeItem {
 /// Get user count and average age - uses default GetUserCountAndAvgAgeItem struct
 ///
 /// Query Plan:
-/// Aggregate  (cost=12.34..12.35 rows=1 width=40)
-///   ->  Bitmap Heap Scan on users  (cost=8.45..12.04 rows=59 width=4)
-///         ->  Bitmap Index Scan on idx_users_age_updated_at  (cost=0.00..8.44 rows=59 width=0)
+/// Aggregate
+///   ->  Bitmap Heap Scan on users
+///         ->  Bitmap Index Scan on idx_users_age_updated_at
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT COUNT(*) as count, AVG(age) as avg_age FROM public.users"))]
 pub async fn get_user_count_and_avg_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<GetUserCountAndAvgAgeItem, super::ErrorReadOnly> {
     let query = sqlx::query(

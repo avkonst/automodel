@@ -276,7 +276,8 @@ impl AutoModel {
                 println!("cargo:info=Analyzing query '{}'", query.name);
 
                 // Extract type information (input/output types, parsed SQL)
-                let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
+                let type_info =
+                    extract_query_types(client, &query.sql, query.types.as_ref()).await?;
 
                 // Convert SQL for parameter handling
                 let query_for_analysis = Self::remove_conditional_blocks(&query.sql);
@@ -286,45 +287,16 @@ impl AutoModel {
                 // Generate query variants for conditional queries
                 let query_variants = Self::generate_query_variants(&query.sql);
 
-                // Detect if mutation using keyword analysis
-                let is_mutation = Self::is_mutation_query(&query.sql);
-
-                // Extract constraints only for mutation queries
-                let constraints = if is_mutation {
-                    match client.prepare(&converted_sql).await {
-                        Ok(statement) => {
-                            match extract_constraints_from_statement(client, &statement, &query.sql)
-                                .await
-                            {
-                                Ok(constraints) => constraints,
-                                Err(e) => {
-                                    println!(
-                                        "cargo:warning=Failed to extract constraints for query '{}': {}",
-                                        query.name, e
-                                    );
-                                    Vec::new()
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!(
-                                "cargo:info=Failed to prepare statement for constraint extraction for query '{}': {}",
-                                query.name, e
-                            );
-                            Vec::new()
-                        }
-                    }
-                } else {
-                    Vec::new()
-                };
-
-                // Analyze query performance if enabled and not a mutation
-                // Mutations don't need sequential scan analysis since EXPLAIN doesn't work on them
-                let performance_analysis = if query.ensure_indexes && !is_mutation {
-                    Some(Self::analyze_query_performance(client, &query.sql, &query.name).await?)
-                } else {
-                    None
-                };
+                // Analyze query with EXPLAIN to detect mutation and optionally get performance data
+                // EXPLAIN fails on mutations (INSERT/UPDATE/DELETE), so we use that to detect them
+                let (is_mutation, performance_analysis, constraints) =
+                    Self::analyze_query_with_explain(
+                        client,
+                        &query,
+                        &converted_sql,
+                        &query_variants,
+                    )
+                    .await?;
 
                 let analyzed_query = QueryDefinitionRuntime::new(
                     query.clone(),
@@ -348,37 +320,140 @@ impl AutoModel {
         Ok(analyzed_queries)
     }
 
-    /// Detect if a query is a mutation by running EXPLAIN
-    /// If EXPLAIN fails, assume it's a mutation query (INSERT/UPDATE/DELETE don't support EXPLAIN)
-    /// Clean up generated files for modules that no longer exist in the YAML config
-    /// Returns true for mutations (INSERT, UPDATE, DELETE, etc.), false for read-only queries
-    fn is_mutation_query(sql: &str) -> bool {
-        let sql_upper = sql.to_uppercase();
+    /// Analyze query with EXPLAIN to detect mutations and optionally collect performance data
+    /// - First checks SQL keywords to quickly identify obvious mutations
+    /// - For potential read-only queries: runs EXPLAIN to verify and optionally collect performance
+    /// - If EXPLAIN fails on what looks like a SELECT: treat as mutation (edge case)
+    /// Returns (is_mutation, performance_analysis, constraints)
+    async fn analyze_query_with_explain(
+        client: &tokio_postgres::Client,
+        query: &QueryDefinition,
+        converted_sql: &str,
+        _query_variants: &[String],
+    ) -> Result<(
+        bool,
+        Option<PerformanceAnalysis>,
+        Vec<crate::types_extractor::ConstraintInfo>,
+    )> {
+        // Quick keyword-based detection first
+        let sql_upper = query.sql.to_uppercase();
         let sql_trimmed = sql_upper.trim();
 
-        // Check if the query starts with a mutation keyword
-        let keywords = [
+        let mutation_keywords = [
             "INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "CREATE", "ALTER",
         ];
 
-        for keyword in &keywords {
-            if sql_trimmed.starts_with(keyword) {
-                return true;
-            }
-        }
+        let is_obvious_mutation = mutation_keywords.iter().any(|kw| {
+            sql_trimmed.starts_with(kw)
+                || (sql_trimmed.starts_with("WITH") && sql_upper.contains(&format!(") {}", kw)))
+        });
 
-        // Handle WITH clauses: look for ") INSERT/UPDATE/DELETE" after WITH
-        // This is more precise than just searching for the keyword anywhere
-        if sql_trimmed.starts_with("WITH") {
-            for keyword in &keywords {
-                // Look for pattern like ") INSERT", ") UPDATE", etc.
-                if sql_upper.contains(&format!(") {}", keyword)) {
-                    return true;
+        if is_obvious_mutation {
+            // This is clearly a mutation - extract constraints
+            let constraints = match client.prepare(converted_sql).await {
+                Ok(statement) => {
+                    match extract_constraints_from_statement(client, &statement, &query.sql).await {
+                        Ok(constraints) => constraints,
+                        Err(e) => {
+                            println!(
+                                "cargo:warning=Failed to extract constraints for query '{}': {}",
+                                query.name, e
+                            );
+                            Vec::new()
+                        }
+                    }
                 }
-            }
+                Err(e) => {
+                    println!(
+                        "cargo:info=Failed to prepare statement for constraint extraction for query '{}': {}",
+                        query.name, e
+                    );
+                    Vec::new()
+                }
+            };
+
+            return Ok((true, None, constraints));
         }
 
-        false
+        // Looks like a SELECT or read-only query - verify with EXPLAIN
+        let explain_result = if query.ensure_indexes {
+            // Run full performance analysis (which includes EXPLAIN)
+            Self::analyze_query_performance(client, &query.sql, &query.name).await
+        } else {
+            // Just run a simple EXPLAIN to verify it's read-only
+            Self::detect_mutation_via_explain(client, converted_sql).await
+        };
+
+        match explain_result {
+            Ok(perf_analysis) => {
+                // EXPLAIN succeeded - confirmed as read-only query
+                let performance = if query.ensure_indexes {
+                    Some(perf_analysis)
+                } else {
+                    None
+                };
+                Ok((false, performance, Vec::new()))
+            }
+            Err(_) => {
+                // EXPLAIN failed on what looked like a SELECT - treat as mutation (edge case)
+                println!(
+                    "cargo:warning=Query '{}' failed EXPLAIN but didn't match mutation keywords - treating as mutation",
+                    query.name
+                );
+                Ok((true, None, Vec::new()))
+            }
+        }
+    }
+
+    /// Detect if query is a mutation by attempting EXPLAIN (lightweight version)
+    /// Returns PerformanceAnalysis with minimal data if EXPLAIN succeeds, otherwise returns error
+    async fn detect_mutation_via_explain(
+        client: &tokio_postgres::Client,
+        converted_sql: &str,
+    ) -> Result<PerformanceAnalysis> {
+        // Get parameter names from the converted SQL
+        let param_names =
+            crate::types_extractor::convert_named_params_to_positional(converted_sql).1;
+
+        // Try EXPLAIN with proper parameter handling
+        let explain_result = if !param_names.is_empty() {
+            match client.prepare(converted_sql).await {
+                Ok(statement) => {
+                    let param_types = statement.params();
+
+                    // Create dummy parameters
+                    let (dummy_params, special_params) =
+                        Self::create_dummy_params(client, param_types).await?;
+
+                    // Prepare EXPLAIN query
+                    let (explain_query, param_refs) =
+                        Self::prepare_explain_query(converted_sql, &dummy_params, &special_params);
+
+                    client.query(&explain_query, &param_refs).await
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            // No parameters, execute EXPLAIN directly
+            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql);
+            client.query(&explain_sql, &[]).await
+        };
+
+        match explain_result {
+            Ok(_) => {
+                // EXPLAIN succeeded, so it's a read-only query
+                Ok(PerformanceAnalysis {
+                    has_sequential_scan: false,
+                    sequential_scan_tables: Vec::new(),
+                    warnings: Vec::new(),
+                    query_plan: None,
+                })
+            }
+            Err(e) => {
+                // EXPLAIN failed, likely a mutation query
+                Err(anyhow::anyhow!("EXPLAIN failed (likely mutation): {}", e))
+            }
+        }
     }
 
     /// Clean up generated files for modules that no longer exist in the YAML config
@@ -874,7 +949,7 @@ impl AutoModel {
                 &Type::JSON | &Type::JSONB => Box::new(serde_json::Value::Null),
 
                 // Date & Time Types
-                &Type::TIMESTAMPTZ => Box::new(chrono::Utc::now()),
+                &Type::TIMESTAMPTZ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap()),
                 &Type::TIMESTAMP => {
                     Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc())
                 }

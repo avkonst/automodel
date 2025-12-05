@@ -319,6 +319,27 @@ pub fn generate_query_constraint_enum(
     code
 }
 
+/// Remove statistics from EXPLAIN plan lines to make output stable
+/// Removes patterns like: (cost=X..Y rows=Z width=W)
+fn remove_plan_statistics(line: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        // Match patterns like (cost=10000000000.00..10000000003.74 rows=59 width=64)
+        // The pattern handles:
+        // - Optional cost=X..Y
+        // - Optional rows=Z
+        // - Optional width=W
+        // All enclosed in parentheses with spaces
+        Regex::new(r"\s*\((?:cost=[\d.]+\.\.[\d.]+\s*)?(?:rows=\d+\s*)?(?:width=\d+\s*)?\)")
+            .unwrap()
+    });
+
+    re.replace_all(line, "").trim_end().to_string()
+}
+
 /// Generate tracing::instrument attribute for a function
 fn generate_tracing_attribute(query: &QueryDefinition, param_names: &[String]) -> String {
     use std::collections::HashSet;
@@ -591,7 +612,10 @@ pub fn generate_function_code_without_enums(
             code.push_str("///\n");
             code.push_str("/// Query Plan:\n");
             for line in plan.lines() {
-                code.push_str(&format!("/// {}\n", line));
+                // Remove cost estimates, row counts, and width from the plan to avoid instability
+                // These values change between runs and make the generated code unstable
+                let cleaned_line = remove_plan_statistics(line);
+                code.push_str(&format!("/// {}\n", cleaned_line));
             }
         }
     }

@@ -202,9 +202,9 @@ pub struct GetAllUsersItem {
 /// Get all public.users with all their fields
 ///
 /// Query Plan:
-/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=269)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=269)
+///   ->  Seq Scan on users
 /// JIT:
 ///   Functions: 2
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -356,21 +356,21 @@ pub struct FindUsersByNameAndAgeItem {
 ///
 /// Query Plan:
 /// === find_users_by_name_and_age (base) ===
-/// Seq Scan on users  (cost=10000000000.00..10000000003.89 rows=1 width=56)
+/// Seq Scan on users
 ///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 /// 
 /// === find_users_by_name_and_age (variant 1) ===
-/// Bitmap Heap Scan on users  (cost=8.58..12.62 rows=1 width=56)
+/// Bitmap Heap Scan on users
 ///   Recheck Cond: (age >= 0)
 ///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
-///   ->  Bitmap Index Scan on idx_users_age_updated_at  (cost=0.00..8.58 rows=59 width=0)
+///   ->  Bitmap Index Scan on idx_users_age_updated_at
 ///         Index Cond: (age >= 0)
 /// 
 /// === find_users_by_name_and_age (variant 2) ===
-/// Index Scan using idx_users_age on users  (cost=0.14..7.78 rows=1 width=56)
+/// Index Scan using idx_users_age on users
 ///   Index Cond: (age <= 0)
 ///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE name ILIKE ${name_pattern} \n$[AND age >= ${min_age?}] \nAND name = ${name_exact} \n$[AND age <= ${max_age?}] \nORDER BY name"))]
@@ -452,10 +452,10 @@ pub struct GetRecentUsersItem {
 /// Get public.users created after a specific timestamp - expects at least one user
 ///
 /// Query Plan:
-/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=269)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=269)
-///         Filter: (created_at > '2025-12-05 05:49:34.09596+00'::timestamp with time zone)
+///   ->  Seq Scan on users
+///         Filter: (created_at > '1970-01-01 00:00:00+00'::timestamp with time zone)
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -502,9 +502,9 @@ pub struct GetActiveUsersByAgeRangeItem {
 /// Get active public.users within an age range - must return at least one user or fails
 ///
 /// Query Plan:
-/// Index Scan using idx_users_age on users  (cost=0.14..8.17 rows=1 width=261)
+/// Index Scan using idx_users_age on users
 ///   Index Cond: ((age >= 0) AND (age <= 0))
-///   Filter: (updated_at > (now() - '30 days'::interval))
+///   Filter: (updated_at > (now - '30 days'::interval))
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at \nFROM public.users \nWHERE age BETWEEN ${min_age} AND ${max_age} \nAND updated_at > NOW() - INTERVAL '30 days'"))]
 pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -545,9 +545,9 @@ pub struct SearchUsersByNamePatternItem {
 /// Search public.users by name pattern - expects at least one match
 ///
 /// Query Plan:
-/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=52)
+/// Sort
 ///   Sort Key: name
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=52)
+///   ->  Seq Scan on users
 ///         Filter: ((name)::text ~~* 'dummy'::text)
 /// JIT:
 ///   Functions: 4
@@ -588,35 +588,35 @@ pub struct SearchUsersAdvancedItem {
 ///
 /// Query Plan:
 /// === search_users_advanced (base) ===
-/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=64)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=64)
+///   ->  Seq Scan on users
 /// JIT:
 ///   Functions: 2
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 /// 
 /// === search_users_advanced (variant 1) ===
-/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=64)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=64)
+///   ->  Seq Scan on users
 ///         Filter: ((name)::text ~~* 'dummy'::text)
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 /// 
 /// === search_users_advanced (variant 2) ===
-/// Sort  (cost=14.07..14.22 rows=59 width=64)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Bitmap Heap Scan on users  (cost=8.60..12.33 rows=59 width=64)
+///   ->  Bitmap Heap Scan on users
 ///         Recheck Cond: (age >= 0)
-///         ->  Bitmap Index Scan on idx_users_age_updated_at  (cost=0.00..8.58 rows=59 width=0)
+///         ->  Bitmap Index Scan on idx_users_age_updated_at
 ///               Index Cond: (age >= 0)
 /// 
 /// === search_users_advanced (variant 3) ===
-/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=64)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=64)
-///         Filter: (created_at >= '2025-12-05 05:49:34.332024+00'::timestamp with time zone)
+///   ->  Seq Scan on users
+///         Filter: (created_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -1110,10 +1110,10 @@ pub async fn insert_user_structured(executor: impl sqlx::Executor<'_, Database =
 /// Get all possible user statuses currently in use
 ///
 /// Query Plan:
-/// Unique  (cost=10000000005.33..10000000005.62 rows=3 width=4)
-///   ->  Sort  (cost=10000000005.33..10000000005.47 rows=59 width=4)
+/// Unique
+///   ->  Sort
 ///         Sort Key: status
-///         ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=4)
+///         ->  Seq Scan on users
 /// JIT:
 ///   Functions: 3
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -1149,9 +1149,9 @@ pub struct GetAllUsersWithStarItem {
 /// Get all public.users using SELECT * to fetch all columns
 ///
 /// Query Plan:
-/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=381)
+/// Sort
 ///   Sort Key: created_at DESC
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=381)
+///   ->  Seq Scan on users
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nORDER BY created_at DESC"))]
 pub async fn get_all_users_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersWithStarItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1199,7 +1199,7 @@ pub struct GetUserByIdWithStarItem {
 /// Get a single user by ID using SELECT * to fetch all columns
 ///
 /// Query Plan:
-/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=381)
+/// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserByIdWithStarItem>, super::ErrorReadOnly> {
@@ -1252,7 +1252,7 @@ pub struct GetUserByIdAndEmailItem {
 /// Get a user by ID and email - generates GetUserByIdAndEmailParams struct and GetUserByIdAndEmailItem return struct
 ///
 /// Query Plan:
-/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=52)
+/// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
 ///   Filter: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
@@ -1637,7 +1637,7 @@ pub struct UserSummary {
 /// Get user summary - generates UserSummary return struct with custom name
 ///
 /// Query Plan:
-/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=52)
+/// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserSummary, super::ErrorReadOnly> {
@@ -1661,7 +1661,7 @@ pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx:
 /// Get user info by email - reuses UserSummary return struct
 ///
 /// Query Plan:
-/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=52)
+/// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE email = ${email}"))]
 pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
@@ -1690,9 +1690,9 @@ pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database =
 /// Get all user summaries - reuses UserSummary return struct
 ///
 /// Query Plan:
-/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=52)
+/// Sort
 ///   Sort Key: name
-///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=52)
+///   ->  Seq Scan on users
 /// JIT:
 ///   Functions: 2
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
@@ -1726,7 +1726,7 @@ pub struct UserDetails {
 /// Get user details with age and created_at - generates UserDetails return struct
 ///
 /// Query Plan:
-/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=64)
+/// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserDetails, super::ErrorReadOnly> {
@@ -1752,7 +1752,7 @@ pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx:
 /// Search user details - reuses UserDetails return struct
 ///
 /// Query Plan:
-/// Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=64)
+/// Seq Scan on users
 ///   Filter: ((name)::text ~~* 'dummy'::text)
 /// JIT:
 ///   Functions: 4
@@ -1781,7 +1781,7 @@ pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sq
 /// Find user by criteria - uses GetUserByIdAndEmailParams for params and UserSummary for return
 ///
 /// Query Plan:
-/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=52)
+/// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
 ///   Filter: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
@@ -1820,7 +1820,7 @@ pub struct GetUserSimpleItem {
 /// Simple user lookup by ID with detailed info
 ///
 /// Query Plan:
-/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=60)
+/// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, created_at\nFROM public.users\nWHERE id = ${user_id}"))]
 pub async fn get_user_simple(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserSimpleItem>, super::ErrorReadOnly> {

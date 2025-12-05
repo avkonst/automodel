@@ -172,7 +172,7 @@ RETURNING id, name, email, age".to_string();
 /// Select user by email - returns UserModel
 ///
 /// Query Plan:
-/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=56)
+/// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE email = ${email}"))]
 pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserModel>, super::ErrorReadOnly> {
