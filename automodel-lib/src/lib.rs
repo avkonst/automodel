@@ -155,7 +155,7 @@ impl AutoModel {
         // Check if generated code is up to date
         if Self::is_generated_mod_rs_code_up_to_date(source_hash, &mod_file).unwrap_or(false) {
             println!("cargo:info=Skipping code generation as everything is up to date");
-            
+
             // Output warnings from file even when skipping build
             let warn_file = output_path.join("automodel.warn");
             if warn_file.exists() {
@@ -167,7 +167,7 @@ impl AutoModel {
                     }
                 }
             }
-            
+
             return Ok(());
         }
 
@@ -265,10 +265,11 @@ impl AutoModel {
 
         // PHASE 2: Generate code from analyzed queries (no DB access)
         for module in &modules {
-            let (module_code, module_warnings) = Self::generate_code_for_module(&analyzed_queries, module)?;
+            let (module_code, module_warnings) =
+                Self::generate_code_for_module(&analyzed_queries, module)?;
             let module_file = output_path.join(format!("{}.rs", module));
             fs::write(&module_file, &module_code)?;
-            
+
             // Output warnings for this module
             for warning in &module_warnings {
                 println!("cargo:warning={}", warning);
