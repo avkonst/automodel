@@ -171,10 +171,10 @@ pub async fn insert_users_batch(executor: impl sqlx::Executor<'_, Database = sql
         r"INSERT INTO public.users (name, email, age)
         SELECT *
         FROM UNNEST(
-                $1::text [],
-                $2::text [],
-                $3::int4 []
-            )"
+            $1::text [],
+            $2::text [],
+            $3::int4 []
+          )"
     );
     let (name, email, age): (Vec<_>, Vec<_>, Vec<_>) =
         items
@@ -324,11 +324,11 @@ pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sq
         SET profile = $1, updated_at = NOW() 
         WHERE id = $2 
         RETURNING id,
-            name,
-            email,
-            age,
-            profile,
-            updated_at"
+          name,
+          email,
+          age,
+          profile,
+          updated_at"
     );
     let query = query.bind(serde_json::to_value(&profile).map_err(|e| sqlx::Error::Encode(Box::new(e)))?);
     let query = query.bind(user_id);

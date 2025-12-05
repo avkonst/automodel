@@ -54,21 +54,21 @@ impl TryFrom<super::ErrorConstraintInfo> for InsertAllTypesTestConstraints {
 pub async fn insert_all_types_test(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, bool_col: bool, char_col: String, int2_col: i16, int4_col: i32, int8_col: i64, float4_col: f32, float8_col: f64, numeric_col: rust_decimal::Decimal, name_col: String, text_col: String, varchar_col: String, bpchar_col: String, bytea_col: Vec<u8>, bit_col: bit_vec::BitVec, varbit_col: bit_vec::BitVec, date_col: chrono::NaiveDate, time_col: chrono::NaiveTime, timestamp_col: chrono::NaiveDateTime, timestamptz_col: chrono::DateTime<chrono::Utc>, interval_col: sqlx::postgres::types::PgInterval, timetz_col: sqlx::postgres::types::PgTimeTz, int4_range_col: sqlx::postgres::types::PgRange<i32>, int8_range_col: sqlx::postgres::types::PgRange<i64>, num_range_col: sqlx::postgres::types::PgRange<rust_decimal::Decimal>, ts_range_col: sqlx::postgres::types::PgRange<chrono::NaiveDateTime>, tstz_range_col: sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>, date_range_col: sqlx::postgres::types::PgRange<chrono::NaiveDate>, inet_col: std::net::IpAddr, cidr_col: std::net::IpAddr, macaddr_col: mac_address::MacAddress, json_col: serde_json::Value, jsonb_col: serde_json::Value, uuid_col: uuid::Uuid, bool_array_col: Vec<bool>, int4_array_col: Vec<i32>, int8_array_col: Vec<i64>, text_array_col: Vec<String>, float8_array_col: Vec<f64>, int4_range_array_col: Vec<sqlx::postgres::types::PgRange<i32>>, date_range_array_col: Vec<sqlx::postgres::types::PgRange<chrono::NaiveDate>>) -> Result<i32, super::Error<InsertAllTypesTestConstraints>> {
     let query = sqlx::query(
         r"INSERT INTO public.all_types_test (
-          bool_col, char_col, int2_col, int4_col, int8_col, float4_col, float8_col, numeric_col,
-          name_col, text_col, varchar_col, bpchar_col, bytea_col, bit_col, varbit_col,
-          date_col, time_col, timestamp_col, timestamptz_col, interval_col, timetz_col,
-          int4_range_col, int8_range_col, num_range_col, ts_range_col, tstz_range_col, date_range_col,
-          inet_col, cidr_col, macaddr_col, json_col, jsonb_col, uuid_col,
-          bool_array_col, int4_array_col, int8_array_col, text_array_col, float8_array_col,
-          int4_range_array_col, date_range_array_col
+         bool_col, char_col, int2_col, int4_col, int8_col, float4_col, float8_col, numeric_col,
+         name_col, text_col, varchar_col, bpchar_col, bytea_col, bit_col, varbit_col,
+         date_col, time_col, timestamp_col, timestamptz_col, interval_col, timetz_col,
+         int4_range_col, int8_range_col, num_range_col, ts_range_col, tstz_range_col, date_range_col,
+         inet_col, cidr_col, macaddr_col, json_col, jsonb_col, uuid_col,
+         bool_array_col, int4_array_col, int8_array_col, text_array_col, float8_array_col,
+         int4_range_array_col, date_range_array_col
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21,
-          $22, $23, $24, $25, $26, $27,
-          $28, $29, $30, $31, $32, $33,
-          $34, $35, $36, $37, $38,
-          $39, $40
+         $1, $2, $3, $4, $5, $6, $7, $8,
+         $9, $10, $11, $12, $13, $14, $15,
+         $16, $17, $18, $19, $20, $21,
+         $22, $23, $24, $25, $26, $27,
+         $28, $29, $30, $31, $32, $33,
+         $34, $35, $36, $37, $38,
+         $39, $40
         )
         RETURNING id"
     );
@@ -171,14 +171,14 @@ pub struct GetAllTypesTestItem {
 pub async fn get_all_types_test(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, id: i32) -> Result<GetAllTypesTestItem, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT
-          id, bool_col, char_col, int2_col, int4_col, int8_col, float4_col, float8_col, numeric_col,
-          name_col, text_col, varchar_col, bpchar_col, bytea_col, bit_col, varbit_col,
-          date_col, time_col, timestamp_col, timestamptz_col, interval_col, timetz_col,
-          int4_range_col, int8_range_col, num_range_col, ts_range_col, tstz_range_col, date_range_col,
-          inet_col, cidr_col, macaddr_col, json_col, jsonb_col, uuid_col,
-          bool_array_col, int4_array_col, int8_array_col, text_array_col, float8_array_col,
-          int4_range_array_col, date_range_array_col,
-          created_at
+         id, bool_col, char_col, int2_col, int4_col, int8_col, float4_col, float8_col, numeric_col,
+         name_col, text_col, varchar_col, bpchar_col, bytea_col, bit_col, varbit_col,
+         date_col, time_col, timestamp_col, timestamptz_col, interval_col, timetz_col,
+         int4_range_col, int8_range_col, num_range_col, ts_range_col, tstz_range_col, date_range_col,
+         inet_col, cidr_col, macaddr_col, json_col, jsonb_col, uuid_col,
+         bool_array_col, int4_array_col, int8_array_col, text_array_col, float8_array_col,
+         int4_range_array_col, date_range_array_col,
+         created_at
         FROM public.all_types_test
         WHERE id = $1"
     );

@@ -110,8 +110,13 @@ impl Default for ExpectedResult {
 pub(crate) struct QueryDefinition {
     /// The name of the query, which will be used as the function name
     pub name: String,
-    /// The SQL query string
+    /// The SQL query string (original with #{param} syntax)
     pub sql: String,
+    /// Pre-processed SQL variants with positional parameters ($1, $2, etc.)
+    /// Each variant represents: (converted_sql, param_names, variant_label)
+    /// - Base variant has all conditional blocks removed
+    /// - Additional variants include each conditional block separately
+    pub sql_variants: Vec<(String, Vec<String>, String)>,
     /// Optional description of what the query does
     pub description: Option<String>,
     /// Module name where this function should be generated

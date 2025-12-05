@@ -1,6 +1,5 @@
 use crate::codegen::types_generator::{
-    generate_enum_definition,
-    generate_conditional_diff_params, generate_conditional_diff_struct,
+    generate_conditional_diff_params, generate_conditional_diff_struct, generate_enum_definition,
     generate_input_params_with_names, generate_multiunzip_input_struct, generate_multiunzip_param,
     generate_result_struct_with_name, generate_return_type, generate_structured_params_signature,
     generate_structured_params_struct,
@@ -8,7 +7,8 @@ use crate::codegen::types_generator::{
 use crate::query_definition::{ExpectedResult, QueryDefinition, TelemetryLevel};
 use crate::query_definition_rt::QueryDefinitionRuntime;
 use crate::types_extractor::{
-    convert_named_params_to_positional, extract_enum_types, parse_parameter_names_from_sql, OutputColumn, QueryTypeInfo,
+    extract_enum_types, parse_parameter_names_from_sql,
+    OutputColumn, QueryTypeInfo,
 };
 use crate::utils::{to_pascal_case, to_snake_case};
 use anyhow::Result;
@@ -752,11 +752,11 @@ fn generate_static_function_body(
         body.push_str("    use itertools::Itertools;\n");
     }
 
-    // Convert named parameters to positional parameters for SQLx
-    let (converted_sql, param_names) = convert_named_params_to_positional(&query.sql);
+    // Get pre-computed converted SQL and param names from first variant (base query)
+    let (converted_sql, param_names, _variant_label) = &query.sql_variants[0];
 
     // Build the SQLx query with parameter bindings
-    let raw_string = generate_indented_raw_string_literal(&converted_sql);
+    let raw_string = generate_indented_raw_string_literal(converted_sql);
     body.push_str(&format!(
         "    let query = sqlx::query(\n{}\n    );\n",
         raw_string
@@ -1606,8 +1606,7 @@ pub fn generate_code_for_module(
                 }
 
                 for (expected_name, expected_type) in &expected_fields {
-                    if let Some(existing) =
-                        existing_fields.iter().find(|(n, _)| n == expected_name)
+                    if let Some(existing) = existing_fields.iter().find(|(n, _)| n == expected_name)
                     {
                         if &existing.1 != expected_type {
                             anyhow::bail!(

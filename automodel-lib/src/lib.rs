@@ -308,24 +308,10 @@ impl AutoModel {
                 let type_info =
                     extract_query_types(client, &query.sql, query.types.as_ref()).await?;
 
-                // Convert SQL for parameter handling
-                let query_for_analysis = Self::remove_conditional_blocks(&query.sql);
-                let (converted_sql, param_names) =
-                    convert_named_params_to_positional(&query_for_analysis);
-
-                // Generate query variants for conditional queries
-                let query_variants = Self::generate_query_variants(&query.sql);
-
                 // Analyze query with EXPLAIN to detect mutation and optionally get performance data
                 // EXPLAIN fails on mutations (INSERT/UPDATE/DELETE), so we use that to detect them
                 let (is_mutation, performance_analysis, constraints) =
-                    Self::analyze_query_with_explain(
-                        client,
-                        &query,
-                        &converted_sql,
-                        &query_variants,
-                    )
-                    .await?;
+                    Self::analyze_query_with_explain(client, query).await?;
 
                 let analyzed_query = QueryDefinitionRuntime::new(
                     query.clone(),
@@ -333,9 +319,6 @@ impl AutoModel {
                     is_mutation,
                     constraints,
                     performance_analysis,
-                    query_variants,
-                    converted_sql,
-                    param_names,
                 );
 
                 Ok::<_, anyhow::Error>(analyzed_query)
@@ -357,8 +340,6 @@ impl AutoModel {
     async fn analyze_query_with_explain(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
-        converted_sql: &str,
-        _query_variants: &[String],
     ) -> Result<(
         bool,
         Option<PerformanceAnalysis>,
@@ -379,6 +360,8 @@ impl AutoModel {
 
         if is_obvious_mutation {
             // This is clearly a mutation - extract constraints
+            // Use first variant (base query) for constraint extraction
+            let (converted_sql, _param_names, _label) = &query.sql_variants[0];
             let constraints = match client.prepare(converted_sql).await {
                 Ok(statement) => {
                     match extract_constraints_from_statement(client, &statement, &query.sql).await {
@@ -404,10 +387,10 @@ impl AutoModel {
         // Looks like a SELECT or read-only query - verify with EXPLAIN
         let explain_result = if query.ensure_indexes {
             // Run full performance analysis (which includes EXPLAIN)
-            Self::analyze_query_performance(client, &query.sql, &query.name).await
+            Self::analyze_query_performance(client, query).await
         } else {
             // Just run a simple EXPLAIN to verify it's read-only
-            Self::detect_mutation_via_explain(client, converted_sql, &query.name).await
+            Self::detect_mutation_via_explain(client, query).await
         };
 
         match explain_result {
@@ -432,12 +415,10 @@ impl AutoModel {
     /// Returns PerformanceAnalysis with minimal data if EXPLAIN succeeds, otherwise returns error
     async fn detect_mutation_via_explain(
         client: &tokio_postgres::Client,
-        converted_sql: &str,
-        query_name: &str,
+        query: &QueryDefinition,
     ) -> Result<PerformanceAnalysis> {
-        // Get parameter names from the converted SQL
-        let param_names =
-            crate::types_extractor::convert_named_params_to_positional(converted_sql).1;
+        // Use first variant (base query) for detection
+        let (converted_sql, param_names, _label) = &query.sql_variants[0];
 
         // Try EXPLAIN with proper parameter handling
         let explain_result = if !param_names.is_empty() {
@@ -467,7 +448,7 @@ impl AutoModel {
             Ok(_) => {
                 // EXPLAIN succeeded, so it's a read-only query
                 Ok(PerformanceAnalysis {
-                    query_name: query_name.to_string(),
+                    query_name: query.name.clone(),
                     has_sequential_scan: false,
                     sequential_scan_tables: Vec::new(),
                     warnings: Vec::new(),
@@ -512,73 +493,6 @@ impl AutoModel {
         }
 
         Ok(())
-    }
-
-    /// Generate SQL query variants for analysis by handling conditional syntax
-    fn generate_query_variants(sql: &str) -> Vec<String> {
-        let mut variants = Vec::new();
-
-        // First variant: remove all conditional blocks #[...]
-        let base_query = Self::remove_conditional_blocks(sql);
-        if !base_query.trim().is_empty() {
-            variants.push(base_query);
-        }
-
-        // Additional variants: include each conditional block separately
-        let conditional_variants = Self::extract_conditional_variants(sql);
-        variants.extend(conditional_variants);
-
-        variants
-    }
-
-    /// Remove all conditional blocks #[...] from SQL
-    fn remove_conditional_blocks(sql: &str) -> String {
-        let mut result = sql.to_string();
-
-        // Remove #[...] blocks using simple string replacement
-        while let Some(start) = result.find("#[") {
-            if let Some(end) = result[start..].find("]") {
-                let end_pos = start + end + 1;
-                result.replace_range(start..end_pos, "");
-            } else {
-                break;
-            }
-        }
-
-        // Clean up extra whitespace
-        result = result.replace("  ", " ").trim().to_string();
-        result
-    }
-
-    /// Extract variants where each conditional block is included
-    fn extract_conditional_variants(sql: &str) -> Vec<String> {
-        let mut variants = Vec::new();
-        let mut pos = 0;
-
-        while let Some(start) = sql[pos..].find("#[") {
-            let start_pos = pos + start;
-            if let Some(end) = sql[start_pos..].find("]") {
-                let end_pos = start_pos + end + 1;
-                let conditional_content = &sql[start_pos + 2..end_pos - 1]; // Remove #[ and ]
-
-                // Create variant with this conditional block included
-                let mut variant = sql.to_string();
-                variant.replace_range(start_pos..end_pos, conditional_content);
-
-                // Remove any remaining conditional blocks from this variant
-                variant = Self::remove_conditional_blocks(&variant);
-
-                if !variant.trim().is_empty() {
-                    variants.push(variant);
-                }
-
-                pos = end_pos;
-            } else {
-                break;
-            }
-        }
-
-        variants
     }
 
     /// Create dummy parameter values for EXPLAIN queries
@@ -782,27 +696,21 @@ impl AutoModel {
     /// Analyze query execution plan to detect potential performance issues
     async fn analyze_query_performance(
         client: &tokio_postgres::Client,
-        sql: &str,
-        query_name: &str,
+        query: &QueryDefinition,
     ) -> Result<PerformanceAnalysis> {
         let mut has_sequential_scan = false;
         let mut sequential_scan_tables = Vec::new();
         let mut warnings = Vec::new();
         let mut full_query_plan = String::new();
 
-        // Generate query variants to handle conditional syntax
-        let query_variants = Self::generate_query_variants(sql);
-
-        // Analyze each variant
-        for (i, variant_sql) in query_variants.iter().enumerate() {
-            let variant_name = if i == 0 {
-                format!("{} (base)", query_name)
-            } else {
-                format!("{} (variant {})", query_name, i)
-            };
+        // Analyze each variant from pre-processed sql_variants
+        for (i, (converted_sql, param_names, variant_label)) in
+            query.sql_variants.iter().enumerate()
+        {
+            let variant_name = format!("{} ({})", query.name, variant_label);
 
             let (variant_has_seq_scan, variant_tables, variant_warnings, variant_plan) =
-                Self::analyze_single_query(client, variant_sql, &variant_name).await?;
+                Self::analyze_single_query(client, converted_sql, param_names, &variant_name).await?;
 
             if variant_has_seq_scan {
                 has_sequential_scan = true;
@@ -814,14 +722,14 @@ impl AutoModel {
             if i > 0 {
                 full_query_plan.push_str("\n\n");
             }
-            if query_variants.len() > 1 {
+            if query.sql_variants.len() > 1 {
                 full_query_plan.push_str(&format!("=== {} ===\n", variant_name));
             }
             full_query_plan.push_str(&variant_plan);
         }
 
         Ok(PerformanceAnalysis {
-            query_name: query_name.to_string(),
+            query_name: query.name.clone(),
             has_sequential_scan,
             sequential_scan_tables,
             warnings,
@@ -834,9 +742,12 @@ impl AutoModel {
     }
 
     /// Analyze a single SQL query variant
+    /// sql: already converted to positional parameters ($1, $2, etc.)
+    /// param_names: list of parameter names in order
     async fn analyze_single_query(
         client: &tokio_postgres::Client,
         sql: &str,
+        param_names: &[String],
         query_name: &str,
     ) -> Result<(bool, Vec<String>, Vec<String>, String)> {
         let mut has_sequential_scan = false;
@@ -844,13 +755,9 @@ impl AutoModel {
         let mut warnings = Vec::new();
         let mut query_plan_lines = Vec::new();
 
-        // Convert named parameters #{param} to positional parameters $1, $2, etc.
-        let (converted_sql, param_names) =
-            crate::types_extractor::convert_named_params_to_positional(sql);
-
         // Execute EXPLAIN query with appropriate parameters
         let query_result = if !param_names.is_empty() {
-            match client.prepare(&converted_sql).await {
+            match client.prepare(sql).await {
                 Ok(statement) => {
                     let param_types = statement.params();
 
@@ -860,7 +767,7 @@ impl AutoModel {
 
                     // Prepare EXPLAIN query
                     let (explain_query, param_refs) =
-                        Self::prepare_explain_query(&converted_sql, &dummy_params, &special_params);
+                        Self::prepare_explain_query(sql, &dummy_params, &special_params);
 
                     client.query(&explain_query, &param_refs).await
                 }
@@ -873,7 +780,7 @@ impl AutoModel {
             }
         } else {
             // No parameters, execute directly
-            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql);
+            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", sql);
             client.query(&explain_sql, &[]).await
         };
 

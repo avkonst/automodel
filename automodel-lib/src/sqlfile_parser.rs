@@ -3,6 +3,76 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 
+/// Generate SQL query variants for analysis by handling conditional syntax
+/// Returns list of (sql, variant_label) tuples
+fn generate_query_variants(sql: &str) -> Vec<(String, String)> {
+    let mut variants = Vec::new();
+
+    // First variant: remove all conditional blocks #[...]
+    let base_query = remove_conditional_blocks(sql);
+    if !base_query.trim().is_empty() {
+        variants.push((base_query, "base".to_string()));
+    }
+
+    // Additional variants: include each conditional block separately
+    let conditional_variants = extract_conditional_variants(sql);
+    for (i, variant_sql) in conditional_variants.into_iter().enumerate() {
+        variants.push((variant_sql, format!("variant {}", i + 1)));
+    }
+
+    variants
+}
+
+/// Remove all conditional blocks #[...] from SQL
+fn remove_conditional_blocks(sql: &str) -> String {
+    let mut result = sql.to_string();
+
+    // Remove #[...] blocks using simple string replacement
+    while let Some(start) = result.find("#[") {
+        if let Some(end) = result[start..].find("]") {
+            let end_pos = start + end + 1;
+            result.replace_range(start..end_pos, "");
+        } else {
+            break;
+        }
+    }
+
+    // Clean up extra whitespace
+    result = result.replace("  ", " ").trim().to_string();
+    result
+}
+
+/// Extract variants where each conditional block is included
+fn extract_conditional_variants(sql: &str) -> Vec<String> {
+    let mut variants = Vec::new();
+    let mut pos = 0;
+
+    while let Some(start) = sql[pos..].find("#[") {
+        let start_pos = pos + start;
+        if let Some(end) = sql[start_pos..].find("]") {
+            let end_pos = start_pos + end + 1;
+            let conditional_content = &sql[start_pos + 2..end_pos - 1]; // Remove #[ and ]
+
+            // Create variant with this conditional block included
+            let mut variant = sql.to_string();
+            variant.replace_range(start_pos..end_pos, conditional_content);
+
+            // Remove any remaining conditional blocks from this variant
+            variant = remove_conditional_blocks(&variant);
+
+            if !variant.trim().is_empty() {
+                variants.push(variant);
+            }
+
+            pos = end_pos;
+        } else {
+            break;
+        }
+    }
+
+    variants
+}
+
 /// Validates that a module name is a valid Rust identifier
 fn validate_module_name(module_name: &str) -> Result<(), String> {
     if module_name.is_empty() {
@@ -246,9 +316,21 @@ async fn parse_sql_file(
         anyhow::bail!("SQL file contains no SQL query for '{}'", name);
     }
 
+    // Generate SQL variants and convert to positional parameters at parse time
+    let sql_variants_raw = generate_query_variants(&sql);
+    let sql_variants: Vec<(String, Vec<String>, String)> = sql_variants_raw
+        .into_iter()
+        .map(|(variant_sql, variant_label)| {
+            let (converted_sql, param_names) =
+                crate::types_extractor::convert_named_params_to_positional(&variant_sql);
+            (converted_sql, param_names, variant_label)
+        })
+        .collect();
+
     Ok(QueryDefinition {
         name: name.to_string(),
         sql,
+        sql_variants,
         description: metadata.description,
         module: module.to_string(),
         expect: metadata.expect.unwrap_or_default(),

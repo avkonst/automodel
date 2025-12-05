@@ -5,13 +5,13 @@
 pub async fn create_users_table(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<(), super::ErrorReadOnly> {
     let query = sqlx::query(
         r"CREATE TABLE IF NOT EXISTS public.users (
-          id SERIAL PRIMARY KEY,
-          name TEXT NOT NULL,
-          email TEXT UNIQUE NOT NULL,
-          age INTEGER,
-          profile JSONB,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+         id SERIAL PRIMARY KEY,
+         name TEXT NOT NULL,
+         email TEXT UNIQUE NOT NULL,
+         age INTEGER,
+         profile JSONB,
+         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )"
     );
     query.execute(executor).await?;

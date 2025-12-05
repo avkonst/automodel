@@ -36,27 +36,27 @@ pub struct GetUserActivitySummaryItem {
 pub async fn get_user_activity_summary(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetUserActivitySummaryItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"WITH recent_users AS (
-          SELECT id, name, email, created_at,
-                 ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank
-          FROM public.users 
-          WHERE created_at > NOW() - INTERVAL '30 days'
+         SELECT id, name, email, created_at,
+             ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank
+         FROM public.users 
+         WHERE created_at > NOW() - INTERVAL '30 days'
         ),
         user_stats AS (
-          SELECT 
-            COUNT(*) as total_users,
-            COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,
-            AVG(age)::float8 as avg_age
-          FROM public.users
+         SELECT 
+          COUNT(*) as total_users,
+          COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,
+          AVG(age)::float8 as avg_age
+         FROM public.users
         )
         SELECT 
-          ru.id,
-          ru.name, 
-          ru.email,
-          ru.created_at,
-          ru.rank,
-          us.total_users,
-          us.weekly_users,
-          us.avg_age
+         ru.id,
+         ru.name, 
+         ru.email,
+         ru.created_at,
+         ru.rank,
+         us.total_users,
+         us.weekly_users,
+         us.avg_age
         FROM recent_users ru
         CROSS JOIN user_stats us
         WHERE ru.rank <= 10
@@ -122,40 +122,40 @@ pub struct GetHierarchicalUserDataItem {
 pub async fn get_hierarchical_user_data(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetHierarchicalUserDataItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"WITH RECURSIVE user_hierarchy AS (
-          -- Base case: public.users without referrers (or top-level public.users)
-          SELECT 
-            id, 
-            name, 
-            email, 
-            NULL::integer as referrer_id,
-            1 as level,
-            ARRAY[id] as path
-          FROM public.users 
-          WHERE referrer_id IS NULL
-          
-          UNION ALL
-          
-          -- Recursive case: public.users with referrers
-          SELECT 
-            u.id,
-            u.name,
-            u.email,
-            u.referrer_id,
-            uh.level + 1,
-            uh.path || u.id
-          FROM public.users u
-          INNER JOIN user_hierarchy uh ON u.referrer_id = uh.id
-          WHERE u.id != ALL(uh.path) -- Prevent cycles
-          AND uh.level < 5 -- Limit depth
+         -- Base case: public.users without referrers (or top-level public.users)
+         SELECT 
+          id, 
+          name, 
+          email, 
+          NULL::integer as referrer_id,
+          1 as level,
+          ARRAY[id] as path
+         FROM public.users 
+         WHERE referrer_id IS NULL
+         
+         UNION ALL
+         
+         -- Recursive case: public.users with referrers
+         SELECT 
+          u.id,
+          u.name,
+          u.email,
+          u.referrer_id,
+          uh.level + 1,
+          uh.path || u.id
+         FROM public.users u
+         INNER JOIN user_hierarchy uh ON u.referrer_id = uh.id
+         WHERE u.id != ALL(uh.path) -- Prevent cycles
+         AND uh.level < 5 -- Limit depth
         )
         SELECT 
-          uh.id,
-          uh.name,
-          uh.email,
-          uh.referrer_id,
-          uh.level,
-          uh.path,
-          COUNT(referrals.id) as direct_referrals_count
+         uh.id,
+         uh.name,
+         uh.email,
+         uh.referrer_id,
+         uh.level,
+         uh.path,
+         COUNT(referrals.id) as direct_referrals_count
         FROM user_hierarchy uh
         LEFT JOIN public.users referrals ON referrals.referrer_id = uh.id
         GROUP BY uh.id, uh.name, uh.email, uh.referrer_id, uh.level, uh.path
@@ -218,29 +218,29 @@ pub struct GetUserActivityWithPostsItem {
 pub async fn get_user_activity_with_posts(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetUserActivityWithPostsItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT 
-          u.id as user_id,
-          u.name,
-          u.email,
-          u.created_at as user_created_at,
-          u.updated_at as user_updated_at,
-          p.id as post_id,
-          p.title,
-          p.content,
-          p.created_at as post_created_at,
-          p.published_at,
-          c.comment_count,
-          EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,
-          DATE_TRUNC('day', p.created_at) as post_date
+         u.id as user_id,
+         u.name,
+         u.email,
+         u.created_at as user_created_at,
+         u.updated_at as user_updated_at,
+         p.id as post_id,
+         p.title,
+         p.content,
+         p.created_at as post_created_at,
+         p.published_at,
+         c.comment_count,
+         EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,
+         DATE_TRUNC('day', p.created_at) as post_date
         FROM public.users u
         INNER JOIN public.posts p ON u.id = p.author_id
         LEFT JOIN (
-          SELECT post_id, COUNT(*) as comment_count
-          FROM public.comments 
-          GROUP BY post_id
+         SELECT post_id, COUNT(*) as comment_count
+         FROM public.comments 
+         GROUP BY post_id
         ) c ON p.id = c.post_id
         WHERE u.created_at > $1
-          AND p.published_at IS NOT NULL
-          AND p.created_at BETWEEN $2 AND $3
+         AND p.published_at IS NOT NULL
+         AND p.created_at BETWEEN $2 AND $3
         ORDER BY p.created_at DESC, u.name"
     );
     let query = query.bind(since);
@@ -325,44 +325,44 @@ pub struct GetUserEngagementMetricsItem {
 pub async fn get_user_engagement_metrics(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_engagement_score: i64, limit_results: i64) -> Result<Vec<GetUserEngagementMetricsItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"WITH user_activity AS (
-          SELECT 
-            u.id,
-            u.name,
-            u.email,
-            u.created_at,
-            COUNT(DISTINCT p.id) as post_count,
-            COUNT(DISTINCT c.id) as comment_count,
-            MAX(p.created_at) as last_post_date,
-            MAX(c.created_at) as last_comment_date,
-            AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours
-          FROM public.users u
-          LEFT JOIN public.posts p ON u.id = p.author_id 
-            AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
-          LEFT JOIN public.comments c ON u.id = c.author_id 
-            AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
-          GROUP BY u.id, u.name, u.email, u.created_at
+         SELECT 
+          u.id,
+          u.name,
+          u.email,
+          u.created_at,
+          COUNT(DISTINCT p.id) as post_count,
+          COUNT(DISTINCT c.id) as comment_count,
+          MAX(p.created_at) as last_post_date,
+          MAX(c.created_at) as last_comment_date,
+          AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours
+         FROM public.users u
+         LEFT JOIN public.posts p ON u.id = p.author_id 
+          AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
+         LEFT JOIN public.comments c ON u.id = c.author_id 
+          AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
+         GROUP BY u.id, u.name, u.email, u.created_at
         ),
         engagement_scores AS (
-          SELECT 
-            *,
-            (post_count * 3 + comment_count) as engagement_score,
-            CASE 
-              WHEN last_post_date > NOW() - INTERVAL '7 days' OR 
-                   last_comment_date > NOW() - INTERVAL '7 days' THEN 'active'
-              WHEN last_post_date > NOW() - INTERVAL '30 days' OR 
-                   last_comment_date > NOW() - INTERVAL '30 days' THEN 'semi_active'
-              ELSE 'inactive'
-            END as activity_status,
-            EXTRACT(EPOCH FROM (NOW() - GREATEST(
-              COALESCE(last_post_date, '1970-01-01'::timestamp), 
-              COALESCE(last_comment_date, '1970-01-01'::timestamp)
-            )))::float8/86400 as days_since_last_activity
-          FROM user_activity
+         SELECT 
+          *,
+          (post_count * 3 + comment_count) as engagement_score,
+          CASE 
+           WHEN last_post_date > NOW() - INTERVAL '7 days' OR 
+              last_comment_date > NOW() - INTERVAL '7 days' THEN 'active'
+           WHEN last_post_date > NOW() - INTERVAL '30 days' OR 
+              last_comment_date > NOW() - INTERVAL '30 days' THEN 'semi_active'
+           ELSE 'inactive'
+          END as activity_status,
+          EXTRACT(EPOCH FROM (NOW() - GREATEST(
+           COALESCE(last_post_date, '1970-01-01'::timestamp), 
+           COALESCE(last_comment_date, '1970-01-01'::timestamp)
+          )))::float8/86400 as days_since_last_activity
+         FROM user_activity
         )
         SELECT 
-          es.*,
-          RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,
-          PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile
+         es.*,
+         RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,
+         PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile
         FROM engagement_scores es
         WHERE engagement_score > $1
         ORDER BY engagement_score DESC, name
@@ -425,23 +425,23 @@ pub struct GetTimeSeriesUserRegistrationsItem {
 pub async fn get_time_series_user_registrations(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>, min_registrations: i64) -> Result<Vec<GetTimeSeriesUserRegistrationsItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"WITH time_series AS (
-          SELECT 
-            DATE_TRUNC('day', created_at) as period_start,
-            COUNT(*) as registrations_count,
-            COUNT(*) FILTER (WHERE age BETWEEN 18 AND 30) as young_adult_count,
-            COUNT(*) FILTER (WHERE age BETWEEN 31 AND 50) as middle_aged_count, 
-            COUNT(*) FILTER (WHERE age > 50) as senior_count,
-            AVG(age) as avg_age,
-            MIN(created_at) as first_registration,
-            MAX(created_at) as last_registration
-          FROM public.users
-          WHERE created_at BETWEEN $1 AND $2
-          GROUP BY DATE_TRUNC('day', created_at)
-          HAVING COUNT(*) >= $3
+         SELECT 
+          DATE_TRUNC('day', created_at) as period_start,
+          COUNT(*) as registrations_count,
+          COUNT(*) FILTER (WHERE age BETWEEN 18 AND 30) as young_adult_count,
+          COUNT(*) FILTER (WHERE age BETWEEN 31 AND 50) as middle_aged_count, 
+          COUNT(*) FILTER (WHERE age > 50) as senior_count,
+          AVG(age) as avg_age,
+          MIN(created_at) as first_registration,
+          MAX(created_at) as last_registration
+         FROM public.users
+         WHERE created_at BETWEEN $1 AND $2
+         GROUP BY DATE_TRUNC('day', created_at)
+         HAVING COUNT(*) >= $3
         )
         SELECT 
-          *,
-          EXTRACT(EPOCH FROM (last_registration - first_registration))::float8/3600 as period_span_hours
+         *,
+         EXTRACT(EPOCH FROM (last_registration - first_registration))::float8/3600 as period_span_hours
         FROM time_series
         ORDER BY period_start DESC"
     );
@@ -495,21 +495,21 @@ pub struct GetUsersWithTimezoneInfoItem {
 pub async fn get_users_with_timezone_info(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_timezone: String, start_date: chrono::DateTime<chrono::Utc>, end_date: chrono::DateTime<chrono::Utc>, min_age_days: rust_decimal::Decimal, max_age_days: rust_decimal::Decimal) -> Result<Vec<GetUsersWithTimezoneInfoItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT 
-          id,
-          name,
-          email,
-          created_at,
-          created_at AT TIME ZONE 'UTC' AT TIME ZONE $1 as created_at_user_tz,
-          updated_at,
-          updated_at AT TIME ZONE 'UTC' AT TIME ZONE $2 as updated_at_user_tz,
-          AGE(NOW(), created_at) as account_age,
-          EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 as account_age_days,
-          DATE_PART('dow', created_at) as created_day_of_week,
-          DATE_PART('hour', created_at) as created_hour,
-          TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at
+         id,
+         name,
+         email,
+         created_at,
+         created_at AT TIME ZONE 'UTC' AT TIME ZONE $1 as created_at_user_tz,
+         updated_at,
+         updated_at AT TIME ZONE 'UTC' AT TIME ZONE $2 as updated_at_user_tz,
+         AGE(NOW(), created_at) as account_age,
+         EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 as account_age_days,
+         DATE_PART('dow', created_at) as created_day_of_week,
+         DATE_PART('hour', created_at) as created_hour,
+         TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at
         FROM public.users 
         WHERE created_at BETWEEN $3 AND $4
-          AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN $5 AND $6
+         AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN $5 AND $6
         ORDER BY created_at DESC"
     );
     let query = query.bind(&user_timezone);

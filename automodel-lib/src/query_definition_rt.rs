@@ -24,16 +24,6 @@ pub struct QueryDefinitionRuntime {
 
     /// Query execution plan analysis results (for ensure_indexes feature)
     pub performance_analysis: Option<PerformanceAnalysis>,
-
-    /// All query variants (for conditional queries)
-    /// First variant is the base query, subsequent variants include conditional blocks
-    pub query_variants: Vec<String>,
-
-    /// Clean SQL with named parameters removed (converted to positional)
-    pub converted_sql: String,
-
-    /// Parameter names extracted from SQL in order
-    pub param_names: Vec<String>,
 }
 
 /// Performance analysis results from EXPLAIN
@@ -64,9 +54,6 @@ impl QueryDefinitionRuntime {
         is_mutation: bool,
         constraints: Vec<ConstraintInfo>,
         performance_analysis: Option<PerformanceAnalysis>,
-        query_variants: Vec<String>,
-        converted_sql: String,
-        param_names: Vec<String>,
     ) -> Self {
         Self {
             definition,
@@ -74,9 +61,6 @@ impl QueryDefinitionRuntime {
             is_mutation,
             constraints,
             performance_analysis,
-            query_variants,
-            converted_sql,
-            param_names,
         }
     }
 
