@@ -626,31 +626,40 @@ pub fn generate_function_code_without_enums(
             input_params
         )
     };
-
-    let return_type = match query.expect {
-        ExpectedResult::ExactlyOne => {
-            let error_type = if let Some(ref enum_name) = constraint_enum_name {
-                format!("super::Error<{}>", enum_name)
-            } else {
-                "super::ErrorReadOnly".to_string()
-            };
-            format!("Result<{}, {}>", base_return_type, error_type)
-        }
-        ExpectedResult::PossibleOne => {
-            let error_type = if let Some(ref enum_name) = constraint_enum_name {
-                format!("super::Error<{}>", enum_name)
-            } else {
-                "super::ErrorReadOnly".to_string()
-            };
-            format!("Result<Option<{}>, {}>", base_return_type, error_type)
-        }
-        ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
-            let error_type = if let Some(ref enum_name) = constraint_enum_name {
-                format!("super::Error<{}>", enum_name)
-            } else {
-                "super::ErrorReadOnly".to_string()
-            };
-            format!("Result<Vec<{}>, {}>", base_return_type, error_type)
+    
+    let return_type = if type_info.output_types.is_empty() {
+        let error_type = if let Some(ref enum_name) = constraint_enum_name {
+            format!("super::Error<{}>", enum_name)
+        } else {
+            "super::ErrorReadOnly".to_string()
+        };
+        format!("Result<(), {}>", error_type)
+    } else {
+        match query.expect {
+            ExpectedResult::ExactlyOne => {
+                let error_type = if let Some(ref enum_name) = constraint_enum_name {
+                    format!("super::Error<{}>", enum_name)
+                } else {
+                    "super::ErrorReadOnly".to_string()
+                };
+                format!("Result<{}, {}>", base_return_type, error_type)
+            }
+            ExpectedResult::PossibleOne => {
+                let error_type = if let Some(ref enum_name) = constraint_enum_name {
+                    format!("super::Error<{}>", enum_name)
+                } else {
+                    "super::ErrorReadOnly".to_string()
+                };
+                format!("Result<Option<{}>, {}>", base_return_type, error_type)
+            }
+            ExpectedResult::AtLeastOne | ExpectedResult::Multiple => {
+                let error_type = if let Some(ref enum_name) = constraint_enum_name {
+                    format!("super::Error<{}>", enum_name)
+                } else {
+                    "super::ErrorReadOnly".to_string()
+                };
+                format!("Result<Vec<{}>, {}>", base_return_type, error_type)
+            }
         }
     };
 

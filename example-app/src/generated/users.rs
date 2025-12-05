@@ -163,23 +163,18 @@ pub struct InsertUsersBatchRecord {
     pub age: i32,
 }
 
-#[derive(Debug, Clone)]
-pub struct InsertUsersBatchItem {
-    pub id: i32,
-    pub name: String,
-    pub email: String,
-    pub age: Option<i32>,
-    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
 /// Insert multiple users using UNNEST pattern with multiunzip
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO users (name, email, age)\nSELECT * FROM UNNEST(${name}::text[], ${email}::text[], ${age}::int4[])\nRETURNING id, name, email, age, created_at"))]
-pub async fn insert_users_batch(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, items: Vec<InsertUsersBatchRecord>) -> Result<Vec<InsertUsersBatchItem>, super::Error<InsertUsersBatchConstraints>> {
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age)\nSELECT *\nFROM UNNEST(\n        ${name}::text [],\n        ${email}::text [],\n        ${age}::int4 []\n    )"))]
+pub async fn insert_users_batch(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, items: Vec<InsertUsersBatchRecord>) -> Result<(), super::Error<InsertUsersBatchConstraints>> {
     use itertools::Itertools;
     let query = sqlx::query(
-        r"INSERT INTO users (name, email, age)
-        SELECT * FROM UNNEST($1::text[], $2::text[], $3::int4[])
-        RETURNING id, name, email, age, created_at"
+        r"INSERT INTO public.users (name, email, age)
+        SELECT *
+        FROM UNNEST(
+                $1::text [],
+                $2::text [],
+                $3::int4 []
+            )"
     );
     let (name, email, age): (Vec<_>, Vec<_>, Vec<_>) =
         items
@@ -189,17 +184,8 @@ pub async fn insert_users_batch(executor: impl sqlx::Executor<'_, Database = sql
     let query = query.bind(name);
     let query = query.bind(email);
     let query = query.bind(age);
-    let rows = query.fetch_all(executor).await?;
-    let result: Result<Vec<_>, sqlx::Error> = rows.iter().map(|row| {
-        Ok(InsertUsersBatchItem {
-        id: row.try_get::<i32, _>("id")?,
-        name: row.try_get::<String, _>("name")?,
-        email: row.try_get::<String, _>("email")?,
-        age: row.try_get::<Option<i32>, _>("age")?,
-        created_at: row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
-    })
-    }).collect();
-    result.map_err(Into::into)
+    query.execute(executor).await?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
