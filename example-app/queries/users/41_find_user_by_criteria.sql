@@ -6,5 +6,5 @@
 -- @end
 
 SELECT id, name, email 
-FROM users 
+FROM public.users 
 WHERE id = ${id} AND email = ${email}

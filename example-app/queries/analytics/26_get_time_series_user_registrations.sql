@@ -13,7 +13,7 @@ WITH time_series AS (
     AVG(age) as avg_age,
     MIN(created_at) as first_registration,
     MAX(created_at) as last_registration
-  FROM users
+  FROM public.users
   WHERE created_at BETWEEN ${start_date} AND ${end_date}
   GROUP BY DATE_TRUNC('day', created_at)
   HAVING COUNT(*) >= ${min_registrations}

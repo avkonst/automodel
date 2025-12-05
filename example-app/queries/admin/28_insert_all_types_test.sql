@@ -4,7 +4,7 @@
 --    ensure_indexes: false
 -- @end
 
-INSERT INTO all_types_test (
+INSERT INTO public.all_types_test (
   bool_col, char_col, int2_col, int4_col, int8_col, float4_col, float8_col, numeric_col,
   name_col, text_col, varchar_col, bpchar_col, bytea_col, bit_col, varbit_col,
   date_col, time_col, timestamp_col, timestamptz_col, interval_col, timetz_col,

@@ -3,4 +3,4 @@
 --    expect: exactly_one
 -- @end
 
-SELECT COUNT(*) as count, AVG(age) as avg_age FROM users
+SELECT COUNT(*) as count, AVG(age) as avg_age FROM public.users

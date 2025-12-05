@@ -1,12 +1,12 @@
 -- @automodel
---    description: Complex CTE query combining recent users with aggregate statistics
+--    description: Complex CTE query combining recent public.users with aggregate statistics
 --    expect: multiple
 -- @end
 
 WITH recent_users AS (
   SELECT id, name, email, created_at,
          ROW_NUMBER() OVER (ORDER BY created_at DESC) as rank
-  FROM users 
+  FROM public.users 
   WHERE created_at > NOW() - INTERVAL '30 days'
 ),
 user_stats AS (
@@ -14,7 +14,7 @@ user_stats AS (
     COUNT(*) as total_users,
     COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_users,
     AVG(age)::float8 as avg_age
-  FROM users
+  FROM public.users
 )
 SELECT 
   ru.id,

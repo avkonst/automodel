@@ -1,9 +1,9 @@
 -- @automodel
---    description: Get users by their status (enum parameter and enum output)
+--    description: Get public.users by their status (enum parameter and enum output)
 --    expect: multiple
 -- @end
 
 SELECT id, name, email, status 
-FROM users 
+FROM public.users 
 WHERE status = ${user_status} 
 ORDER BY name

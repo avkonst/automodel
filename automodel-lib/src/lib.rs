@@ -238,6 +238,9 @@ impl AutoModel {
         // Temporarily disable sequential scans to force index usage in analysis
         // This helps detect queries that would benefit from indexes even with empty/small tables
         client.execute("SET enable_seqscan = false", &[]).await?;
+        
+        // Enforce queries with full path, including schemas
+        client.execute("SET search_path TO ''", &[]).await?;
 
         // Generate separate files for each named module
         for module in &modules {

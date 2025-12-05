@@ -4,5 +4,5 @@
 -- @end
 
 SELECT DISTINCT status 
-FROM users 
+FROM public.users 
 ORDER BY status

@@ -5,5 +5,5 @@
 -- @end
 
 SELECT id, name, email, age 
-FROM users 
+FROM public.users 
 WHERE email = ${email}

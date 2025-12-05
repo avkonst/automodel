@@ -1,9 +1,9 @@
 -- @automodel
---    description: Create the users table with all necessary fields
+--    description: Create the public.users table with all necessary fields
 --    ensure_indexes: true
 -- @end
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS public.users (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,

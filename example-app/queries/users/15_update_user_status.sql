@@ -3,7 +3,7 @@
 --    expect: exactly_one
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET status = ${new_status} 
 WHERE id = ${user_id} 
 RETURNING id, status

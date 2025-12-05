@@ -4,5 +4,5 @@
 -- @end
 
 SELECT id, name, email, created_at
-FROM users
+FROM public.users
 WHERE id = ${user_id}

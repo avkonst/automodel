@@ -44,10 +44,10 @@ pub struct UserModel {
 }
 
 /// Insert a new user and return as UserModel
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO users (name, email, age) \nVALUES (${name}, ${email}, ${age?}) \nRETURNING id, name, email, age"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age) \nVALUES (${name}, ${email}, ${age?}) \nRETURNING id, name, email, age"))]
 pub async fn create_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: Option<i32>) -> Result<UserModel, super::Error<UserContentConstraints>> {
     let query = sqlx::query(
-        r"INSERT INTO users (name, email, age) 
+        r"INSERT INTO public.users (name, email, age) 
         VALUES ($1, $2, $3) 
         RETURNING id, name, email, age"
     );
@@ -67,10 +67,10 @@ pub async fn create_user(executor: impl sqlx::Executor<'_, Database = sqlx::Post
 }
 
 /// Full update of user - reuses UserModel for both parameters and return type
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET name = ${name}, email = ${email}, age = ${age?} \nWHERE id = ${id} \nRETURNING id, name, email, age"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET name = ${name}, email = ${email}, age = ${age?} \nWHERE id = ${id} \nRETURNING id, name, email, age"))]
 pub async fn update_user_full(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &UserModel) -> Result<UserModel, super::Error<UserContentConstraints>> {
     let query = sqlx::query(
-        r"UPDATE users 
+        r"UPDATE public.users 
         SET name = $1, email = $2, age = $3 
         WHERE id = $4 
         RETURNING id, name, email, age"
@@ -92,9 +92,9 @@ pub async fn update_user_full(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Partial update using diff-based comparison - auto-generates params struct for old/new comparison
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${id} \nRETURNING id, name, email, age"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${id} \nRETURNING id, name, email, age"))]
 pub async fn update_user_partial(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UserModel, new: &UserModel, id: i32) -> Result<UserModel, super::Error<UserContentConstraints>> {
-    let mut final_sql = r"UPDATE users 
+    let mut final_sql = r"UPDATE public.users 
 SET updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 
@@ -170,11 +170,11 @@ RETURNING id, name, email, age".to_string();
 }
 
 /// Select user by email - returns UserModel
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM users \nWHERE email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE email = ${email}"))]
 pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserModel>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age 
-        FROM users 
+        FROM public.users 
         WHERE email = $1"
     );
     let query = query.bind(&email);

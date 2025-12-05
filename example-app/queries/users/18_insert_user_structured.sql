@@ -4,6 +4,6 @@
 --    parameters_type: true
 -- @end
 
-INSERT INTO users (name, email, age) 
+INSERT INTO public.users (name, email, age) 
 VALUES (${name}, ${email}, ${age}) 
 RETURNING id, name, email, age, created_at

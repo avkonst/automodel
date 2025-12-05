@@ -8,6 +8,6 @@
 --      include_params: [name, email, age]
 -- @end
 
-INSERT INTO users (name, email, age, profile)
+INSERT INTO public.users (name, email, age, profile)
 VALUES (${name}, ${email}, ${age}, ${profile})
 RETURNING id, name, email, age, created_at

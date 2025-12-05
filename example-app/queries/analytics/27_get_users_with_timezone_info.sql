@@ -16,7 +16,7 @@ SELECT
   DATE_PART('dow', created_at) as created_day_of_week,
   DATE_PART('hour', created_at) as created_hour,
   TO_CHAR(created_at, 'Day, Month DD, YYYY at HH24:MI:SS TZ') as formatted_created_at
-FROM users 
+FROM public.users 
 WHERE created_at BETWEEN ${start_date} AND ${end_date}
   AND EXTRACT(EPOCH FROM AGE(NOW(), created_at))/86400 BETWEEN ${min_age_days} AND ${max_age_days}
 ORDER BY created_at DESC

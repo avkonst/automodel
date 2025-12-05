@@ -4,7 +4,7 @@
 -- @end
 
 SELECT id, name, email, age, created_at 
-FROM users 
+FROM public.users 
 WHERE 1=1 
 $[AND name ILIKE ${name_pattern?}] 
 $[AND age >= ${min_age?}] 

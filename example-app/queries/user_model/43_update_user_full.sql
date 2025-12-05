@@ -6,7 +6,7 @@
 --    error_type: UserContentConstraints
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET name = ${name}, email = ${email}, age = ${age?} 
 WHERE id = ${id} 
 RETURNING id, name, email, age

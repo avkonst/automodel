@@ -222,7 +222,6 @@ async fn get_table_oid_by_name(
     table_name: &str,
 ) -> Result<Option<u32>> {
     let parts: Vec<&str> = table_name.split('.').collect();
-
     match parts.as_slice() {
         // Case 1: schema-qualified name: look only there
         [schema, name] => {
@@ -234,43 +233,12 @@ async fn get_table_oid_by_name(
                     JOIN pg_namespace AS n ON n.oid = c.relnamespace
                     WHERE c.relname = $1
                       AND n.nspname = $2
-                      AND c.relkind = 'r'
                     "#,
                     &[&*name, &*schema],
                 )
                 .await?;
             Ok(row.map(|r| r.get(0)))
         }
-
-        // Case 2: unqualified name — search search_path *in order*
-        [name] => {
-            // Fetch current search path as ordered list
-            let search_path_row =
-                client.query_one("SELECT current_schemas(true)", &[]).await?;
-            let search_path: Vec<String> = search_path_row.get(0);
-
-            for schema in search_path {
-                if let Some(row) = client
-                    .query_opt(
-                        r#"
-                        SELECT c.oid
-                        FROM pg_class AS c
-                        JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                        WHERE c.relname = $1
-                          AND n.nspname = $2
-                          AND c.relkind = 'r'
-                        "#,
-                        &[&*name, &schema],
-                    )
-                    .await?
-                {
-                    return Ok(Some(row.get(0)));
-                }
-            }
-
-            Ok(None)
-        }
-
         _ => Ok(None),
     }
 }

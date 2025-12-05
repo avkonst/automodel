@@ -4,7 +4,7 @@
 --    parameters_type: GetUserByIdAndEmailItem
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET name = ${name}, email = ${email} 
 WHERE id = ${id} 
 RETURNING id, name, email

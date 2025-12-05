@@ -1,5 +1,5 @@
 -- Comprehensive test table with all PostgreSQL types
-CREATE TABLE IF NOT EXISTS all_types_test (
+CREATE TABLE IF NOT EXISTS public.all_types_test (
     id SERIAL PRIMARY KEY,
     -- Boolean & Numeric Types
     bool_col BOOLEAN,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS all_types_test (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 -- Insert a sample row with all types
-INSERT INTO all_types_test (
+INSERT INTO public.all_types_test (
         bool_col,
         char_col,
         int2_col,

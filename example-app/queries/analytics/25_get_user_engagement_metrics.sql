@@ -14,10 +14,10 @@ WITH user_activity AS (
     MAX(p.created_at) as last_post_date,
     MAX(c.created_at) as last_comment_date,
     AVG(EXTRACT(EPOCH FROM (p.published_at - p.created_at))::float8/3600) as avg_publish_delay_hours
-  FROM users u
-  LEFT JOIN posts p ON u.id = p.author_id 
+  FROM public.users u
+  LEFT JOIN public.posts p ON u.id = p.author_id 
     AND p.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
-  LEFT JOIN comments c ON u.id = c.author_id 
+  LEFT JOIN public.comments c ON u.id = c.author_id 
     AND c.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '3 months'
   GROUP BY u.id, u.name, u.email, u.created_at
 ),

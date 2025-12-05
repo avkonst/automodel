@@ -17,11 +17,11 @@ SELECT
   c.comment_count,
   EXTRACT(EPOCH FROM (NOW() - p.created_at))::float8/3600 as hours_since_post,
   DATE_TRUNC('day', p.created_at) as post_date
-FROM users u
-INNER JOIN posts p ON u.id = p.author_id
+FROM public.users u
+INNER JOIN public.posts p ON u.id = p.author_id
 LEFT JOIN (
   SELECT post_id, COUNT(*) as comment_count
-  FROM comments 
+  FROM public.comments 
   GROUP BY post_id
 ) c ON p.id = c.post_id
 WHERE u.created_at > ${since}

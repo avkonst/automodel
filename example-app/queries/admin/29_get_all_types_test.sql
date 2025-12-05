@@ -12,5 +12,5 @@ SELECT
   bool_array_col, int4_array_col, int8_array_col, text_array_col, float8_array_col,
   int4_range_array_col, date_range_array_col,
   created_at
-FROM all_types_test
+FROM public.all_types_test
 WHERE id = ${id}

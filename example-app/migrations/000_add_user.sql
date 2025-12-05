@@ -1,7 +1,7 @@
 -- Test schema for AutoModel
 -- Create user status enum
 CREATE TYPE user_status AS ENUM ('active', 'inactive', 'suspended', 'pending');
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS public.users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 -- Insert some test data
-INSERT INTO users (name, email, status, age, profile, settings)
+INSERT INTO public.users (name, email, status, age, profile, settings)
 VALUES (
         'John Doe',
         'john@example.com',

@@ -6,7 +6,7 @@
 --    error_type: UserContentConstraints
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 

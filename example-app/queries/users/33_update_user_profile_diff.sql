@@ -3,11 +3,11 @@
 --    expect: exactly_one
 --    conditions_type: true
 --    types:
---      users.profile: "crate::models::UserProfile"
+--      public.users.profile: "crate::models::UserProfile"
 --      profile: "crate::models::UserProfile"
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET profile = ${profile}, updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 

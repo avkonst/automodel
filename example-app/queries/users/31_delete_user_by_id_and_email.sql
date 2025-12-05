@@ -4,6 +4,6 @@
 --    parameters_type: GetUserByIdAndEmailParams
 -- @end
 
-DELETE FROM users 
+DELETE FROM public.users 
 WHERE id = ${id} AND email = ${email} 
 RETURNING id, email

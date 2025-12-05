@@ -6,7 +6,7 @@
 --      profile: "crate::models::UserProfile"
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET profile = ${profile}, updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 

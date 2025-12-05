@@ -99,10 +99,10 @@ pub struct InsertUserItem {
 }
 
 /// Insert a new user with all fields and return the created user
-#[tracing::instrument(level = "trace", skip(executor, profile), fields(sql = "INSERT INTO users (name, email, age, profile)\nVALUES (${name}, ${email}, ${age}, ${profile})\nRETURNING id, name, email, age, created_at"))]
+#[tracing::instrument(level = "trace", skip(executor, profile), fields(sql = "INSERT INTO public.users (name, email, age, profile)\nVALUES (${name}, ${email}, ${age}, ${profile})\nRETURNING id, name, email, age, created_at"))]
 pub async fn insert_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: i32, profile: crate::models::UserProfile) -> Result<InsertUserItem, super::Error<InsertUserConstraints>> {
     let query = sqlx::query(
-        r"INSERT INTO users (name, email, age, profile)
+        r"INSERT INTO public.users (name, email, age, profile)
         VALUES ($1, $2, $3, $4)
         RETURNING id, name, email, age, created_at"
     );
@@ -163,7 +163,7 @@ pub struct InsertUsersBatchRecord {
     pub age: i32,
 }
 
-/// Insert multiple users using UNNEST pattern with multiunzip
+/// Insert multiple public.users using UNNEST pattern with multiunzip
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age)\nSELECT *\nFROM UNNEST(\n        ${name}::text [],\n        ${email}::text [],\n        ${age}::int4 []\n    )"))]
 pub async fn insert_users_batch(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, items: Vec<InsertUsersBatchRecord>) -> Result<(), super::Error<InsertUsersBatchConstraints>> {
     use itertools::Itertools;
@@ -199,12 +199,12 @@ pub struct GetAllUsersItem {
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Get all users with all their fields
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM users \nORDER BY created_at DESC"))]
+/// Get all public.users with all their fields
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM public.users \nORDER BY created_at DESC"))]
 pub async fn get_all_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at 
-        FROM users 
+        FROM public.users 
         ORDER BY created_at DESC"
     );
     let rows = query.fetch_all(executor).await?;
@@ -241,7 +241,7 @@ pub struct FindUserByEmailItem {
 pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<FindUserByEmailItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at 
-        FROM users 
+        FROM public.users 
         WHERE email = $1"
     );
     let query = query.bind(&email);
@@ -309,10 +309,10 @@ pub struct UpdateUserProfileItem {
 }
 
 /// Update a user's profile by their ID
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET profile = ${profile}, updated_at = NOW() \nWHERE id = ${user_id} \nRETURNING id, name, email, age, profile, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = ${profile}, updated_at = NOW() \nWHERE id = ${user_id} \nRETURNING id, name, email, age, profile, updated_at"))]
 pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileItem, super::Error<UpdateUserProfileConstraints>> {
     let query = sqlx::query(
-        r"UPDATE users 
+        r"UPDATE public.users 
         SET profile = $1, updated_at = NOW() 
         WHERE id = $2 
         RETURNING id, name, email, age, profile, updated_at"
@@ -344,11 +344,11 @@ pub struct FindUsersByNameAndAgeItem {
     pub age: Option<i32>,
 }
 
-/// Find users by name pattern with optional minimum age filter (using conditional syntax)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM users \nWHERE name ILIKE ${name_pattern} \n$[AND age >= ${min_age?}] \nAND name = ${name_exact} \n$[AND age <= ${max_age?}] \nORDER BY name"))]
+/// Find public.users by name pattern with optional minimum age filter (using conditional syntax)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE name ILIKE ${name_pattern} \n$[AND age >= ${min_age?}] \nAND name = ${name_exact} \n$[AND age <= ${max_age?}] \nORDER BY name"))]
 pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>, name_exact: String, max_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, super::ErrorReadOnly> {
     let mut final_sql = r"SELECT id, name, email, age 
-FROM users 
+FROM public.users 
 WHERE name ILIKE $1 
 $[AND age >= ${min_age?}] 
 AND name = $2 
@@ -421,12 +421,12 @@ pub struct GetRecentUsersItem {
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Get users created after a specific timestamp - expects at least one user
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM users \nWHERE created_at > ${since} \nORDER BY created_at DESC"))]
+/// Get public.users created after a specific timestamp - expects at least one user
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM public.users \nWHERE created_at > ${since} \nORDER BY created_at DESC"))]
 pub async fn get_recent_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at 
-        FROM users 
+        FROM public.users 
         WHERE created_at > $1 
         ORDER BY created_at DESC"
     );
@@ -462,12 +462,12 @@ pub struct GetActiveUsersByAgeRangeItem {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Get active users within an age range - must return at least one user or fails
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at \nFROM users \nWHERE age BETWEEN ${min_age} AND ${max_age} \nAND updated_at > NOW() - INTERVAL '30 days'"))]
+/// Get active public.users within an age range - must return at least one user or fails
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at \nFROM public.users \nWHERE age BETWEEN ${min_age} AND ${max_age} \nAND updated_at > NOW() - INTERVAL '30 days'"))]
 pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at 
-        FROM users 
+        FROM public.users 
         WHERE age BETWEEN $1 AND $2 
         AND updated_at > NOW() - INTERVAL '30 days'"
     );
@@ -500,12 +500,12 @@ pub struct SearchUsersByNamePatternItem {
     pub email: String,
 }
 
-/// Search users by name pattern - expects at least one match
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM users \nWHERE name ILIKE ${pattern} \nORDER BY name"))]
+/// Search public.users by name pattern - expects at least one match
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE name ILIKE ${pattern} \nORDER BY name"))]
 pub async fn search_users_by_name_pattern(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<SearchUsersByNamePatternItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
-        FROM users 
+        FROM public.users 
         WHERE name ILIKE $1 
         ORDER BY name"
     );
@@ -534,10 +534,10 @@ pub struct SearchUsersAdvancedItem {
 }
 
 /// Advanced user search with multiple optional filters using conditional syntax
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM users \nWHERE 1=1 \n$[AND name ILIKE ${name_pattern?}] \n$[AND age >= ${min_age?}] \n$[AND created_at >= ${since?}] \nORDER BY created_at DESC"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE 1=1 \n$[AND name ILIKE ${name_pattern?}] \n$[AND age >= ${min_age?}] \n$[AND created_at >= ${since?}] \nORDER BY created_at DESC"))]
 pub async fn search_users_advanced(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: Option<String>, min_age: Option<i32>, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<SearchUsersAdvancedItem>, super::ErrorReadOnly> {
     let mut final_sql = r"SELECT id, name, email, age, created_at 
-FROM users 
+FROM public.users 
 WHERE 1=1 
 $[AND name ILIKE ${name_pattern?}] 
 $[AND age >= ${min_age?}] 
@@ -617,12 +617,12 @@ pub struct GetUsersByStatusItem {
     pub status: Option<UserStatus>,
 }
 
-/// Get users by their status (enum parameter and enum output)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, status \nFROM users \nWHERE status = ${user_status} \nORDER BY name"))]
+/// Get public.users by their status (enum parameter and enum output)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, status \nFROM public.users \nWHERE status = ${user_status} \nORDER BY name"))]
 pub async fn get_users_by_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_status: UserStatus) -> Result<Vec<GetUsersByStatusItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, status 
-        FROM users 
+        FROM public.users 
         WHERE status = $1 
         ORDER BY name"
     );
@@ -679,10 +679,10 @@ pub struct UpdateUserStatusItem {
 }
 
 /// Update user status and return the new status
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET status = ${new_status} \nWHERE id = ${user_id} \nRETURNING id, status"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET status = ${new_status} \nWHERE id = ${user_id} \nRETURNING id, status"))]
 pub async fn update_user_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusItem, super::Error<UpdateUserStatusConstraints>> {
     let query = sqlx::query(
-        r"UPDATE users 
+        r"UPDATE public.users 
         SET status = $1 
         WHERE id = $2 
         RETURNING id, status"
@@ -742,9 +742,9 @@ pub struct UpdateUserFieldsItem {
 }
 
 /// Update user fields conditionally - only updates fields that are provided (not None)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, age, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, age, updated_at"))]
 pub async fn update_user_fields(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: Option<String>, email: Option<String>, age: Option<i32>, user_id: i32) -> Result<UpdateUserFieldsItem, super::Error<UpdateUserFieldsConstraints>> {
-    let mut final_sql = r"UPDATE users 
+    let mut final_sql = r"UPDATE public.users 
 SET updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 
@@ -870,9 +870,9 @@ pub struct UpdateUserFieldsDiffItem {
 }
 
 /// Update user fields using diff-based conditional updates - compares old and new structs
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, age, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, age, updated_at"))]
 pub async fn update_user_fields_diff(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UpdateUserFieldsDiffParams, new: &UpdateUserFieldsDiffParams, user_id: i32) -> Result<UpdateUserFieldsDiffItem, super::Error<UpdateUserFieldsDiffConstraints>> {
-    let mut final_sql = r"UPDATE users 
+    let mut final_sql = r"UPDATE public.users 
 SET updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 
@@ -998,10 +998,10 @@ pub struct InsertUserStructuredItem {
 }
 
 /// Insert a new user using structured parameters - all params passed as a single struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO users (name, email, age) \nVALUES (${name}, ${email}, ${age}) \nRETURNING id, name, email, age, created_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age) \nVALUES (${name}, ${email}, ${age}) \nRETURNING id, name, email, age, created_at"))]
 pub async fn insert_user_structured(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &InsertUserStructuredParams) -> Result<InsertUserStructuredItem, super::Error<InsertUserStructuredConstraints>> {
     let query = sqlx::query(
-        r"INSERT INTO users (name, email, age) 
+        r"INSERT INTO public.users (name, email, age) 
         VALUES ($1, $2, $3) 
         RETURNING id, name, email, age, created_at"
     );
@@ -1022,11 +1022,11 @@ pub async fn insert_user_structured(executor: impl sqlx::Executor<'_, Database =
 }
 
 /// Get all possible user statuses currently in use
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT DISTINCT status \nFROM users \nORDER BY status"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT DISTINCT status \nFROM public.users \nORDER BY status"))]
 pub async fn get_all_user_statuses(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<Option<UserStatus>>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT DISTINCT status 
-        FROM users 
+        FROM public.users 
         ORDER BY status"
     );
     let rows = query.fetch_all(executor).await?;
@@ -1051,12 +1051,12 @@ pub struct GetAllUsersWithStarItem {
     pub referrer_id: Option<i32>,
 }
 
-/// Get all users using SELECT * to fetch all columns
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM users \nORDER BY created_at DESC"))]
+/// Get all public.users using SELECT * to fetch all columns
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nORDER BY created_at DESC"))]
 pub async fn get_all_users_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersWithStarItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT * 
-        FROM users 
+        FROM public.users 
         ORDER BY created_at DESC"
     );
     let rows = query.fetch_all(executor).await?;
@@ -1097,11 +1097,11 @@ pub struct GetUserByIdWithStarItem {
 }
 
 /// Get a single user by ID using SELECT * to fetch all columns
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM users \nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserByIdWithStarItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT * 
-        FROM users 
+        FROM public.users 
         WHERE id = $1"
     );
     let query = query.bind(user_id);
@@ -1146,11 +1146,11 @@ pub struct GetUserByIdAndEmailItem {
 }
 
 /// Get a user by ID and email - generates GetUserByIdAndEmailParams struct and GetUserByIdAndEmailItem return struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM users \nWHERE id = ${id} AND email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
 pub async fn get_user_by_id_and_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<Option<GetUserByIdAndEmailItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
-        FROM users 
+        FROM public.users 
         WHERE id = $1 AND email = $2"
     );
     let query = query.bind(params.id);
@@ -1211,10 +1211,10 @@ pub struct DeleteUserByIdAndEmailItem {
 }
 
 /// Delete user by ID and email - reuses GetUserByIdAndEmailParams struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "DELETE FROM users \nWHERE id = ${id} AND email = ${email} \nRETURNING id, email"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "DELETE FROM public.users \nWHERE id = ${id} AND email = ${email} \nRETURNING id, email"))]
 pub async fn delete_user_by_id_and_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<DeleteUserByIdAndEmailItem, super::Error<DeleteUserByIdAndEmailConstraints>> {
     let query = sqlx::query(
-        r"DELETE FROM users 
+        r"DELETE FROM public.users 
         WHERE id = $1 AND email = $2 
         RETURNING id, email"
     );
@@ -1271,10 +1271,10 @@ pub struct UpdateUserContactInfoItem {
 }
 
 /// Update user contact info - reuses GetUserByIdAndEmailItem return struct as params
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET name = ${name}, email = ${email} \nWHERE id = ${id} \nRETURNING id, name, email"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET name = ${name}, email = ${email} \nWHERE id = ${id} \nRETURNING id, name, email"))]
 pub async fn update_user_contact_info(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailItem) -> Result<UpdateUserContactInfoItem, super::Error<UpdateUserContactInfoConstraints>> {
     let query = sqlx::query(
-        r"UPDATE users 
+        r"UPDATE public.users 
         SET name = $1, email = $2 
         WHERE id = $3 
         RETURNING id, name, email"
@@ -1342,9 +1342,9 @@ pub struct UpdateUserProfileDiffItem {
 }
 
 /// Update user profile with conditional name/email - generates UpdateUserProfileDiffParams
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET profile = ${profile}, updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, profile, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = ${profile}, updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, profile, updated_at"))]
 pub async fn update_user_profile_diff(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UpdateUserProfileDiffParams, new: &UpdateUserProfileDiffParams, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileDiffItem, super::Error<UpdateUserProfileDiffConstraints>> {
-    let mut final_sql = r"UPDATE users 
+    let mut final_sql = r"UPDATE public.users 
 SET profile = $1, updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 
@@ -1453,9 +1453,9 @@ pub struct UpdateUserMetadataDiffItem {
 }
 
 /// Update user metadata - reuses UpdateUserProfileDiffParams struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE users \nSET profile = ${profile}, updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = ${profile}, updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, updated_at"))]
 pub async fn update_user_metadata_diff(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UpdateUserProfileDiffParams, new: &UpdateUserProfileDiffParams, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserMetadataDiffItem, super::Error<UpdateUserMetadataDiffConstraints>> {
-    let mut final_sql = r"UPDATE users 
+    let mut final_sql = r"UPDATE public.users 
 SET profile = $1, updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 
@@ -1526,11 +1526,11 @@ pub struct UserSummary {
 }
 
 /// Get user summary - generates UserSummary return struct with custom name
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM users \nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserSummary, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
-        FROM users 
+        FROM public.users 
         WHERE id = $1"
     );
     let query = query.bind(user_id);
@@ -1546,11 +1546,11 @@ pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Get user info by email - reuses UserSummary return struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM users \nWHERE email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE email = ${email}"))]
 pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
-        FROM users 
+        FROM public.users 
         WHERE email = $1"
     );
     let query = query.bind(&email);
@@ -1571,11 +1571,11 @@ pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database =
 }
 
 /// Get all user summaries - reuses UserSummary return struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM users \nORDER BY name"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nORDER BY name"))]
 pub async fn get_all_user_summaries(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
-        FROM users 
+        FROM public.users 
         ORDER BY name"
     );
     let rows = query.fetch_all(executor).await?;
@@ -1599,11 +1599,11 @@ pub struct UserDetails {
 }
 
 /// Get user details with age and created_at - generates UserDetails return struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM users \nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserDetails, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, created_at 
-        FROM users 
+        FROM public.users 
         WHERE id = $1"
     );
     let query = query.bind(user_id);
@@ -1621,11 +1621,11 @@ pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Search user details - reuses UserDetails return struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM users \nWHERE name ILIKE ${pattern}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE name ILIKE ${pattern}"))]
 pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<UserDetails>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, created_at 
-        FROM users 
+        FROM public.users 
         WHERE name ILIKE $1"
     );
     let query = query.bind(&pattern);
@@ -1643,11 +1643,11 @@ pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sq
 }
 
 /// Find user by criteria - uses GetUserByIdAndEmailParams for params and UserSummary for return
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM users \nWHERE id = ${id} AND email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
 pub async fn find_user_by_criteria(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
-        FROM users 
+        FROM public.users 
         WHERE id = $1 AND email = $2"
     );
     let query = query.bind(params.id);
@@ -1677,11 +1677,11 @@ pub struct GetUserSimpleItem {
 }
 
 /// Simple user lookup by ID with detailed info
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, created_at\nFROM users\nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, created_at\nFROM public.users\nWHERE id = ${user_id}"))]
 pub async fn get_user_simple(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserSimpleItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, created_at
-        FROM users
+        FROM public.users
         WHERE id = $1"
     );
     let query = query.bind(user_id);

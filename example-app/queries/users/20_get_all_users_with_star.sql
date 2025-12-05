@@ -1,10 +1,10 @@
 -- @automodel
---    description: Get all users using SELECT * to fetch all columns
+--    description: Get all public.users using SELECT * to fetch all columns
 --    expect: multiple
 --    types:
---      users.profile: "crate::models::UserProfile"
+--      public.users.profile: "crate::models::UserProfile"
 -- @end
 
 SELECT * 
-FROM users 
+FROM public.users 
 ORDER BY created_at DESC

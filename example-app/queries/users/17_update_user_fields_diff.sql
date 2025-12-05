@@ -4,7 +4,7 @@
 --    conditions_type: true
 -- @end
 
-UPDATE users 
+UPDATE public.users 
 SET updated_at = NOW() 
 $[, name = ${name?}] 
 $[, email = ${email?}] 

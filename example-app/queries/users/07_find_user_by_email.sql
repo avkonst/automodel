@@ -10,5 +10,5 @@
 -- @end
 
 SELECT id, name, email, age, profile, created_at, updated_at 
-FROM users 
+FROM public.users 
 WHERE email = ${email}

@@ -1,5 +1,5 @@
 -- @automodel
---    description: Insert multiple users using UNNEST pattern with multiunzip
+--    description: Insert multiple public.users using UNNEST pattern with multiunzip
 --    expect: multiple
 --    multiunzip: true
 -- @end
