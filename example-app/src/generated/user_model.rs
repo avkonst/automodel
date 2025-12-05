@@ -44,7 +44,7 @@ pub struct UserModel {
 }
 
 /// Insert a new user and return as UserModel
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age) \nVALUES (${name}, ${email}, ${age?}) \nRETURNING id, name, email, age"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age) \nVALUES (#{name}, #{email}, #{age?}) \nRETURNING id, name, email, age"))]
 pub async fn create_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: Option<i32>) -> Result<UserModel, super::Error<UserContentConstraints>> {
     let query = sqlx::query(
         r"INSERT INTO public.users (name, email, age) 
@@ -67,7 +67,7 @@ pub async fn create_user(executor: impl sqlx::Executor<'_, Database = sqlx::Post
 }
 
 /// Full update of user - reuses UserModel for both parameters and return type
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET name = ${name}, email = ${email}, age = ${age?} \nWHERE id = ${id} \nRETURNING id, name, email, age"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET name = #{name}, email = #{email}, age = #{age?} \nWHERE id = #{id} \nRETURNING id, name, email, age"))]
 pub async fn update_user_full(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &UserModel) -> Result<UserModel, super::Error<UserContentConstraints>> {
     let query = sqlx::query(
         r"UPDATE public.users 
@@ -92,52 +92,52 @@ pub async fn update_user_full(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Partial update using diff-based comparison - auto-generates params struct for old/new comparison
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${id} \nRETURNING id, name, email, age"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n#[, name = #{name?}] \n#[, email = #{email?}] \n#[, age = #{age?}] \nWHERE id = #{id} \nRETURNING id, name, email, age"))]
 pub async fn update_user_partial(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UserModel, new: &UserModel, id: i32) -> Result<UserModel, super::Error<UserContentConstraints>> {
     let mut final_sql = r"UPDATE public.users 
 SET updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
-$[, age = ${age?}] 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
+#[, age = #{age?}] 
 WHERE id = $1 
 RETURNING id, name, email, age".to_string();
     let mut included_params = Vec::new();
 
     if old.name != new.name {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", r", name = ${name?}");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", r", name = #{name?}");
         included_params.push("name");
     } else {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", "");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", "");
     }
 
     if old.email != new.email {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", r", email = ${email?}");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", r", email = #{email?}");
         included_params.push("email");
     } else {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", "");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", "");
     }
 
     if old.age != new.age {
-        final_sql = final_sql.replace(r"$[, age = ${age?}]", r", age = ${age?}");
+        final_sql = final_sql.replace(r"#[, age = #{age?}]", r", age = #{age?}");
         included_params.push("age");
     } else {
-        final_sql = final_sql.replace(r"$[, age = ${age?}]", "");
+        final_sql = final_sql.replace(r"#[, age = #{age?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
-    final_sql = final_sql.replace(r"${id}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{id}", &format!("${}", param_counter));
     param_counter += 1;
     if included_params.contains(&r"name") {
-        final_sql = final_sql.replace(r"${name?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{name?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"email") {
-        final_sql = final_sql.replace(r"${email?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{email?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"age") {
-        final_sql = final_sql.replace(r"${age?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{age?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -174,7 +174,7 @@ RETURNING id, name, email, age".to_string();
 /// Query Plan:
 /// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE email = #{email}"))]
 pub async fn find_user_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserModel>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age 

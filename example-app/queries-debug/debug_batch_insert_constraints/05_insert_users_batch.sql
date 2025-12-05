@@ -6,9 +6,9 @@
 INSERT INTO public.users (name, email, age)
 SELECT *
 FROM UNNEST(
-        ${name}::text [],
-        ${email}::text [],
-        ${age}::int4 []
+        #{name}::text [],
+        #{email}::text [],
+        #{age}::int4 []
     )
     
 

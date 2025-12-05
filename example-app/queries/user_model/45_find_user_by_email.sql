@@ -6,4 +6,4 @@
 
 SELECT id, name, email, age 
 FROM public.users 
-WHERE email = ${email}
+WHERE email = #{email}

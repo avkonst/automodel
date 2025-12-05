@@ -5,5 +5,5 @@
 
 SELECT id, name, email 
 FROM public.users 
-WHERE name ILIKE ${pattern} 
+WHERE name ILIKE #{pattern} 
 ORDER BY name

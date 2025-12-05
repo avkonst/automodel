@@ -9,5 +9,5 @@
 -- @end
 
 INSERT INTO public.users (name, email, age, profile)
-VALUES (${name}, ${email}, ${age}, ${profile})
+VALUES (#{name}, #{email}, #{age}, #{profile})
 RETURNING id, name, email, age, created_at

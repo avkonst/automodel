@@ -7,5 +7,5 @@
 
 SELECT id, name, email, age, profile, created_at 
 FROM public.users 
-WHERE age BETWEEN ${min_age} AND ${max_age} 
+WHERE age BETWEEN #{min_age} AND #{max_age} 
 AND updated_at > NOW() - INTERVAL '30 days'

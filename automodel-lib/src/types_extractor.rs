@@ -763,12 +763,12 @@ async fn pg_type_to_rust_type(
 
 /// Parse SQL to extract meaningful parameter names from named parameters
 pub fn parse_parameter_names_from_sql(sql: &str) -> Vec<String> {
-    // Look for named parameters in the format ${param_name}
+    // Look for named parameters in the format #{param_name}
     let mut param_names = Vec::new();
     let mut chars = sql.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch == '$' {
+        if ch == '#' {
             if let Some(&'{') = chars.peek() {
                 chars.next(); // consume the '{'
                 let mut param_name = String::new();
@@ -808,7 +808,7 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
     let mut chars = sql.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch == '$' {
+        if ch == '#' {
             if let Some(&'[') = chars.peek() {
                 // Found start of conditional block
                 chars.next(); // consume '['
@@ -839,7 +839,7 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
                             result.all_parameters.extend(block_params);
 
                             // Keep the original conditional block syntax in base SQL
-                            result.base_sql.push_str(&format!("$[{}]", block_content));
+                            result.base_sql.push_str(&format!("#[{}]", block_content));
                             break;
                         } else {
                             block_content.push(inner_ch);
@@ -849,7 +849,7 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
                     }
                 }
             } else if let Some(&'{') = chars.peek() {
-                // Found regular parameter ${param}
+                // Found regular parameter #{param}
                 chars.next(); // consume '{'
                 let mut param_name = String::new();
 
@@ -857,7 +857,7 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
                     if inner_ch == '}' {
                         if !param_name.is_empty() {
                             result.all_parameters.push(param_name.clone());
-                            result.base_sql.push_str("${");
+                            result.base_sql.push_str("#{");
                             result.base_sql.push_str(&param_name);
                             result.base_sql.push('}');
                         }
@@ -867,7 +867,7 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
                     }
                 }
             } else {
-                // Regular $ character
+                // Regular # character
                 result.base_sql.push(ch);
             }
         } else {
@@ -882,9 +882,9 @@ pub fn parse_sql_with_conditionals(sql: &str) -> ParsedSql {
 fn reconstruct_full_sql(parsed_sql: &ParsedSql) -> String {
     let mut result = parsed_sql.base_sql.clone();
 
-    // Replace conditional blocks $[...] with their inner content
+    // Replace conditional blocks #[...] with their inner content
     for block in &parsed_sql.conditional_blocks {
-        let conditional_block = format!("$[{}]", block.sql_content);
+        let conditional_block = format!("#[{}]", block.sql_content);
         result = result.replace(&conditional_block, &block.sql_content);
     }
 
@@ -899,7 +899,7 @@ pub fn convert_named_params_to_positional(sql: &str) -> (String, Vec<String>) {
     let mut param_counter = 1;
 
     while let Some(ch) = chars.next() {
-        if ch == '$' {
+        if ch == '#' {
             if let Some(&'{') = chars.peek() {
                 chars.next(); // consume the '{'
                 let mut param_name = String::new();

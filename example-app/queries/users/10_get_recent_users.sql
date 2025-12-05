@@ -7,5 +7,5 @@
 
 SELECT id, name, email, age, profile, created_at, updated_at 
 FROM public.users 
-WHERE created_at > ${since} 
+WHERE created_at > #{since} 
 ORDER BY created_at DESC

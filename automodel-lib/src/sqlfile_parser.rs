@@ -140,7 +140,7 @@ fn is_rust_keyword(name: &str) -> bool {
 /// --      profile: "crate::models::UserProfile"
 /// -- @end
 ///
-/// UPDATE users SET profile = ${profile} WHERE id = ${user_id}
+/// UPDATE users SET profile = #{profile} WHERE id = #{user_id}
 /// ```
 async fn parse_sql_file(
     path: &Path,

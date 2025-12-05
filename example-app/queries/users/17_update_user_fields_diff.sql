@@ -6,8 +6,8 @@
 
 UPDATE public.users 
 SET updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
-$[, age = ${age?}] 
-WHERE id = ${user_id} 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
+#[, age = #{age?}] 
+WHERE id = #{user_id} 
 RETURNING id, name, email, age, updated_at

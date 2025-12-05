@@ -43,6 +43,6 @@ SELECT
   RANK() OVER (ORDER BY engagement_score DESC) as engagement_rank,
   PERCENT_RANK() OVER (ORDER BY engagement_score) as engagement_percentile
 FROM engagement_scores es
-WHERE engagement_score > ${min_engagement_score}
+WHERE engagement_score > #{min_engagement_score}
 ORDER BY engagement_score DESC, name
-LIMIT ${limit_results}
+LIMIT #{limit_results}

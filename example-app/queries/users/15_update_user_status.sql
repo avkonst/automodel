@@ -4,6 +4,6 @@
 -- @end
 
 UPDATE public.users 
-SET status = ${new_status} 
-WHERE id = ${user_id} 
+SET status = #{new_status} 
+WHERE id = #{user_id} 
 RETURNING id, status

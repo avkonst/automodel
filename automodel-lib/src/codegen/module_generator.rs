@@ -930,7 +930,7 @@ fn generate_conditional_function_body(
         if !param_name.ends_with('?') {
             // Only replace non-conditional parameters
             sql_template = sql_template.replace(
-                &format!("${{{}}}", param_name),
+                &format!("#{{{}}}", param_name),
                 &format!("${}", current_param_num),
             );
             current_param_num += 1;
@@ -961,7 +961,7 @@ fn generate_conditional_function_body(
             param_name
         };
 
-        let conditional_block = format!("$[{}]", block_sql);
+        let conditional_block = format!("#[{}]", block_sql);
 
         if use_conditional_diff {
             // For conditions_type, check if old and new values differ
@@ -1001,7 +1001,7 @@ fn generate_conditional_function_body(
     for param_name in parse_parameter_names_from_sql(&parsed_sql.base_sql) {
         if !param_name.ends_with('?') {
             body.push_str(&format!(
-                "    final_sql = final_sql.replace(r\"${{{}}}\", &format!(\"${{}}\", param_counter));\n",
+                "    final_sql = final_sql.replace(r\"#{{{}}}\", &format!(\"${{}}\", param_counter));\n",
                 param_name
             ));
             body.push_str("    param_counter += 1;\n");
@@ -1021,7 +1021,7 @@ fn generate_conditional_function_body(
             clean_param
         ));
         body.push_str(&format!(
-            "        final_sql = final_sql.replace(r\"${{{}}}\", &format!(\"${{}}\", param_counter));\n",
+            "        final_sql = final_sql.replace(r\"#{{{}}}\", &format!(\"${{}}\", param_counter));\n",
             param_name
         ));
         body.push_str("        param_counter += 1;\n");

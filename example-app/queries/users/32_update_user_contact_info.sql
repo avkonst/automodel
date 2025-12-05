@@ -5,6 +5,6 @@
 -- @end
 
 UPDATE public.users 
-SET name = ${name}, email = ${email} 
-WHERE id = ${id} 
+SET name = #{name}, email = #{email} 
+WHERE id = #{id} 
 RETURNING id, name, email

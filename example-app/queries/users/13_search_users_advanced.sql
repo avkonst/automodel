@@ -6,7 +6,7 @@
 SELECT id, name, email, age, created_at 
 FROM public.users 
 WHERE 1=1 
-$[AND name ILIKE ${name_pattern?}] 
-$[AND age >= ${min_age?}] 
-$[AND created_at >= ${since?}] 
+#[AND name ILIKE #{name_pattern?}] 
+#[AND age >= #{min_age?}] 
+#[AND created_at >= #{since?}] 
 ORDER BY created_at DESC

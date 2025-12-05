@@ -790,7 +790,7 @@ impl AutoModel {
     fn generate_query_variants(sql: &str) -> Vec<String> {
         let mut variants = Vec::new();
 
-        // First variant: remove all conditional blocks $[...]
+        // First variant: remove all conditional blocks #[...]
         let base_query = Self::remove_conditional_blocks(sql);
         if !base_query.trim().is_empty() {
             variants.push(base_query);
@@ -803,12 +803,12 @@ impl AutoModel {
         variants
     }
 
-    /// Remove all conditional blocks $[...] from SQL
+    /// Remove all conditional blocks #[...] from SQL
     fn remove_conditional_blocks(sql: &str) -> String {
         let mut result = sql.to_string();
 
-        // Remove $[...] blocks using simple string replacement
-        while let Some(start) = result.find("$[") {
+        // Remove #[...] blocks using simple string replacement
+        while let Some(start) = result.find("#[") {
             if let Some(end) = result[start..].find("]") {
                 let end_pos = start + end + 1;
                 result.replace_range(start..end_pos, "");
@@ -827,11 +827,11 @@ impl AutoModel {
         let mut variants = Vec::new();
         let mut pos = 0;
 
-        while let Some(start) = sql[pos..].find("$[") {
+        while let Some(start) = sql[pos..].find("#[") {
             let start_pos = pos + start;
             if let Some(end) = sql[start_pos..].find("]") {
                 let end_pos = start_pos + end + 1;
-                let conditional_content = &sql[start_pos + 2..end_pos - 1]; // Remove $[ and ]
+                let conditional_content = &sql[start_pos + 2..end_pos - 1]; // Remove #[ and ]
 
                 // Create variant with this conditional block included
                 let mut variant = sql.to_string();
@@ -1115,7 +1115,7 @@ impl AutoModel {
         let mut warnings = Vec::new();
         let mut query_plan_lines = Vec::new();
 
-        // Convert named parameters ${param} to positional parameters $1, $2, etc.
+        // Convert named parameters #{param} to positional parameters $1, $2, etc.
         let (converted_sql, param_names) =
             crate::types_extractor::convert_named_params_to_positional(sql);
 

@@ -11,4 +11,4 @@
 
 SELECT id, name, email, age, profile, created_at, updated_at 
 FROM public.users 
-WHERE email = ${email}
+WHERE email = #{email}

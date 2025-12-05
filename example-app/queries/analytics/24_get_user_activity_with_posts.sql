@@ -24,7 +24,7 @@ LEFT JOIN (
   FROM public.comments 
   GROUP BY post_id
 ) c ON p.id = c.post_id
-WHERE u.created_at > ${since}
+WHERE u.created_at > #{since}
   AND p.published_at IS NOT NULL
-  AND p.created_at BETWEEN ${start_date} AND ${end_date}
+  AND p.created_at BETWEEN #{start_date} AND #{end_date}
 ORDER BY p.created_at DESC, u.name

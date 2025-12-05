@@ -8,8 +8,8 @@
 -- @end
 
 UPDATE public.users 
-SET profile = ${profile}, updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
-WHERE id = ${user_id} 
+SET profile = #{profile}, updated_at = NOW() 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
+WHERE id = #{user_id} 
 RETURNING id, name, email, profile, updated_at

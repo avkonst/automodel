@@ -7,4 +7,4 @@
 
 SELECT id, name, email 
 FROM public.users 
-WHERE id = ${id} AND email = ${email}
+WHERE id = #{id} AND email = #{email}

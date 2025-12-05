@@ -99,7 +99,7 @@ pub struct InsertUserItem {
 }
 
 /// Insert a new user with all fields and return the created user
-#[tracing::instrument(level = "trace", skip(executor, profile), fields(sql = "INSERT INTO public.users (name, email, age, profile)\nVALUES (${name}, ${email}, ${age}, ${profile})\nRETURNING id, name, email, age, created_at"))]
+#[tracing::instrument(level = "trace", skip(executor, profile), fields(sql = "INSERT INTO public.users (name, email, age, profile)\nVALUES (#{name}, #{email}, #{age}, #{profile})\nRETURNING id, name, email, age, created_at"))]
 pub async fn insert_user(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: String, email: String, age: i32, profile: crate::models::UserProfile) -> Result<InsertUserItem, super::Error<InsertUserConstraints>> {
     let query = sqlx::query(
         r"INSERT INTO public.users (name, email, age, profile)
@@ -164,7 +164,7 @@ pub struct InsertUsersBatchRecord {
 }
 
 /// Insert multiple public.users using UNNEST pattern with multiunzip
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age)\nSELECT *\nFROM UNNEST(\n        ${name}::text [],\n        ${email}::text [],\n        ${age}::int4 []\n    )"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age)\nSELECT *\nFROM UNNEST(\n        #{name}::text [],\n        #{email}::text [],\n        #{age}::int4 []\n    )"))]
 pub async fn insert_users_batch(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, items: Vec<InsertUsersBatchRecord>) -> Result<(), super::Error<InsertUsersBatchConstraints>> {
     use itertools::Itertools;
     let query = sqlx::query(
@@ -317,7 +317,7 @@ pub struct UpdateUserProfileItem {
 }
 
 /// Update a user's profile by their ID
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = ${profile}, updated_at = NOW() \nWHERE id = ${user_id} \nRETURNING id, name, email, age, profile, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = #{profile}, updated_at = NOW() \nWHERE id = #{user_id} \nRETURNING id, name, email, age, profile, updated_at"))]
 pub async fn update_user_profile(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileItem, super::Error<UpdateUserProfileConstraints>> {
     let query = sqlx::query(
         r"UPDATE public.users 
@@ -373,43 +373,43 @@ pub struct FindUsersByNameAndAgeItem {
 /// Index Scan using idx_users_age on users
 ///   Index Cond: (age <= 0)
 ///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE name ILIKE ${name_pattern} \n$[AND age >= ${min_age?}] \nAND name = ${name_exact} \n$[AND age <= ${max_age?}] \nORDER BY name"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE name ILIKE #{name_pattern} \n#[AND age >= #{min_age?}] \nAND name = #{name_exact} \n#[AND age <= #{max_age?}] \nORDER BY name"))]
 pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>, name_exact: String, max_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, super::ErrorReadOnly> {
     let mut final_sql = r"SELECT id, name, email, age 
 FROM public.users 
 WHERE name ILIKE $1 
-$[AND age >= ${min_age?}] 
+#[AND age >= #{min_age?}] 
 AND name = $2 
-$[AND age <= ${max_age?}] 
+#[AND age <= #{max_age?}] 
 ORDER BY name".to_string();
     let mut included_params = Vec::new();
 
     if min_age.is_some() {
-        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", r"AND age >= ${min_age?}");
+        final_sql = final_sql.replace(r"#[AND age >= #{min_age?}]", r"AND age >= #{min_age?}");
         included_params.push("min_age");
     } else {
-        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", "");
+        final_sql = final_sql.replace(r"#[AND age >= #{min_age?}]", "");
     }
 
     if max_age.is_some() {
-        final_sql = final_sql.replace(r"$[AND age <= ${max_age?}]", r"AND age <= ${max_age?}");
+        final_sql = final_sql.replace(r"#[AND age <= #{max_age?}]", r"AND age <= #{max_age?}");
         included_params.push("max_age");
     } else {
-        final_sql = final_sql.replace(r"$[AND age <= ${max_age?}]", "");
+        final_sql = final_sql.replace(r"#[AND age <= #{max_age?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
-    final_sql = final_sql.replace(r"${name_pattern}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{name_pattern}", &format!("${}", param_counter));
     param_counter += 1;
-    final_sql = final_sql.replace(r"${name_exact}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{name_exact}", &format!("${}", param_counter));
     param_counter += 1;
     if included_params.contains(&r"min_age") {
-        final_sql = final_sql.replace(r"${min_age?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{min_age?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"max_age") {
-        final_sql = final_sql.replace(r"${max_age?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{max_age?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -459,7 +459,7 @@ pub struct GetRecentUsersItem {
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM public.users \nWHERE created_at > ${since} \nORDER BY created_at DESC"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM public.users \nWHERE created_at > #{since} \nORDER BY created_at DESC"))]
 pub async fn get_recent_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at, updated_at 
@@ -505,7 +505,7 @@ pub struct GetActiveUsersByAgeRangeItem {
 /// Index Scan using idx_users_age on users
 ///   Index Cond: ((age >= 0) AND (age <= 0))
 ///   Filter: (updated_at > (now - '30 days'::interval))
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at \nFROM public.users \nWHERE age BETWEEN ${min_age} AND ${max_age} \nAND updated_at > NOW() - INTERVAL '30 days'"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at \nFROM public.users \nWHERE age BETWEEN #{min_age} AND #{max_age} \nAND updated_at > NOW() - INTERVAL '30 days'"))]
 pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, profile, created_at 
@@ -552,7 +552,7 @@ pub struct SearchUsersByNamePatternItem {
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE name ILIKE ${pattern} \nORDER BY name"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE name ILIKE #{pattern} \nORDER BY name"))]
 pub async fn search_users_by_name_pattern(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<SearchUsersByNamePatternItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
@@ -620,50 +620,50 @@ pub struct SearchUsersAdvancedItem {
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE 1=1 \n$[AND name ILIKE ${name_pattern?}] \n$[AND age >= ${min_age?}] \n$[AND created_at >= ${since?}] \nORDER BY created_at DESC"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE 1=1 \n#[AND name ILIKE #{name_pattern?}] \n#[AND age >= #{min_age?}] \n#[AND created_at >= #{since?}] \nORDER BY created_at DESC"))]
 pub async fn search_users_advanced(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: Option<String>, min_age: Option<i32>, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<SearchUsersAdvancedItem>, super::ErrorReadOnly> {
     let mut final_sql = r"SELECT id, name, email, age, created_at 
 FROM public.users 
 WHERE 1=1 
-$[AND name ILIKE ${name_pattern?}] 
-$[AND age >= ${min_age?}] 
-$[AND created_at >= ${since?}] 
+#[AND name ILIKE #{name_pattern?}] 
+#[AND age >= #{min_age?}] 
+#[AND created_at >= #{since?}] 
 ORDER BY created_at DESC".to_string();
     let mut included_params = Vec::new();
 
     if name_pattern.is_some() {
-        final_sql = final_sql.replace(r"$[AND name ILIKE ${name_pattern?}]", r"AND name ILIKE ${name_pattern?}");
+        final_sql = final_sql.replace(r"#[AND name ILIKE #{name_pattern?}]", r"AND name ILIKE #{name_pattern?}");
         included_params.push("name_pattern");
     } else {
-        final_sql = final_sql.replace(r"$[AND name ILIKE ${name_pattern?}]", "");
+        final_sql = final_sql.replace(r"#[AND name ILIKE #{name_pattern?}]", "");
     }
 
     if min_age.is_some() {
-        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", r"AND age >= ${min_age?}");
+        final_sql = final_sql.replace(r"#[AND age >= #{min_age?}]", r"AND age >= #{min_age?}");
         included_params.push("min_age");
     } else {
-        final_sql = final_sql.replace(r"$[AND age >= ${min_age?}]", "");
+        final_sql = final_sql.replace(r"#[AND age >= #{min_age?}]", "");
     }
 
     if since.is_some() {
-        final_sql = final_sql.replace(r"$[AND created_at >= ${since?}]", r"AND created_at >= ${since?}");
+        final_sql = final_sql.replace(r"#[AND created_at >= #{since?}]", r"AND created_at >= #{since?}");
         included_params.push("since");
     } else {
-        final_sql = final_sql.replace(r"$[AND created_at >= ${since?}]", "");
+        final_sql = final_sql.replace(r"#[AND created_at >= #{since?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
     if included_params.contains(&r"name_pattern") {
-        final_sql = final_sql.replace(r"${name_pattern?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{name_pattern?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"min_age") {
-        final_sql = final_sql.replace(r"${min_age?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{min_age?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"since") {
-        final_sql = final_sql.replace(r"${since?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{since?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -704,7 +704,7 @@ pub struct GetUsersByStatusItem {
 }
 
 /// Get public.users by their status (enum parameter and enum output)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, status \nFROM public.users \nWHERE status = ${user_status} \nORDER BY name"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, status \nFROM public.users \nWHERE status = #{user_status} \nORDER BY name"))]
 pub async fn get_users_by_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_status: UserStatus) -> Result<Vec<GetUsersByStatusItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, status 
@@ -765,7 +765,7 @@ pub struct UpdateUserStatusItem {
 }
 
 /// Update user status and return the new status
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET status = ${new_status} \nWHERE id = ${user_id} \nRETURNING id, status"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET status = #{new_status} \nWHERE id = #{user_id} \nRETURNING id, status"))]
 pub async fn update_user_status(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, new_status: UserStatus, user_id: i32) -> Result<UpdateUserStatusItem, super::Error<UpdateUserStatusConstraints>> {
     let query = sqlx::query(
         r"UPDATE public.users 
@@ -828,52 +828,52 @@ pub struct UpdateUserFieldsItem {
 }
 
 /// Update user fields conditionally - only updates fields that are provided (not None)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, age, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n#[, name = #{name?}] \n#[, email = #{email?}] \n#[, age = #{age?}] \nWHERE id = #{user_id} \nRETURNING id, name, email, age, updated_at"))]
 pub async fn update_user_fields(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name: Option<String>, email: Option<String>, age: Option<i32>, user_id: i32) -> Result<UpdateUserFieldsItem, super::Error<UpdateUserFieldsConstraints>> {
     let mut final_sql = r"UPDATE public.users 
 SET updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
-$[, age = ${age?}] 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
+#[, age = #{age?}] 
 WHERE id = $1 
 RETURNING id, name, email, age, updated_at".to_string();
     let mut included_params = Vec::new();
 
     if name.is_some() {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", r", name = ${name?}");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", r", name = #{name?}");
         included_params.push("name");
     } else {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", "");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", "");
     }
 
     if email.is_some() {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", r", email = ${email?}");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", r", email = #{email?}");
         included_params.push("email");
     } else {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", "");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", "");
     }
 
     if age.is_some() {
-        final_sql = final_sql.replace(r"$[, age = ${age?}]", r", age = ${age?}");
+        final_sql = final_sql.replace(r"#[, age = #{age?}]", r", age = #{age?}");
         included_params.push("age");
     } else {
-        final_sql = final_sql.replace(r"$[, age = ${age?}]", "");
+        final_sql = final_sql.replace(r"#[, age = #{age?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
-    final_sql = final_sql.replace(r"${user_id}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{user_id}", &format!("${}", param_counter));
     param_counter += 1;
     if included_params.contains(&r"name") {
-        final_sql = final_sql.replace(r"${name?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{name?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"email") {
-        final_sql = final_sql.replace(r"${email?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{email?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"age") {
-        final_sql = final_sql.replace(r"${age?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{age?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -956,52 +956,52 @@ pub struct UpdateUserFieldsDiffItem {
 }
 
 /// Update user fields using diff-based conditional updates - compares old and new structs
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \n$[, age = ${age?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, age, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET updated_at = NOW() \n#[, name = #{name?}] \n#[, email = #{email?}] \n#[, age = #{age?}] \nWHERE id = #{user_id} \nRETURNING id, name, email, age, updated_at"))]
 pub async fn update_user_fields_diff(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UpdateUserFieldsDiffParams, new: &UpdateUserFieldsDiffParams, user_id: i32) -> Result<UpdateUserFieldsDiffItem, super::Error<UpdateUserFieldsDiffConstraints>> {
     let mut final_sql = r"UPDATE public.users 
 SET updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
-$[, age = ${age?}] 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
+#[, age = #{age?}] 
 WHERE id = $1 
 RETURNING id, name, email, age, updated_at".to_string();
     let mut included_params = Vec::new();
 
     if old.name != new.name {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", r", name = ${name?}");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", r", name = #{name?}");
         included_params.push("name");
     } else {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", "");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", "");
     }
 
     if old.email != new.email {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", r", email = ${email?}");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", r", email = #{email?}");
         included_params.push("email");
     } else {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", "");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", "");
     }
 
     if old.age != new.age {
-        final_sql = final_sql.replace(r"$[, age = ${age?}]", r", age = ${age?}");
+        final_sql = final_sql.replace(r"#[, age = #{age?}]", r", age = #{age?}");
         included_params.push("age");
     } else {
-        final_sql = final_sql.replace(r"$[, age = ${age?}]", "");
+        final_sql = final_sql.replace(r"#[, age = #{age?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
-    final_sql = final_sql.replace(r"${user_id}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{user_id}", &format!("${}", param_counter));
     param_counter += 1;
     if included_params.contains(&r"name") {
-        final_sql = final_sql.replace(r"${name?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{name?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"email") {
-        final_sql = final_sql.replace(r"${email?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{email?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"age") {
-        final_sql = final_sql.replace(r"${age?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{age?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -1084,7 +1084,7 @@ pub struct InsertUserStructuredItem {
 }
 
 /// Insert a new user using structured parameters - all params passed as a single struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age) \nVALUES (${name}, ${email}, ${age}) \nRETURNING id, name, email, age, created_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "INSERT INTO public.users (name, email, age) \nVALUES (#{name}, #{email}, #{age}) \nRETURNING id, name, email, age, created_at"))]
 pub async fn insert_user_structured(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &InsertUserStructuredParams) -> Result<InsertUserStructuredItem, super::Error<InsertUserStructuredConstraints>> {
     let query = sqlx::query(
         r"INSERT INTO public.users (name, email, age) 
@@ -1201,7 +1201,7 @@ pub struct GetUserByIdWithStarItem {
 /// Query Plan:
 /// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nWHERE id = #{user_id}"))]
 pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserByIdWithStarItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT * 
@@ -1255,7 +1255,7 @@ pub struct GetUserByIdAndEmailItem {
 /// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
 ///   Filter: (id = 0)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = #{id} AND email = #{email}"))]
 pub async fn get_user_by_id_and_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<Option<GetUserByIdAndEmailItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
@@ -1320,7 +1320,7 @@ pub struct DeleteUserByIdAndEmailItem {
 }
 
 /// Delete user by ID and email - reuses GetUserByIdAndEmailParams struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "DELETE FROM public.users \nWHERE id = ${id} AND email = ${email} \nRETURNING id, email"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "DELETE FROM public.users \nWHERE id = #{id} AND email = #{email} \nRETURNING id, email"))]
 pub async fn delete_user_by_id_and_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<DeleteUserByIdAndEmailItem, super::Error<DeleteUserByIdAndEmailConstraints>> {
     let query = sqlx::query(
         r"DELETE FROM public.users 
@@ -1380,7 +1380,7 @@ pub struct UpdateUserContactInfoItem {
 }
 
 /// Update user contact info - reuses GetUserByIdAndEmailItem return struct as params
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET name = ${name}, email = ${email} \nWHERE id = ${id} \nRETURNING id, name, email"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET name = #{name}, email = #{email} \nWHERE id = #{id} \nRETURNING id, name, email"))]
 pub async fn update_user_contact_info(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailItem) -> Result<UpdateUserContactInfoItem, super::Error<UpdateUserContactInfoConstraints>> {
     let query = sqlx::query(
         r"UPDATE public.users 
@@ -1451,42 +1451,42 @@ pub struct UpdateUserProfileDiffItem {
 }
 
 /// Update user profile with conditional name/email - generates UpdateUserProfileDiffParams
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = ${profile}, updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, profile, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = #{profile}, updated_at = NOW() \n#[, name = #{name?}] \n#[, email = #{email?}] \nWHERE id = #{user_id} \nRETURNING id, name, email, profile, updated_at"))]
 pub async fn update_user_profile_diff(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UpdateUserProfileDiffParams, new: &UpdateUserProfileDiffParams, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserProfileDiffItem, super::Error<UpdateUserProfileDiffConstraints>> {
     let mut final_sql = r"UPDATE public.users 
 SET profile = $1, updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
 WHERE id = $2 
 RETURNING id, name, email, profile, updated_at".to_string();
     let mut included_params = Vec::new();
 
     if old.name != new.name {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", r", name = ${name?}");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", r", name = #{name?}");
         included_params.push("name");
     } else {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", "");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", "");
     }
 
     if old.email != new.email {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", r", email = ${email?}");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", r", email = #{email?}");
         included_params.push("email");
     } else {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", "");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
-    final_sql = final_sql.replace(r"${profile}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{profile}", &format!("${}", param_counter));
     param_counter += 1;
-    final_sql = final_sql.replace(r"${user_id}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{user_id}", &format!("${}", param_counter));
     param_counter += 1;
     if included_params.contains(&r"name") {
-        final_sql = final_sql.replace(r"${name?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{name?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"email") {
-        final_sql = final_sql.replace(r"${email?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{email?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -1562,42 +1562,42 @@ pub struct UpdateUserMetadataDiffItem {
 }
 
 /// Update user metadata - reuses UpdateUserProfileDiffParams struct
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = ${profile}, updated_at = NOW() \n$[, name = ${name?}] \n$[, email = ${email?}] \nWHERE id = ${user_id} \nRETURNING id, name, email, updated_at"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "UPDATE public.users \nSET profile = #{profile}, updated_at = NOW() \n#[, name = #{name?}] \n#[, email = #{email?}] \nWHERE id = #{user_id} \nRETURNING id, name, email, updated_at"))]
 pub async fn update_user_metadata_diff(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, old: &UpdateUserProfileDiffParams, new: &UpdateUserProfileDiffParams, profile: crate::models::UserProfile, user_id: i32) -> Result<UpdateUserMetadataDiffItem, super::Error<UpdateUserMetadataDiffConstraints>> {
     let mut final_sql = r"UPDATE public.users 
 SET profile = $1, updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
 WHERE id = $2 
 RETURNING id, name, email, updated_at".to_string();
     let mut included_params = Vec::new();
 
     if old.name != new.name {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", r", name = ${name?}");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", r", name = #{name?}");
         included_params.push("name");
     } else {
-        final_sql = final_sql.replace(r"$[, name = ${name?}]", "");
+        final_sql = final_sql.replace(r"#[, name = #{name?}]", "");
     }
 
     if old.email != new.email {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", r", email = ${email?}");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", r", email = #{email?}");
         included_params.push("email");
     } else {
-        final_sql = final_sql.replace(r"$[, email = ${email?}]", "");
+        final_sql = final_sql.replace(r"#[, email = #{email?}]", "");
     }
 
     #[allow(unused_assignments)]
     let mut param_counter = 1;
-    final_sql = final_sql.replace(r"${profile}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{profile}", &format!("${}", param_counter));
     param_counter += 1;
-    final_sql = final_sql.replace(r"${user_id}", &format!("${}", param_counter));
+    final_sql = final_sql.replace(r"#{user_id}", &format!("${}", param_counter));
     param_counter += 1;
     if included_params.contains(&r"name") {
-        final_sql = final_sql.replace(r"${name?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{name?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     if included_params.contains(&r"email") {
-        final_sql = final_sql.replace(r"${email?}", &format!("${}", param_counter));
+        final_sql = final_sql.replace(r"#{email?}", &format!("${}", param_counter));
         param_counter += 1;
     }
     let _ = param_counter; // Suppress unused assignment warning
@@ -1639,7 +1639,7 @@ pub struct UserSummary {
 /// Query Plan:
 /// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = #{user_id}"))]
 pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserSummary, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
@@ -1663,7 +1663,7 @@ pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx:
 /// Query Plan:
 /// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE email = #{email}"))]
 pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
@@ -1728,7 +1728,7 @@ pub struct UserDetails {
 /// Query Plan:
 /// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE id = #{user_id}"))]
 pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserDetails, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, created_at 
@@ -1757,7 +1757,7 @@ pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx:
 /// JIT:
 ///   Functions: 4
 ///   Options: Inlining true, Optimization true, Expressions true, Deforming true
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE name ILIKE ${pattern}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE name ILIKE #{pattern}"))]
 pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<UserDetails>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, age, created_at 
@@ -1784,7 +1784,7 @@ pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sq
 /// Index Scan using users_email_key on users
 ///   Index Cond: ((email)::text = 'dummy'::text)
 ///   Filter: (id = 0)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = #{id} AND email = #{email}"))]
 pub async fn find_user_by_criteria(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email 
@@ -1822,7 +1822,7 @@ pub struct GetUserSimpleItem {
 /// Query Plan:
 /// Index Scan using users_pkey on users
 ///   Index Cond: (id = 0)
-#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, created_at\nFROM public.users\nWHERE id = ${user_id}"))]
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, created_at\nFROM public.users\nWHERE id = #{user_id}"))]
 pub async fn get_user_simple(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserSimpleItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
         r"SELECT id, name, email, created_at

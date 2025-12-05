@@ -5,5 +5,5 @@
 
 SELECT id, name, email, status 
 FROM public.users 
-WHERE status = ${user_status} 
+WHERE status = #{user_status} 
 ORDER BY name

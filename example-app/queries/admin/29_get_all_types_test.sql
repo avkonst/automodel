@@ -13,4 +13,4 @@ SELECT
   int4_range_array_col, date_range_array_col,
   created_at
 FROM public.all_types_test
-WHERE id = ${id}
+WHERE id = #{id}

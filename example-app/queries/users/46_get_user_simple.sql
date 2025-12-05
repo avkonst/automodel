@@ -5,4 +5,4 @@
 
 SELECT id, name, email, created_at
 FROM public.users
-WHERE id = ${user_id}
+WHERE id = #{user_id}

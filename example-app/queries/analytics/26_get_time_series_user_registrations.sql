@@ -14,9 +14,9 @@ WITH time_series AS (
     MIN(created_at) as first_registration,
     MAX(created_at) as last_registration
   FROM public.users
-  WHERE created_at BETWEEN ${start_date} AND ${end_date}
+  WHERE created_at BETWEEN #{start_date} AND #{end_date}
   GROUP BY DATE_TRUNC('day', created_at)
-  HAVING COUNT(*) >= ${min_registrations}
+  HAVING COUNT(*) >= #{min_registrations}
 )
 SELECT 
   *,

@@ -6,4 +6,4 @@
 
 SELECT id, name, email, age, created_at 
 FROM public.users 
-WHERE id = ${user_id}
+WHERE id = #{user_id}
