@@ -200,6 +200,14 @@ pub struct GetAllUsersItem {
 }
 
 /// Get all public.users with all their fields
+///
+/// Query Plan:
+/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=269)
+///   Sort Key: created_at DESC
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=269)
+/// JIT:
+///   Functions: 2
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM public.users \nORDER BY created_at DESC"))]
 pub async fn get_all_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -345,6 +353,26 @@ pub struct FindUsersByNameAndAgeItem {
 }
 
 /// Find public.users by name pattern with optional minimum age filter (using conditional syntax)
+///
+/// Query Plan:
+/// === find_users_by_name_and_age (base) ===
+/// Seq Scan on users  (cost=10000000000.00..10000000003.89 rows=1 width=56)
+///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
+/// 
+/// === find_users_by_name_and_age (variant 1) ===
+/// Bitmap Heap Scan on users  (cost=8.58..12.62 rows=1 width=56)
+///   Recheck Cond: (age >= 0)
+///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
+///   ->  Bitmap Index Scan on idx_users_age_updated_at  (cost=0.00..8.58 rows=59 width=0)
+///         Index Cond: (age >= 0)
+/// 
+/// === find_users_by_name_and_age (variant 2) ===
+/// Index Scan using idx_users_age on users  (cost=0.14..7.78 rows=1 width=56)
+///   Index Cond: (age <= 0)
+///   Filter: (((name)::text ~~* 'dummy'::text) AND ((name)::text = 'dummy'::text))
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age \nFROM public.users \nWHERE name ILIKE ${name_pattern} \n$[AND age >= ${min_age?}] \nAND name = ${name_exact} \n$[AND age <= ${max_age?}] \nORDER BY name"))]
 pub async fn find_users_by_name_and_age(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: String, min_age: Option<i32>, name_exact: String, max_age: Option<i32>) -> Result<Vec<FindUsersByNameAndAgeItem>, super::ErrorReadOnly> {
     let mut final_sql = r"SELECT id, name, email, age 
@@ -422,6 +450,15 @@ pub struct GetRecentUsersItem {
 }
 
 /// Get public.users created after a specific timestamp - expects at least one user
+///
+/// Query Plan:
+/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=269)
+///   Sort Key: created_at DESC
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=269)
+///         Filter: (created_at > '2025-12-05 05:49:34.09596+00'::timestamp with time zone)
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at, updated_at \nFROM public.users \nWHERE created_at > ${since} \nORDER BY created_at DESC"))]
 pub async fn get_recent_users(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<GetRecentUsersItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -463,6 +500,11 @@ pub struct GetActiveUsersByAgeRangeItem {
 }
 
 /// Get active public.users within an age range - must return at least one user or fails
+///
+/// Query Plan:
+/// Index Scan using idx_users_age on users  (cost=0.14..8.17 rows=1 width=261)
+///   Index Cond: ((age >= 0) AND (age <= 0))
+///   Filter: (updated_at > (now() - '30 days'::interval))
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, profile, created_at \nFROM public.users \nWHERE age BETWEEN ${min_age} AND ${max_age} \nAND updated_at > NOW() - INTERVAL '30 days'"))]
 pub async fn get_active_users_by_age_range(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, min_age: i32, max_age: i32) -> Result<Vec<GetActiveUsersByAgeRangeItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -501,6 +543,15 @@ pub struct SearchUsersByNamePatternItem {
 }
 
 /// Search public.users by name pattern - expects at least one match
+///
+/// Query Plan:
+/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=52)
+///   Sort Key: name
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=52)
+///         Filter: ((name)::text ~~* 'dummy'::text)
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE name ILIKE ${pattern} \nORDER BY name"))]
 pub async fn search_users_by_name_pattern(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<SearchUsersByNamePatternItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -534,6 +585,41 @@ pub struct SearchUsersAdvancedItem {
 }
 
 /// Advanced user search with multiple optional filters using conditional syntax
+///
+/// Query Plan:
+/// === search_users_advanced (base) ===
+/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=64)
+///   Sort Key: created_at DESC
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=64)
+/// JIT:
+///   Functions: 2
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
+/// 
+/// === search_users_advanced (variant 1) ===
+/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=64)
+///   Sort Key: created_at DESC
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=64)
+///         Filter: ((name)::text ~~* 'dummy'::text)
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
+/// 
+/// === search_users_advanced (variant 2) ===
+/// Sort  (cost=14.07..14.22 rows=59 width=64)
+///   Sort Key: created_at DESC
+///   ->  Bitmap Heap Scan on users  (cost=8.60..12.33 rows=59 width=64)
+///         Recheck Cond: (age >= 0)
+///         ->  Bitmap Index Scan on idx_users_age_updated_at  (cost=0.00..8.58 rows=59 width=0)
+///               Index Cond: (age >= 0)
+/// 
+/// === search_users_advanced (variant 3) ===
+/// Sort  (cost=10000000003.75..10000000003.75 rows=1 width=64)
+///   Sort Key: created_at DESC
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=64)
+///         Filter: (created_at >= '2025-12-05 05:49:34.332024+00'::timestamp with time zone)
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE 1=1 \n$[AND name ILIKE ${name_pattern?}] \n$[AND age >= ${min_age?}] \n$[AND created_at >= ${since?}] \nORDER BY created_at DESC"))]
 pub async fn search_users_advanced(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, name_pattern: Option<String>, min_age: Option<i32>, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<SearchUsersAdvancedItem>, super::ErrorReadOnly> {
     let mut final_sql = r"SELECT id, name, email, age, created_at 
@@ -1022,6 +1108,15 @@ pub async fn insert_user_structured(executor: impl sqlx::Executor<'_, Database =
 }
 
 /// Get all possible user statuses currently in use
+///
+/// Query Plan:
+/// Unique  (cost=10000000005.33..10000000005.62 rows=3 width=4)
+///   ->  Sort  (cost=10000000005.33..10000000005.47 rows=59 width=4)
+///         Sort Key: status
+///         ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=4)
+/// JIT:
+///   Functions: 3
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT DISTINCT status \nFROM public.users \nORDER BY status"))]
 pub async fn get_all_user_statuses(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<Option<UserStatus>>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1052,6 +1147,11 @@ pub struct GetAllUsersWithStarItem {
 }
 
 /// Get all public.users using SELECT * to fetch all columns
+///
+/// Query Plan:
+/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=381)
+///   Sort Key: created_at DESC
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=381)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nORDER BY created_at DESC"))]
 pub async fn get_all_users_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<GetAllUsersWithStarItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1097,6 +1197,10 @@ pub struct GetUserByIdWithStarItem {
 }
 
 /// Get a single user by ID using SELECT * to fetch all columns
+///
+/// Query Plan:
+/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=381)
+///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT * \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_by_id_with_star(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserByIdWithStarItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1146,6 +1250,11 @@ pub struct GetUserByIdAndEmailItem {
 }
 
 /// Get a user by ID and email - generates GetUserByIdAndEmailParams struct and GetUserByIdAndEmailItem return struct
+///
+/// Query Plan:
+/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=52)
+///   Index Cond: ((email)::text = 'dummy'::text)
+///   Filter: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
 pub async fn get_user_by_id_and_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<Option<GetUserByIdAndEmailItem>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1526,6 +1635,10 @@ pub struct UserSummary {
 }
 
 /// Get user summary - generates UserSummary return struct with custom name
+///
+/// Query Plan:
+/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=52)
+///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserSummary, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1546,6 +1659,10 @@ pub async fn get_user_summary(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Get user info by email - reuses UserSummary return struct
+///
+/// Query Plan:
+/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=52)
+///   Index Cond: ((email)::text = 'dummy'::text)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE email = ${email}"))]
 pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1571,6 +1688,14 @@ pub async fn get_user_info_by_email(executor: impl sqlx::Executor<'_, Database =
 }
 
 /// Get all user summaries - reuses UserSummary return struct
+///
+/// Query Plan:
+/// Sort  (cost=10000000005.33..10000000005.47 rows=59 width=52)
+///   Sort Key: name
+///   ->  Seq Scan on users  (cost=10000000000.00..10000000003.59 rows=59 width=52)
+/// JIT:
+///   Functions: 2
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nORDER BY name"))]
 pub async fn get_all_user_summaries(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Vec<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1599,6 +1724,10 @@ pub struct UserDetails {
 }
 
 /// Get user details with age and created_at - generates UserDetails return struct
+///
+/// Query Plan:
+/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=64)
+///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE id = ${user_id}"))]
 pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<UserDetails, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1621,6 +1750,13 @@ pub async fn get_user_details(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Search user details - reuses UserDetails return struct
+///
+/// Query Plan:
+/// Seq Scan on users  (cost=10000000000.00..10000000003.74 rows=1 width=64)
+///   Filter: ((name)::text ~~* 'dummy'::text)
+/// JIT:
+///   Functions: 4
+///   Options: Inlining true, Optimization true, Expressions true, Deforming true
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age, created_at \nFROM public.users \nWHERE name ILIKE ${pattern}"))]
 pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, pattern: String) -> Result<Vec<UserDetails>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1643,6 +1779,11 @@ pub async fn search_user_details(executor: impl sqlx::Executor<'_, Database = sq
 }
 
 /// Find user by criteria - uses GetUserByIdAndEmailParams for params and UserSummary for return
+///
+/// Query Plan:
+/// Index Scan using users_email_key on users  (cost=0.14..8.16 rows=1 width=52)
+///   Index Cond: ((email)::text = 'dummy'::text)
+///   Filter: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email \nFROM public.users \nWHERE id = ${id} AND email = ${email}"))]
 pub async fn find_user_by_criteria(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &GetUserByIdAndEmailParams) -> Result<Option<UserSummary>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -1677,6 +1818,10 @@ pub struct GetUserSimpleItem {
 }
 
 /// Simple user lookup by ID with detailed info
+///
+/// Query Plan:
+/// Index Scan using users_pkey on users  (cost=0.14..8.16 rows=1 width=60)
+///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, created_at\nFROM public.users\nWHERE id = ${user_id}"))]
 pub async fn get_user_simple(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, user_id: i32) -> Result<Option<GetUserSimpleItem>, super::ErrorReadOnly> {
     let query = sqlx::query(

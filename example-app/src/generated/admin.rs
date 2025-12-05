@@ -3,6 +3,9 @@
 use sqlx::Row;
 
 /// Get the current server timestamp
+///
+/// Query Plan:
+/// Result  (cost=0.00..0.01 rows=1 width=8)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT NOW() as current_time"))]
 pub async fn get_current_time(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Option<chrono::DateTime<chrono::Utc>>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -13,6 +16,9 @@ pub async fn get_current_time(executor: impl sqlx::Executor<'_, Database = sqlx:
 }
 
 /// Get PostgreSQL version
+///
+/// Query Plan:
+/// Result  (cost=0.00..0.01 rows=1 width=32)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT version() as pg_version"))]
 pub async fn get_version(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>) -> Result<Option<String>, super::ErrorReadOnly> {
     let query = sqlx::query(
@@ -157,6 +163,10 @@ pub struct GetAllTypesTestItem {
 }
 
 /// Get a row with all PostgreSQL types by ID
+///
+/// Query Plan:
+/// Index Scan using all_types_test_pkey on all_types_test  (cost=0.14..8.16 rows=1 width=1094)
+///   Index Cond: (id = 0)
 #[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT\n  id, bool_col, char_col, int2_col, int4_col, int8_col, float4_col, float8_col, numeric_col,\n  name_col, text_col, varchar_col, bpchar_col, bytea_col, bit_col, varbit_col,\n  date_col, time_col, timestamp_col, timestamptz_col, interval_col, timetz_col,\n  int4_range_col, int8_range_col, num_range_col, ts_range_col, tstz_range_col, date_range_col,\n  inet_col, cidr_col, macaddr_col, json_col, jsonb_col, uuid_col,\n  bool_array_col, int4_array_col, int8_array_col, text_array_col, float8_array_col,\n  int4_range_array_col, date_range_array_col,\n  created_at\nFROM public.all_types_test\nWHERE id = ${id}"))]
 pub async fn get_all_types_test(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, id: i32) -> Result<GetAllTypesTestItem, super::ErrorReadOnly> {
     let query = sqlx::query(

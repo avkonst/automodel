@@ -1,5 +1,4 @@
 mod module_generator;
-mod query_analyser;
 mod types_generator;
 
 pub use module_generator::*;

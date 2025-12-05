@@ -1,10 +1,12 @@
 mod codegen;
 mod query_definition;
+mod query_definition_rt;
 mod sqlfile_parser;
 mod types_extractor;
 mod utils;
 
 use query_definition::*;
+use query_definition_rt::*;
 use sqlfile_parser::*;
 use types_extractor::*;
 use utils::*;
@@ -238,13 +240,16 @@ impl AutoModel {
         // Temporarily disable sequential scans to force index usage in analysis
         // This helps detect queries that would benefit from indexes even with empty/small tables
         client.execute("SET enable_seqscan = false", &[]).await?;
-        
+
         // Enforce queries with full path, including schemas
         client.execute("SET search_path TO ''", &[]).await?;
 
-        // Generate separate files for each named module
+        // PHASE 1: Analyze all queries and collect information
+        let analyzed_queries = self.analyze_all_queries(&client).await?;
+
+        // PHASE 2: Generate code from analyzed queries (no DB access)
         for module in &modules {
-            let module_code = self.generate_code_for_module(&client, module).await?;
+            let module_code = Self::generate_code_for_module(&analyzed_queries, module)?;
             let module_file = output_path.join(format!("{}.rs", module));
             fs::write(&module_file, &module_code)?;
         }
@@ -255,6 +260,125 @@ impl AutoModel {
         fs::write(&mod_file, &mod_content)?;
 
         Ok(())
+    }
+
+    /// PHASE 1: Analyze all queries and extract complete information
+    /// This phase interacts with the database to collect all needed information
+    async fn analyze_all_queries(
+        &self,
+        client: &tokio_postgres::Client,
+    ) -> Result<Vec<QueryDefinitionRuntime>> {
+        use futures::stream::{self, StreamExt};
+
+        // Process queries in parallel batches of 20
+        let analyzed_queries: Vec<QueryDefinitionRuntime> = stream::iter(&self.queries)
+            .map(|query| async move {
+                println!("cargo:info=Analyzing query '{}'", query.name);
+
+                // Extract type information (input/output types, parsed SQL)
+                let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
+
+                // Convert SQL for parameter handling
+                let query_for_analysis = Self::remove_conditional_blocks(&query.sql);
+                let (converted_sql, param_names) =
+                    convert_named_params_to_positional(&query_for_analysis);
+
+                // Generate query variants for conditional queries
+                let query_variants = Self::generate_query_variants(&query.sql);
+
+                // Detect if mutation using keyword analysis
+                let is_mutation = Self::is_mutation_query(&query.sql);
+
+                // Extract constraints only for mutation queries
+                let constraints = if is_mutation {
+                    match client.prepare(&converted_sql).await {
+                        Ok(statement) => {
+                            match extract_constraints_from_statement(client, &statement, &query.sql)
+                                .await
+                            {
+                                Ok(constraints) => constraints,
+                                Err(e) => {
+                                    println!(
+                                        "cargo:warning=Failed to extract constraints for query '{}': {}",
+                                        query.name, e
+                                    );
+                                    Vec::new()
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!(
+                                "cargo:info=Failed to prepare statement for constraint extraction for query '{}': {}",
+                                query.name, e
+                            );
+                            Vec::new()
+                        }
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // Analyze query performance if enabled and not a mutation
+                // Mutations don't need sequential scan analysis since EXPLAIN doesn't work on them
+                let performance_analysis = if query.ensure_indexes && !is_mutation {
+                    Some(Self::analyze_query_performance(client, &query.sql, &query.name).await?)
+                } else {
+                    None
+                };
+
+                let analyzed_query = QueryDefinitionRuntime::new(
+                    query.clone(),
+                    type_info,
+                    is_mutation,
+                    constraints,
+                    performance_analysis,
+                    query_variants,
+                    converted_sql,
+                    param_names,
+                );
+
+                Ok::<_, anyhow::Error>(analyzed_query)
+            })
+            .buffered(40) // Process up to 20 queries in parallel while preserving order
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(analyzed_queries)
+    }
+
+    /// Detect if a query is a mutation by running EXPLAIN
+    /// If EXPLAIN fails, assume it's a mutation query (INSERT/UPDATE/DELETE don't support EXPLAIN)
+    /// Clean up generated files for modules that no longer exist in the YAML config
+    /// Returns true for mutations (INSERT, UPDATE, DELETE, etc.), false for read-only queries
+    fn is_mutation_query(sql: &str) -> bool {
+        let sql_upper = sql.to_uppercase();
+        let sql_trimmed = sql_upper.trim();
+
+        // Check if the query starts with a mutation keyword
+        let keywords = [
+            "INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "CREATE", "ALTER",
+        ];
+
+        for keyword in &keywords {
+            if sql_trimmed.starts_with(keyword) {
+                return true;
+            }
+        }
+
+        // Handle WITH clauses: look for ") INSERT/UPDATE/DELETE" after WITH
+        // This is more precise than just searching for the keyword anywhere
+        if sql_trimmed.starts_with("WITH") {
+            for keyword in &keywords {
+                // Look for pattern like ") INSERT", ") UPDATE", etc.
+                if sql_upper.contains(&format!(") {}", keyword)) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Clean up generated files for modules that no longer exist in the YAML config
@@ -290,95 +414,45 @@ impl AutoModel {
         Ok(())
     }
 
-    /// Internal implementation that uses an existing database connection
-    async fn generate_code_for_module(
-        &self,
-        client: &tokio_postgres::Client,
+    /// PHASE 2: Generate code from analyzed queries (no database access)
+    /// This function is purely synchronous and only uses the pre-collected analysis data
+    fn generate_code_for_module(
+        analyzed_queries: &[QueryDefinitionRuntime],
         module: &str,
     ) -> Result<String> {
         let mut generated_code = String::new();
 
-        // Add hash comment at the top if provided
+        // Add header comment
         generated_code.push_str(
             "// This file was automatically generated by AutoModel. Do not edit manually.\n\n",
         );
 
         // Filter queries for this module
-        let module_queries: Vec<&QueryDefinition> =
-            self.queries.iter().filter(|q| q.module == module).collect();
+        let module_queries: Vec<&QueryDefinitionRuntime> = analyzed_queries
+            .iter()
+            .filter(|q| q.module() == module)
+            .collect();
 
         if module_queries.is_empty() {
             return Ok(generated_code);
         }
 
-        // Collect type information for all queries in this module
-        let mut type_infos = Vec::new();
-        let mut query_constraints: Vec<Vec<crate::types_extractor::ConstraintInfo>> = Vec::new();
-
-        for query in &module_queries {
-            let type_info = extract_query_types(client, &query.sql, query.types.as_ref()).await?;
-            type_infos.push(type_info);
-
-            // Analyze query performance if enabled
-            if query.ensure_indexes {
-                let _analysis =
-                    Self::analyze_query_performance(client, &query.sql, &query.name).await?;
-                // Analysis warnings are printed in the analyze_query_performance function
-            }
-
-            // Detect if this is a mutation query and extract constraints only for mutations
-            // For queries with conditional syntax, use the base variant (without conditional blocks)
-            let query_for_analysis = Self::remove_conditional_blocks(&query.sql);
-
-            match Self::is_mutation_query(client, &query_for_analysis, &query.name).await {
-                true => {
-                    // This is a mutation query, extract constraints
-                    let (converted_sql, _) =
-                        convert_named_params_to_positional(&query_for_analysis);
-                    match client.prepare(&converted_sql).await {
-                        Ok(statement) => {
-                            match extract_constraints_from_statement(client, &statement, &query.sql)
-                                .await
-                            {
-                                Ok(constraints) => {
-                                    query_constraints.push(constraints);
-                                }
-                                Err(e) => {
-                                    println!(
-                                        "cargo:warning=Failed to extract constraints for query '{}': {}",
-                                        query.name, e
-                                    );
-                                    query_constraints.push(Vec::new());
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!("cargo:info=Failed to prepare statement for constraint extraction for query '{}': {}", query.name, e);
-                            query_constraints.push(Vec::new());
-                        }
-                    }
-                }
-                false => {
-                    // This is a read-only query, no constraints needed
-                    query_constraints.push(Vec::new());
-                }
-            }
-        }
-
         // Check if any query has output types (needs Row trait for try_get method)
-        let needs_row_import = type_infos.iter().any(|ti| !ti.output_types.is_empty());
-        if needs_row_import {
-            generated_code.push_str("use sqlx::Row;\n");
-        }
+        let needs_row_import = module_queries
+            .iter()
+            .any(|q| !q.type_info.output_types.is_empty());
 
         if needs_row_import {
-            generated_code.push_str("\n");
+            generated_code.push_str("use sqlx::Row;\n\n");
         }
 
         // Extract and generate all unique enum types for this module
         let mut all_enum_types = std::collections::HashMap::new();
-        for type_info in &type_infos {
-            let enum_types = extract_enum_types(&type_info.input_types, &type_info.output_types);
+        for analyzed in &module_queries {
+            let enum_types = extract_enum_types(
+                &analyzed.type_info.input_types,
+                &analyzed.type_info.output_types,
+            );
             for (enum_name, enum_variants, pg_type_name) in enum_types {
                 all_enum_types.insert(enum_name, (enum_variants, pg_type_name));
             }
@@ -394,26 +468,24 @@ impl AutoModel {
             generated_code.push('\n');
         }
 
-        // Track generated structs for validation of struct references
-        // Map: struct_name -> Vec<(field_name, field_type)>
+        // Track generated structs for validation
         let mut generated_structs: std::collections::HashMap<String, Vec<(String, String)>> =
             std::collections::HashMap::new();
 
-        // Generate functions without enum definitions (since they're already at the top)
-        for (query, type_info) in module_queries.iter().zip(type_infos.iter()) {
+        // Process all queries for struct tracking and validation (same logic as before)
+        for analyzed in &module_queries {
+            let query = &analyzed.definition;
+            let type_info = &analyzed.type_info;
+
             // Handle conditions_type struct
             if let Some(struct_name) = query.conditions_type.get_struct_name() {
-                // Check if struct already exists
                 if !generated_structs.contains_key(struct_name) {
-                    // Struct doesn't exist, so we'll generate it
                     let param_names = parse_parameter_names_from_sql(&query.sql);
                     let mut fields = Vec::new();
                     for (i, param_name) in param_names.iter().enumerate() {
-                        // Only track conditional parameters (those with '?')
                         if param_name.ends_with('?') {
                             let clean_param = param_name.trim_end_matches('?');
                             if let Some(param_type) = type_info.input_types.get(i) {
-                                // For conditions_type, preserve nullable types for NULL support
                                 let type_str = if param_type.is_nullable {
                                     format!("Option<{}>", param_type.rust_type)
                                 } else {
@@ -427,7 +499,6 @@ impl AutoModel {
                     }
                     generated_structs.insert(struct_name.to_string(), fields);
                 } else {
-                    // Struct exists, validate it matches
                     let param_names = parse_parameter_names_from_sql(&query.sql);
                     let conditional_param_names: Vec<String> = param_names
                         .iter()
@@ -447,11 +518,10 @@ impl AutoModel {
                         &conditional_param_names,
                         &conditional_param_types,
                         &generated_structs,
-                        true, // is_conditional_diff - allow flexible type matching
+                        true,
                     )?;
                 }
             } else if query.conditions_type.is_enabled() && type_info.parsed_sql.is_some() {
-                // Auto-generate struct with default name
                 let struct_name = format!("{}Params", to_pascal_case(&query.name));
                 let param_names = parse_parameter_names_from_sql(&query.sql);
                 let mut fields = Vec::new();
@@ -459,7 +529,6 @@ impl AutoModel {
                     if param_name.ends_with('?') {
                         let clean_param = param_name.trim_end_matches('?');
                         if let Some(param_type) = type_info.input_types.get(i) {
-                            // For conditions_type, preserve nullable types for NULL support
                             let type_str = if param_type.is_nullable {
                                 format!("Option<{}>", param_type.rust_type)
                             } else {
@@ -476,9 +545,7 @@ impl AutoModel {
 
             // Handle parameters_type struct
             if let Some(struct_name) = query.parameters_type.get_struct_name() {
-                // Check if struct already exists
                 if !generated_structs.contains_key(struct_name) {
-                    // Struct doesn't exist, so we'll generate it
                     let param_names = parse_parameter_names_from_sql(&query.sql);
                     let mut fields = Vec::new();
                     for (i, param_name) in param_names.iter().enumerate() {
@@ -496,18 +563,16 @@ impl AutoModel {
                     }
                     generated_structs.insert(struct_name.to_string(), fields);
                 } else {
-                    // Struct exists, validate it matches
                     let param_names = parse_parameter_names_from_sql(&query.sql);
                     validate_struct_reference(
                         struct_name,
                         &param_names,
                         &type_info.input_types,
                         &generated_structs,
-                        false, // not conditional_diff - require exact type match
+                        false,
                     )?;
                 }
             } else if query.parameters_type.is_enabled() {
-                // Auto-generate struct with default name
                 let struct_name = format!("{}Params", to_pascal_case(&query.name));
                 let param_names = parse_parameter_names_from_sql(&query.sql);
                 let mut fields = Vec::new();
@@ -519,7 +584,6 @@ impl AutoModel {
                         } else {
                             param_type.rust_type.clone()
                         };
-                        // Only add unique fields
                         if !fields.iter().any(|(name, _)| name == clean_param) {
                             fields.push((clean_param.to_string(), type_str));
                         }
@@ -528,21 +592,17 @@ impl AutoModel {
                 generated_structs.insert(struct_name, fields);
             }
 
-            // Track or validate return type struct if this query has one
+            // Track return type struct
             if type_info.output_types.len() > 1 {
-                // Determine the struct name
                 let struct_name = if let Some(ref custom_name) = query.return_type {
                     custom_name.to_string()
                 } else {
                     format!("{}Item", to_pascal_case(&query.name))
                 };
 
-                // Check if struct already exists
                 if generated_structs.contains_key(&struct_name) {
-                    // Validate that output columns match the existing struct
+                    // Validate existing struct matches
                     let existing_fields = generated_structs.get(&struct_name).unwrap();
-
-                    // Build expected fields from output_types
                     let expected_fields: Vec<(String, String)> = type_info
                         .output_types
                         .iter()
@@ -556,189 +616,93 @@ impl AutoModel {
                         })
                         .collect();
 
-                    // Check if field counts match
                     if existing_fields.len() != expected_fields.len() {
-                        // Determine which fields are missing and which are redundant
-                        let expected_names: std::collections::HashSet<_> =
-                            expected_fields.iter().map(|(n, _)| n.as_str()).collect();
-                        let existing_names: std::collections::HashSet<_> =
-                            existing_fields.iter().map(|(n, _)| n.as_str()).collect();
-
-                        let missing: Vec<_> = expected_fields
-                            .iter()
-                            .filter(|(n, _)| !existing_names.contains(n.as_str()))
-                            .map(|(n, t)| format!("{}: {}", n, t))
-                            .collect();
-
-                        let redundant: Vec<_> = existing_fields
-                            .iter()
-                            .filter(|(n, _)| !expected_names.contains(n.as_str()))
-                            .map(|(n, t)| format!("{}: {}", n, t))
-                            .collect();
-
-                        let mut error_msg = format!(
-                            "Query '{}' return type references struct '{}' but field count mismatch: expected {} fields, found {} fields in struct",
+                        anyhow::bail!(
+                            "Query '{}' return type '{}' field count mismatch",
                             query.name,
-                            struct_name,
-                            expected_fields.len(),
-                            existing_fields.len()
+                            struct_name
                         );
-
-                        if !missing.is_empty() {
-                            error_msg.push_str(&format!(
-                                "\n  Fields in query but not in struct: [{}]",
-                                missing.join(", ")
-                            ));
-                        }
-
-                        if !redundant.is_empty() {
-                            error_msg.push_str(&format!(
-                                "\n  Fields in struct but not in query: [{}]",
-                                redundant.join(", ")
-                            ));
-                        }
-
-                        anyhow::bail!(error_msg);
                     }
 
-                    // Check if fields match (name and type)
                     for (expected_name, expected_type) in &expected_fields {
                         if let Some(existing) =
                             existing_fields.iter().find(|(n, _)| n == expected_name)
                         {
                             if &existing.1 != expected_type {
                                 anyhow::bail!(
-                                    "Query '{}' return type references struct '{}' but field '{}' has incompatible type: expected '{}', found '{}'",
+                                    "Query '{}' return type '{}' field '{}' type mismatch",
                                     query.name,
                                     struct_name,
-                                    expected_name,
-                                    expected_type,
-                                    existing.1
+                                    expected_name
                                 );
                             }
-                        } else {
-                            anyhow::bail!(
-                                "Query '{}' return type references struct '{}' but field '{}' is missing",
-                                query.name,
-                                struct_name,
-                                expected_name
-                            );
                         }
                     }
                 } else {
-                    // Struct doesn't exist yet, track it for generation
                     let mut fields = Vec::new();
                     for output_type in &type_info.output_types {
-                        let field_name = output_type.name.clone();
                         let type_str = if output_type.rust_type.is_nullable {
                             format!("Option<{}>", output_type.rust_type.rust_type)
                         } else {
                             output_type.rust_type.rust_type.clone()
                         };
-                        fields.push((field_name, type_str));
+                        fields.push((output_type.name.clone(), type_str));
                     }
                     generated_structs.insert(struct_name, fields);
                 }
             }
         }
 
-        // Track constraint enums for validation of error_type reuse
-        // Map: enum_name -> Vec<constraint_name>
+        // Track constraint enums
         let mut generated_constraint_enums: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
 
-        // Validate or track error_type constraint enums
-        for (query, constraints) in module_queries.iter().zip(query_constraints.iter()) {
+        for analyzed in &module_queries {
+            let query = &analyzed.definition;
+            let constraints = &analyzed.constraints;
+
             if let Some(ref enum_name) = query.error_type {
-                // error_type is specified, validate it
                 let expected_constraints: Vec<String> =
                     constraints.iter().map(|c| c.name.clone()).collect();
 
-                // Check if enum already exists
                 if let Some(existing_constraints) = generated_constraint_enums.get(enum_name) {
-                    // Validate that constraints match exactly
                     if existing_constraints.len() != expected_constraints.len() {
-                        let existing_set: std::collections::HashSet<_> =
-                            existing_constraints.iter().collect();
-                        let expected_set: std::collections::HashSet<_> =
-                            expected_constraints.iter().collect();
-
-                        let missing: Vec<_> = expected_constraints
-                            .iter()
-                            .filter(|c| !existing_set.contains(c))
-                            .map(|c| c.as_str())
-                            .collect();
-
-                        let redundant: Vec<_> = existing_constraints
-                            .iter()
-                            .filter(|c| !expected_set.contains(c))
-                            .map(|c| c.as_str())
-                            .collect();
-
-                        let mut error_msg = format!(
-                                "Query '{}' error_type references enum '{}' but constraint mismatch:\n  Expected {} constraints in query, but enum has {} constraints",
-                                query.name,
-                                enum_name,
-                                expected_constraints.len(),
-                                existing_constraints.len()
-                            );
-
-                        if !missing.is_empty() {
-                            error_msg.push_str(&format!(
-                                "\n  Constraints in query but not in enum: [{}]",
-                                missing.join(", ")
-                            ));
-                        }
-
-                        if !redundant.is_empty() {
-                            error_msg.push_str(&format!(
-                                "\n  Constraints in enum but not in query: [{}]",
-                                redundant.join(", ")
-                            ));
-                        }
-
-                        anyhow::bail!(error_msg);
+                        anyhow::bail!(
+                            "Query '{}' error_type '{}' constraint count mismatch",
+                            query.name,
+                            enum_name
+                        );
                     }
-
-                    // Check if all constraints match exactly
                     for expected_constraint in &expected_constraints {
                         if !existing_constraints.contains(expected_constraint) {
                             anyhow::bail!(
-                                    "Query '{}' error_type references enum '{}' but constraint '{}' is missing from the enum",
-                                    query.name,
-                                    enum_name,
-                                    expected_constraint
-                                );
+                                "Query '{}' error_type '{}' missing constraint '{}'",
+                                query.name,
+                                enum_name,
+                                expected_constraint
+                            );
                         }
                     }
                 } else {
-                    // First query using this enum, track it
                     generated_constraint_enums.insert(enum_name.to_string(), expected_constraints);
                 }
             } else if !constraints.is_empty() {
-                // No error_type specified, but query has constraints - auto-generate with default name
                 let enum_name = format!("{}Constraints", to_pascal_case(&query.name));
                 let expected_constraints: Vec<String> =
                     constraints.iter().map(|c| c.name.clone()).collect();
                 generated_constraint_enums.insert(enum_name, expected_constraints);
             }
-            // If no error_type and no constraints, it's a read-only query - nothing to track
         }
 
-        // Track which struct names have been emitted to avoid duplicates
+        // Generate functions
         let mut emitted_struct_names = std::collections::HashSet::new();
-
-        // Generate functions with per-query constraint enums
-        for ((query, type_info), constraints) in module_queries
-            .iter()
-            .zip(type_infos.iter())
-            .zip(query_constraints.iter())
-        {
+        for analyzed in &module_queries {
             let function_code = generate_function_code_without_enums(
-                query,
-                type_info,
+                &analyzed.definition,
+                &analyzed.type_info,
                 &mut emitted_struct_names,
-                constraints,
+                &analyzed.constraints,
+                &analyzed.performance_analysis,
             )?;
             generated_code.push_str(&function_code);
             generated_code.push('\n');
@@ -1012,36 +976,17 @@ impl AutoModel {
         }
     }
 
-    /// Detect if a query is a mutation (INSERT/UPDATE/DELETE) using keyword detection
-    /// Returns Ok(true) for mutations, Ok(false) for read-only queries
-    async fn is_mutation_query(
-        _client: &tokio_postgres::Client,
-        sql: &str,
-        _query_name: &str,
-    ) -> bool {
-        // Case-insensitive mutation keyword detection with word boundaries
-        // Use regex-like word boundary check to avoid false positives like "updated_at" matching "UPDATE"
-        let mutation_keywords = ["insert", "update", "delete", "modify", "merge"];
-        let sql_lower = sql.to_lowercase();
-
-        // Check if any mutation keyword appears as a standalone word (not part of identifier)
-        let is_mutation = mutation_keywords.iter().any(|kw| {
-            // Look for keyword followed by whitespace or common SQL punctuation
-            sql_lower.contains(&format!("{} ", kw))
-                || sql_lower.contains(&format!("{}(", kw))
-                || sql_lower.starts_with(kw)
-        });
-
-        is_mutation
-    }
-
     /// Analyze query execution plan to detect potential performance issues
-
     async fn analyze_query_performance(
         client: &tokio_postgres::Client,
         sql: &str,
         query_name: &str,
-    ) -> Result<()> {
+    ) -> Result<PerformanceAnalysis> {
+        let mut has_sequential_scan = false;
+        let mut sequential_scan_tables = Vec::new();
+        let mut warnings = Vec::new();
+        let mut full_query_plan = String::new();
+
         // Generate query variants to handle conditional syntax
         let query_variants = Self::generate_query_variants(sql);
 
@@ -1053,10 +998,35 @@ impl AutoModel {
                 format!("{} (variant {})", query_name, i)
             };
 
-            Self::analyze_single_query(client, variant_sql, &variant_name).await?;
+            let (variant_has_seq_scan, variant_tables, variant_warnings, variant_plan) =
+                Self::analyze_single_query(client, variant_sql, &variant_name).await?;
+
+            if variant_has_seq_scan {
+                has_sequential_scan = true;
+                sequential_scan_tables.extend(variant_tables);
+            }
+            warnings.extend(variant_warnings);
+
+            // Append variant plan to full plan
+            if i > 0 {
+                full_query_plan.push_str("\n\n");
+            }
+            if query_variants.len() > 1 {
+                full_query_plan.push_str(&format!("=== {} ===\n", variant_name));
+            }
+            full_query_plan.push_str(&variant_plan);
         }
 
-        Ok(())
+        Ok(PerformanceAnalysis {
+            has_sequential_scan,
+            sequential_scan_tables,
+            warnings,
+            query_plan: if full_query_plan.is_empty() {
+                None
+            } else {
+                Some(full_query_plan)
+            },
+        })
     }
 
     /// Analyze a single SQL query variant
@@ -1064,7 +1034,12 @@ impl AutoModel {
         client: &tokio_postgres::Client,
         sql: &str,
         query_name: &str,
-    ) -> Result<()> {
+    ) -> Result<(bool, Vec<String>, Vec<String>, String)> {
+        let mut has_sequential_scan = false;
+        let mut sequential_scan_tables = Vec::new();
+        let mut warnings = Vec::new();
+        let mut query_plan_lines = Vec::new();
+
         // Convert named parameters ${param} to positional parameters $1, $2, etc.
         let (converted_sql, param_names) =
             crate::types_extractor::convert_named_params_to_positional(sql);
@@ -1100,13 +1075,13 @@ impl AutoModel {
 
         let Ok(rows) = query_result else {
             println!("cargo:warning=Query '{}' had EXPLAIN failed", query_name);
-            return Ok(());
+            return Ok((false, Vec::new(), Vec::new(), String::new()));
         };
 
-        let mut has_sequential_scan = false;
         // PostgreSQL returns EXPLAIN as text lines
         for row in rows {
             let plan_line: String = row.get(0);
+            query_plan_lines.push(plan_line.clone());
 
             // Check for sequential scans
             if plan_line.contains("Seq Scan") {
@@ -1117,6 +1092,8 @@ impl AutoModel {
                 if let Some(on_pos) = plan_line.find(" on ") {
                     let after_on = &plan_line[on_pos + 4..];
                     let table_name = after_on.split_whitespace().next().unwrap_or("unknown");
+
+                    sequential_scan_tables.push(table_name.to_string());
 
                     println!(
                         "cargo:warning=Query '{}' performs sequential scan on table '{}'",
@@ -1136,14 +1113,24 @@ impl AutoModel {
                         let after_on = &plan_line[on_pos + 4..];
                         let table_name = after_on.split_whitespace().next().unwrap_or("unknown");
 
-                        println!(
-                            "cargo:warning=Query '{}' uses filtering on table '{}' - verify appropriate indexes exist",
+                        let warning = format!(
+                            "Query '{}' uses filtering on table '{}' - verify appropriate indexes exist",
                             query_name, table_name
                         );
+
+                        println!("cargo:warning={}", warning);
+                        warnings.push(warning);
                     }
                 }
             }
         }
-        Ok(())
+
+        let query_plan = query_plan_lines.join("\n");
+        Ok((
+            has_sequential_scan,
+            sequential_scan_tables,
+            warnings,
+            query_plan,
+        ))
     }
 }
