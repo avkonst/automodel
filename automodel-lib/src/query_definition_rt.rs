@@ -3,6 +3,34 @@
 use crate::query_definition::QueryDefinition;
 use crate::types_extractor::{ConstraintInfo, QueryTypeInfo};
 
+/// Pre-computed EXPLAIN query parameters for a single query variant
+#[derive(Debug, Clone)]
+pub struct ExplainParams {
+    /// The EXPLAIN SQL query with special params inlined and remaining params renumbered
+    pub explain_sql: String,
+    /// Indices of special parameters that were inlined in explain_sql
+    /// Used to identify which dummy params to bind for remaining parameters
+    pub special_params: Vec<usize>,
+}
+
+/// Result of analyzing a query with EXPLAIN
+/// Contains mutation detection, performance analysis, constraints, and pre-computed EXPLAIN params
+#[derive(Debug, Clone)]
+pub struct QueryAnalysisResult {
+    /// Whether this query is a mutation (INSERT/UPDATE/DELETE)
+    pub is_mutation: bool,
+
+    /// Performance analysis results (only for queries with ensure_indexes enabled)
+    pub performance_analysis: Option<PerformanceAnalysis>,
+
+    /// Constraint information for mutation queries
+    pub constraints: Vec<ConstraintInfo>,
+
+    /// Pre-computed EXPLAIN query parameters for each variant
+    /// None if variant has no parameters
+    pub explain_params: Vec<Option<ExplainParams>>,
+}
+
 /// Complete analyzed query information ready for code generation
 /// This struct contains all information needed to generate code without database access
 #[derive(Debug, Clone)]
@@ -26,10 +54,8 @@ pub struct QueryDefinitionRuntime {
     pub performance_analysis: Option<PerformanceAnalysis>,
 
     /// Pre-computed EXPLAIN query parameters for each variant
-    /// Each entry is: (explain_sql, special_params)
-    /// special_params: Vec<(param_index, type_name, value)> for enums/numeric types
     /// None if variant has no parameters
-    pub explain_params: Vec<Option<(String, Vec<(usize, String, String)>)>>,
+    pub explain_params: Vec<Option<ExplainParams>>,
 }
 
 /// Performance analysis results from EXPLAIN
@@ -60,7 +86,7 @@ impl QueryDefinitionRuntime {
         is_mutation: bool,
         constraints: Vec<ConstraintInfo>,
         performance_analysis: Option<PerformanceAnalysis>,
-        explain_params: Vec<Option<(String, Vec<(usize, String, String)>)>>,
+        explain_params: Vec<Option<ExplainParams>>,
     ) -> Self {
         Self {
             definition,

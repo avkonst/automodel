@@ -311,16 +311,15 @@ impl AutoModel {
                 // Analyze query with EXPLAIN to detect mutation and optionally get performance data
                 // EXPLAIN fails on mutations (INSERT/UPDATE/DELETE), so we use that to detect them
                 // This also pre-computes EXPLAIN params during the analysis phase
-                let (is_mutation, performance_analysis, constraints, explain_params) =
-                    Self::analyze_query_with_explain(client, query).await?;
+                let analysis_result = Self::analyze_query_with_explain(client, query).await?;
 
                 let analyzed_query = QueryDefinitionRuntime::new(
                     query.clone(),
                     type_info,
-                    is_mutation,
-                    constraints,
-                    performance_analysis,
-                    explain_params,
+                    analysis_result.is_mutation,
+                    analysis_result.constraints,
+                    analysis_result.performance_analysis,
+                    analysis_result.explain_params,
                 );
 
                 Ok::<_, anyhow::Error>(analyzed_query)
@@ -338,16 +337,10 @@ impl AutoModel {
     /// - First checks SQL keywords to quickly identify obvious mutations
     /// - For potential read-only queries: runs EXPLAIN to verify and optionally collect performance
     /// - If EXPLAIN fails on what looks like a SELECT: treat as mutation (edge case)
-    /// Returns (is_mutation, performance_analysis, constraints, explain_params)
     async fn analyze_query_with_explain(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
-    ) -> Result<(
-        bool,
-        Option<PerformanceAnalysis>,
-        Vec<crate::types_extractor::ConstraintInfo>,
-        Vec<Option<(String, Vec<(usize, String, String)>)>>,
-    )> {
+    ) -> Result<QueryAnalysisResult> {
         // Quick keyword-based detection first
         let sql_upper = query.sql.to_uppercase();
         let sql_trimmed = sql_upper.trim();
@@ -384,7 +377,12 @@ impl AutoModel {
                 }
             };
 
-            return Ok((true, None, constraints, Vec::new()));
+            return Ok(QueryAnalysisResult {
+                is_mutation: true,
+                performance_analysis: None,
+                constraints,
+                explain_params: Vec::new(),
+            });
         }
 
         // Pre-compute EXPLAIN parameters for all variants
@@ -429,12 +427,22 @@ impl AutoModel {
                 } else {
                     None
                 };
-                Ok((false, performance, Vec::new(), explain_params))
+                Ok(QueryAnalysisResult {
+                    is_mutation: false,
+                    performance_analysis: performance,
+                    constraints: Vec::new(),
+                    explain_params,
+                })
             }
             Err(_) => {
                 // EXPLAIN failed on what looked like a SELECT - treat as mutation (edge case)
                 // Warning will be collected in performance analysis
-                Ok((true, None, Vec::new(), explain_params))
+                Ok(QueryAnalysisResult {
+                    is_mutation: true,
+                    performance_analysis: None,
+                    constraints: Vec::new(),
+                    explain_params,
+                })
             }
         }
     }
@@ -444,15 +452,15 @@ impl AutoModel {
     async fn detect_mutation_via_explain(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
-        explain_params: &[Option<(String, Vec<(usize, String, String)>)>],
+        explain_params: &[Option<ExplainParams>],
     ) -> Result<PerformanceAnalysis> {
         // Use first variant (base query) for detection
         let (_converted_sql, param_names, _label) = &query.sql_variants[0];
 
         // Try EXPLAIN with pre-computed parameters
         let explain_result = if !param_names.is_empty() {
-            if let Some((explain_sql, special_params)) = &explain_params[0] {
-                if special_params.is_empty() {
+            if let Some(params) = &explain_params[0] {
+                if params.special_params.is_empty() {
                     // No special params, use dummy params for all parameters
                     let (converted_sql, _param_names, _label) = &query.sql_variants[0];
                     match client.prepare(converted_sql).await {
@@ -463,7 +471,7 @@ impl AutoModel {
                                     .await?;
                             let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
                                 dummy_params.iter().map(|p| p.as_ref()).collect();
-                            client.query(explain_sql.as_str(), &param_refs).await
+                            client.query(params.explain_sql.as_str(), &param_refs).await
                         }
                         Err(e) => Err(e),
                     }
@@ -477,23 +485,27 @@ impl AutoModel {
                             let (all_dummy_params, _) =
                                 crate::types_extractor::create_dummy_params(client, param_types)
                                     .await?;
-                            
+
                             // Filter to only non-special params
                             let mut non_special_dummy_params = Vec::new();
                             for (i, dummy_param) in all_dummy_params.iter().enumerate() {
-                                if !special_params.iter().any(|(idx, _, _)| *idx == i) {
+                                if !params.special_params.contains(&i) {
                                     non_special_dummy_params.push(dummy_param.as_ref());
                                 }
                             }
-                            
-                            client.query(explain_sql.as_str(), &non_special_dummy_params).await
+
+                            client
+                                .query(params.explain_sql.as_str(), &non_special_dummy_params)
+                                .await
                         }
                         Err(e) => Err(e),
                     }
                 }
             } else {
                 // Pre-computation failed - cannot run EXPLAIN
-                return Err(anyhow::anyhow!("Statement preparation failed, cannot run EXPLAIN"));
+                return Err(anyhow::anyhow!(
+                    "Statement preparation failed, cannot run EXPLAIN"
+                ));
             }
         } else {
             // No parameters, execute directly
@@ -554,22 +566,22 @@ impl AutoModel {
     }
 
     /// Prepare EXPLAIN parameters for a single query variant (done once during Phase 1)
-    /// Returns (explain_sql, special_params) to be stored and reused
+    /// Returns ExplainParams to be stored and reused
     async fn prepare_explain_params_for_variant(
         client: &tokio_postgres::Client,
         converted_sql: &str,
         param_types: &[tokio_postgres::types::Type],
-    ) -> Result<(String, Vec<(usize, String, String)>)> {
+    ) -> Result<ExplainParams> {
         let (_dummy_params, special_params) =
             crate::types_extractor::create_dummy_params(client, param_types).await?;
-        
+
         // Build the EXPLAIN query with special param replacements
         let explain_sql = if special_params.is_empty() {
             format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", converted_sql)
         } else {
             // Replace special parameters with casted values and renumber remaining params
             let mut modified_sql = converted_sql.to_string();
-            
+
             // Replace special parameters from highest index to lowest (to avoid renumbering issues)
             for (param_idx, type_name, value) in special_params.iter().rev() {
                 let param_placeholder = format!("${}", param_idx + 1);
@@ -581,7 +593,7 @@ impl AutoModel {
                 };
                 modified_sql = modified_sql.replace(&param_placeholder, &casted_value);
             }
-            
+
             // Renumber remaining parameters
             // Build a mapping of non-special parameter indices
             let mut param_mapping = Vec::new();
@@ -590,7 +602,7 @@ impl AutoModel {
                     param_mapping.push(i);
                 }
             }
-            
+
             // Renumber from highest to lowest to avoid conflicts
             for (new_num, &original_idx) in param_mapping.iter().enumerate().rev() {
                 let old_placeholder = format!("${}", original_idx + 1);
@@ -601,25 +613,30 @@ impl AutoModel {
                     modified_sql = modified_sql.replace(&old_placeholder, &temp_placeholder);
                 }
             }
-            
+
             // Replace temporary placeholders with final ones
             for (new_num, _) in param_mapping.iter().enumerate() {
                 let temp_placeholder = format!("__PARAM_{}__", new_num + 1);
                 let final_placeholder = format!("${}", new_num + 1);
                 modified_sql = modified_sql.replace(&temp_placeholder, &final_placeholder);
             }
-            
+
             format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql)
         };
-        
-        Ok((explain_sql, special_params))
-    }
 
+        Ok(ExplainParams {
+            explain_sql,
+            special_params: special_params
+                .into_iter()
+                .map(|(param_index, _, _)| param_index)
+                .collect(),
+        })
+    }
     /// Analyze query performance using EXPLAIN (full analysis with query plan)
     async fn analyze_query_performance(
         client: &tokio_postgres::Client,
         query: &QueryDefinition,
-        explain_params: &[Option<(String, Vec<(usize, String, String)>)>],
+        explain_params: &[Option<ExplainParams>],
     ) -> Result<PerformanceAnalysis> {
         let mut has_sequential_scan = false;
         let mut sequential_scan_tables = Vec::new();
@@ -680,7 +697,7 @@ impl AutoModel {
         sql: &str,
         param_names: &[String],
         query_name: &str,
-        explain_params: Option<&(String, Vec<(usize, String, String)>)>,
+        explain_params: Option<&ExplainParams>,
     ) -> Result<(bool, Vec<String>, Vec<String>, String)> {
         let mut has_sequential_scan = false;
         let mut sequential_scan_tables = Vec::new();
@@ -689,8 +706,8 @@ impl AutoModel {
 
         // Execute EXPLAIN query with appropriate parameters
         let query_result = if !param_names.is_empty() {
-            if let Some((explain_sql, special_params)) = explain_params {
-                if special_params.is_empty() {
+            if let Some(params) = explain_params {
+                if params.special_params.is_empty() {
                     // No special params, use dummy params
                     match client.prepare(sql).await {
                         Ok(statement) => {
@@ -700,7 +717,7 @@ impl AutoModel {
                                     .await?;
                             let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
                                 dummy_params.iter().map(|p| p.as_ref()).collect();
-                            client.query(explain_sql.as_str(), &param_refs).await
+                            client.query(params.explain_sql.as_str(), &param_refs).await
                         }
                         Err(e) => {
                             return Err(anyhow::anyhow!(
@@ -717,16 +734,18 @@ impl AutoModel {
                             let (all_dummy_params, _) =
                                 crate::types_extractor::create_dummy_params(client, param_types)
                                     .await?;
-                            
+
                             // Filter to only non-special params
                             let mut non_special_dummy_params = Vec::new();
                             for (i, dummy_param) in all_dummy_params.iter().enumerate() {
-                                if !special_params.iter().any(|(idx, _, _)| *idx == i) {
+                                if !params.special_params.contains(&i) {
                                     non_special_dummy_params.push(dummy_param.as_ref());
                                 }
                             }
-                            
-                            client.query(explain_sql.as_str(), &non_special_dummy_params).await
+
+                            client
+                                .query(params.explain_sql.as_str(), &non_special_dummy_params)
+                                .await
                         }
                         Err(e) => {
                             return Err(anyhow::anyhow!(
@@ -744,10 +763,11 @@ impl AutoModel {
                         let (dummy_params, special_params) =
                             crate::types_extractor::create_dummy_params(client, param_types)
                                 .await?;
-                        
+
                         if special_params.is_empty() {
                             // No special params, use dummy params directly
-                            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", sql);
+                            let explain_sql =
+                                format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", sql);
                             let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
                                 dummy_params.iter().map(|p| p.as_ref()).collect();
                             client.query(&explain_sql, &param_refs).await
@@ -761,14 +781,21 @@ impl AutoModel {
                                 } else {
                                     format!("'{}'::{}", value, type_name)
                                 };
-                                modified_sql = modified_sql.replace(&param_placeholder, &casted_value);
+                                modified_sql =
+                                    modified_sql.replace(&param_placeholder, &casted_value);
                             }
-                            let explain_sql = format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql);
+                            let explain_sql =
+                                format!("EXPLAIN (FORMAT TEXT, ANALYZE false) {}", modified_sql);
                             client.query(&explain_sql, &[]).await
                         }
                     }
                     Err(_) => {
-                        return Ok((false, Vec::new(), vec![format!("Query '{}' had EXPLAIN failed", query_name)], String::new()));
+                        return Ok((
+                            false,
+                            Vec::new(),
+                            vec![format!("Query '{}' had EXPLAIN failed", query_name)],
+                            String::new(),
+                        ));
                     }
                 }
             }
