@@ -155,6 +155,19 @@ impl AutoModel {
         // Check if generated code is up to date
         if Self::is_generated_mod_rs_code_up_to_date(source_hash, &mod_file).unwrap_or(false) {
             println!("cargo:info=Skipping code generation as everything is up to date");
+            
+            // Output warnings from file even when skipping build
+            let warn_file = output_path.join("automodel.warn");
+            if warn_file.exists() {
+                if let Ok(warn_content) = fs::read_to_string(&warn_file) {
+                    for warning in warn_content.lines() {
+                        if !warning.is_empty() {
+                            println!("cargo:warning={}", warning);
+                        }
+                    }
+                }
+            }
+            
             return Ok(());
         }
 
@@ -247,17 +260,36 @@ impl AutoModel {
         // PHASE 1: Analyze all queries and collect information
         let analyzed_queries = self.analyze_all_queries(&client).await?;
 
+        // Collect all warnings
+        let mut all_warnings = Vec::new();
+
         // PHASE 2: Generate code from analyzed queries (no DB access)
         for module in &modules {
-            let module_code = Self::generate_code_for_module(&analyzed_queries, module)?;
+            let (module_code, module_warnings) = Self::generate_code_for_module(&analyzed_queries, module)?;
             let module_file = output_path.join(format!("{}.rs", module));
             fs::write(&module_file, &module_code)?;
+            
+            // Output warnings for this module
+            for warning in &module_warnings {
+                println!("cargo:warning={}", warning);
+            }
+            all_warnings.extend(module_warnings);
         }
 
         // Create the main mod.rs file
         let mod_file = output_path.join("mod.rs");
         let mod_content = generate_root_module(&modules, source_hash);
         fs::write(&mod_file, &mod_content)?;
+
+        // Write all warnings to automodel.warn file only if there are warnings
+        let warn_file = output_path.join("automodel.warn");
+        if !all_warnings.is_empty() {
+            let warn_content = all_warnings.join("\n");
+            fs::write(&warn_file, &warn_content)?;
+        } else {
+            // Delete the file if it exists from a previous run with warnings
+            let _ = fs::remove_file(&warn_file);
+        }
 
         Ok(())
     }
@@ -354,11 +386,8 @@ impl AutoModel {
                 Ok(statement) => {
                     match extract_constraints_from_statement(client, &statement, &query.sql).await {
                         Ok(constraints) => constraints,
-                        Err(e) => {
-                            println!(
-                                "cargo:warning=Failed to extract constraints for query '{}': {}",
-                                query.name, e
-                            );
+                        Err(_e) => {
+                            // Silently skip constraint extraction errors
                             Vec::new()
                         }
                     }
@@ -381,7 +410,7 @@ impl AutoModel {
             Self::analyze_query_performance(client, &query.sql, &query.name).await
         } else {
             // Just run a simple EXPLAIN to verify it's read-only
-            Self::detect_mutation_via_explain(client, converted_sql).await
+            Self::detect_mutation_via_explain(client, converted_sql, &query.name).await
         };
 
         match explain_result {
@@ -396,10 +425,7 @@ impl AutoModel {
             }
             Err(_) => {
                 // EXPLAIN failed on what looked like a SELECT - treat as mutation (edge case)
-                println!(
-                    "cargo:warning=Query '{}' failed EXPLAIN but didn't match mutation keywords - treating as mutation",
-                    query.name
-                );
+                // Warning will be collected in performance analysis
                 Ok((true, None, Vec::new()))
             }
         }
@@ -410,6 +436,7 @@ impl AutoModel {
     async fn detect_mutation_via_explain(
         client: &tokio_postgres::Client,
         converted_sql: &str,
+        query_name: &str,
     ) -> Result<PerformanceAnalysis> {
         // Get parameter names from the converted SQL
         let param_names =
@@ -443,6 +470,7 @@ impl AutoModel {
             Ok(_) => {
                 // EXPLAIN succeeded, so it's a read-only query
                 Ok(PerformanceAnalysis {
+                    query_name: query_name.to_string(),
                     has_sequential_scan: false,
                     sequential_scan_tables: Vec::new(),
                     warnings: Vec::new(),
@@ -491,11 +519,13 @@ impl AutoModel {
 
     /// PHASE 2: Generate code from analyzed queries (no database access)
     /// This function is purely synchronous and only uses the pre-collected analysis data
+    /// Returns (generated_code, warnings)
     fn generate_code_for_module(
         analyzed_queries: &[QueryDefinitionRuntime],
         module: &str,
-    ) -> Result<String> {
+    ) -> Result<(String, Vec<String>)> {
         let mut generated_code = String::new();
+        let mut warnings = Vec::new();
 
         // Add header comment
         generated_code.push_str(
@@ -509,7 +539,14 @@ impl AutoModel {
             .collect();
 
         if module_queries.is_empty() {
-            return Ok(generated_code);
+            return Ok((generated_code, warnings));
+        }
+
+        // Collect warnings from performance analysis
+        for analyzed in &module_queries {
+            if let Some(perf) = &analyzed.performance_analysis {
+                warnings.extend(perf.warnings.clone());
+            }
         }
 
         // Check if any query has output types (needs Row trait for try_get method)
@@ -783,7 +820,7 @@ impl AutoModel {
             generated_code.push('\n');
         }
 
-        Ok(generated_code)
+        Ok((generated_code, warnings))
     }
 
     /// Generate SQL query variants for analysis by handling conditional syntax
@@ -1093,6 +1130,7 @@ impl AutoModel {
         }
 
         Ok(PerformanceAnalysis {
+            query_name: query_name.to_string(),
             has_sequential_scan,
             sequential_scan_tables,
             warnings,
@@ -1149,8 +1187,8 @@ impl AutoModel {
         };
 
         let Ok(rows) = query_result else {
-            println!("cargo:warning=Query '{}' had EXPLAIN failed", query_name);
-            return Ok((false, Vec::new(), Vec::new(), String::new()));
+            let warning = format!("Query '{}' had EXPLAIN failed", query_name);
+            return Ok((false, Vec::new(), vec![warning], String::new()));
         };
 
         // PostgreSQL returns EXPLAIN as text lines
@@ -1170,10 +1208,11 @@ impl AutoModel {
 
                     sequential_scan_tables.push(table_name.to_string());
 
-                    println!(
-                        "cargo:warning=Query '{}' performs sequential scan on table '{}'",
+                    let warning = format!(
+                        "Query '{}' performs sequential scan on table '{}'",
                         query_name, table_name
                     );
+                    warnings.push(warning);
                 }
             }
 
@@ -1192,8 +1231,6 @@ impl AutoModel {
                             "Query '{}' uses filtering on table '{}' - verify appropriate indexes exist",
                             query_name, table_name
                         );
-
-                        println!("cargo:warning={}", warning);
                         warnings.push(warning);
                     }
                 }

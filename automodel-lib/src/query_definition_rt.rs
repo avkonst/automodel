@@ -40,6 +40,9 @@ pub struct QueryDefinitionRuntime {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct PerformanceAnalysis {
+    /// Query name for warnings
+    pub query_name: String,
+
     /// Whether the query uses sequential scans
     pub has_sequential_scan: bool,
 
