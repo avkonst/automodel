@@ -163,7 +163,7 @@ Each SQL file contains configuration metadata in SQL comments followed by the qu
 
 SELECT id, name, email, created_at
 FROM users
-WHERE id = ${id}
+WHERE id = #{id}
 ```
 
 **Advanced Example with Custom Types:**
@@ -178,10 +178,10 @@ WHERE id = ${id}
 -- @end
 
 UPDATE users 
-SET profile = ${profile}, updated_at = NOW() 
-$[, name = ${name?}] 
-$[, email = ${email?}] 
-WHERE id = ${user_id} 
+SET profile = #{profile}, updated_at = NOW() 
+#[, name = #{name?}] 
+#[, email = #{email?}] 
+WHERE id = #{user_id} 
 RETURNING id, name, email, profile, updated_at
 ```
 
@@ -214,7 +214,7 @@ All metadata is optional and specified in YAML format within SQL comments:
 --    multiunzip: true
 -- @end
 
-SELECT * FROM table WHERE id = ${id}
+SELECT * FROM table WHERE id = #{id}
 ```
 
 **Benefits:**
@@ -257,7 +257,7 @@ Each `.sql` file in the `queries/{module}/` directory contains:
 --    # ... other configuration options
 -- @end
 
-SELECT * FROM users WHERE id = ${id}
+SELECT * FROM users WHERE id = #{id}
 ```
 
 ### Default Configuration
@@ -318,7 +318,7 @@ The metadata block supports these options:
 -- @automodel
 -- @end
 
-SELECT id, name FROM users WHERE id = ${id}
+SELECT id, name FROM users WHERE id = #{id}
 ```
 
 If no metadata is provided, sensible defaults are used.
@@ -344,7 +344,7 @@ If no metadata is provided, sensible defaults are used.
 --    error_type: "UserError"   # Custom error type name
 -- @end
 
-SELECT id, name FROM users WHERE id = ${id}
+SELECT id, name FROM users WHERE id = #{id}
 ```
 
 ### Expected Result Types
@@ -382,17 +382,17 @@ types:
 
 ### Named Parameters
 
-Use `${parameter_name}` syntax in SQL queries:
+Use `#{parameter_name}` syntax in SQL queries:
 
 ```yaml
-sql: "SELECT * FROM users WHERE id = ${user_id} AND status = ${status}"
+sql: "SELECT * FROM users WHERE id = #{user_id} AND status = #{status}"
 ```
 
 **Optional Parameters:**
 Add `?` suffix for optional parameters that become `Option<T>`:
 
 ```yaml
-sql: "SELECT * FROM posts WHERE user_id = ${user_id} AND (${category?} IS NULL OR category = ${category?})"
+sql: "SELECT * FROM posts WHERE user_id = #{user_id} AND (#{category?} IS NULL OR category = #{category?})"
 ```
 
 ### Per-Query Telemetry Configuration
@@ -407,7 +407,7 @@ Override global telemetry settings for specific queries in the metadata block:
 --      include_sql: true         # Include SQL in spans
 -- @end
 
-SELECT * FROM users WHERE id = ${user_id}
+SELECT * FROM users WHERE id = #{user_id}
 ```
 
 ### Per-Query Analysis Configuration
@@ -419,7 +419,7 @@ Override global analysis settings for specific queries:
 --    ensure_indexes: true   # Enable/disable analysis for this query
 -- @end
 
-SELECT * FROM users WHERE email = ${email}
+SELECT * FROM users WHERE email = #{email}
 ```
 
 ### Module Organization
@@ -465,7 +465,7 @@ You can override the module name in the metadata:
 
 SELECT id, name, profile 
 FROM users 
-WHERE id = ${user_id}
+WHERE id = #{user_id}
 ```
 
 **Query with optional parameter:**
@@ -482,8 +482,8 @@ WHERE id = ${user_id}
 -- @end
 
 SELECT * FROM posts 
-WHERE user_id = ${user_id} 
-  AND (${category?} IS NULL OR category = ${category?})
+WHERE user_id = #{user_id} 
+  AND (#{category?} IS NULL OR category = #{category?})
 ```
 
 **DDL query without analysis:**
@@ -514,7 +514,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- @end
 
 DELETE FROM sessions 
-WHERE created_at < ${cutoff_date}
+WHERE created_at < #{cutoff_date}
 ```
 
 ## Conditional Queries
@@ -523,7 +523,7 @@ AutoModel supports **conditional queries** that dynamically include or exclude S
 
 ### Conditional Syntax
 
-Use the `$[...]` syntax to wrap optional SQL parts:
+Use the `#[...]` syntax to wrap optional SQL parts:
 
 `queries/users/search_users.sql`:
 ```sql
@@ -534,14 +534,14 @@ Use the `$[...]` syntax to wrap optional SQL parts:
 SELECT id, name, email 
 FROM users 
 WHERE 1=1 
-  $[AND name ILIKE ${name_pattern?}] 
-  $[AND age >= ${min_age?}] 
+  #[AND name ILIKE #{name_pattern?}] 
+  #[AND age >= #{min_age?}] 
 ORDER BY created_at DESC
 ```
 
 **Key Components:**
-- `$[AND name ILIKE ${name_pattern?}]` - Conditional block that includes the clause only if `name_pattern` is `Some`
-- `${name_pattern?}` - Optional parameter (note the `?` suffix)
+- `#[AND name ILIKE #{name_pattern?}]` - Conditional block that includes the clause only if `name_pattern` is `Some`
+- `#{name_pattern?}` - Optional parameter (note the `?` suffix)
 - The conditional block is removed entirely if the parameter is `None`
 
 ### Runtime SQL Examples
@@ -582,10 +582,10 @@ You can mix conditional and non-conditional parameters:
 
 SELECT id, name, email, age 
 FROM users 
-WHERE name ILIKE ${name_pattern} 
-  $[AND age >= ${min_age?}] 
+WHERE name ILIKE #{name_pattern} 
+  #[AND age >= #{min_age?}] 
   AND email IS NOT NULL 
-  $[AND created_at >= ${since?}] 
+  #[AND created_at >= #{since?}] 
 ORDER BY name
 ```
 
@@ -603,7 +603,7 @@ pub async fn find_users_complex(
 
 1. **Use `WHERE 1=1`** as a base condition when all WHERE clauses are conditional:
    ```yaml
-   sql: "SELECT * FROM users WHERE 1=1 $[AND name = ${name?}] $[AND age > ${min_age?}]"
+   sql: "SELECT * FROM users WHERE 1=1 #[AND name = #{name?}] #[AND age > #{min_age?}]"
    ```
 
 ### Conditional UPDATE Statements
@@ -612,7 +612,7 @@ Conditional syntax is also useful for UPDATE statements where you want to update
 
 ```yaml
 - name: update_user_fields
-  sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] $[, age = ${age?}] WHERE id = ${user_id} RETURNING id, name, email, age, updated_at"
+  sql: "UPDATE users SET updated_at = NOW() #[, name = #{name?}] #[, email = #{email?}] #[, age = #{age?}] WHERE id = #{user_id} RETURNING id, name, email, age, updated_at"
   description: "Update user fields conditionally - only updates fields that are provided (not None)"
   module: "users"
   expect: "exactly_one"
@@ -663,7 +663,7 @@ Group all query parameters into a single struct instead of passing them individu
 
 ```yaml
 - name: insert_user_structured
-  sql: "INSERT INTO users (name, email, age) VALUES (${name}, ${email}, ${age}) RETURNING id"
+  sql: "INSERT INTO users (name, email, age) VALUES (#{name}, #{email}, #{age}) RETURNING id"
   parameters_type: true  # Generates InsertUserStructuredParams
 ```
 
@@ -702,12 +702,12 @@ Specify an existing struct name to reuse it across queries:
 queries:
   # First query generates the struct
   - name: get_user_by_id_and_email
-    sql: "SELECT id, name, email FROM users WHERE id = ${id} AND email = ${email}"
+    sql: "SELECT id, name, email FROM users WHERE id = #{id} AND email = #{email}"
     parameters_type: true  # Generates GetUserByIdAndEmailParams
   
   # Second query reuses the same struct
   - name: delete_user_by_id_and_email
-    sql: "DELETE FROM users WHERE id = ${id} AND email = ${email} RETURNING id"
+    sql: "DELETE FROM users WHERE id = #{id} AND email = #{email} RETURNING id"
     parameters_type: "GetUserByIdAndEmailParams"  # Reuses existing struct
 ```
 
@@ -715,13 +715,13 @@ Only one struct definition is generated, shared by both functions.
 
 ### conditions_type: Diff-Based Conditional Parameters
 
-For queries with conditional SQL (`$[...]` blocks), generate a struct and compare old vs new values to decide which clauses to include. Works with any query type (SELECT, UPDATE, DELETE, etc.).
+For queries with conditional SQL (`#[...]` blocks), generate a struct and compare old vs new values to decide which clauses to include. Works with any query type (SELECT, UPDATE, DELETE, etc.).
 
 **Basic Usage:**
 
 ```yaml
 - name: update_user_fields_diff
-  sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+  sql: "UPDATE users SET updated_at = NOW() #[, name = #{name?}] #[, email = #{email?}] WHERE id = #{user_id}"
   conditions_type: true  # Generates UpdateUserFieldsDiffParams
 ```
 
@@ -767,11 +767,11 @@ update_user_fields_diff(executor, &old, &new, 42).await?;
 ```yaml
 queries:
   - name: update_user_profile_diff
-    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+    sql: "UPDATE users SET updated_at = NOW() #[, name = #{name?}] #[, email = #{email?}] WHERE id = #{user_id}"
     conditions_type: true
   
   - name: update_user_metadata_diff
-    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+    sql: "UPDATE users SET updated_at = NOW() #[, name = #{name?}] #[, email = #{email?}] WHERE id = #{user_id}"
     conditions_type: "UpdateUserProfileDiffParams"  # Reuses existing diff struct
 ```
 
@@ -783,7 +783,7 @@ Customize the name of return type structs (generated for multi-column SELECT que
 
 ```yaml
 - name: get_user_summary
-  sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+  sql: "SELECT id, name, email FROM users WHERE id = #{user_id}"
   return_type: "UserSummary"  # Custom name instead of GetUserSummaryItem
 ```
 
@@ -810,11 +810,11 @@ Multiple queries returning the same columns can share the same struct:
 ```yaml
 queries:
   - name: get_user_summary
-    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    sql: "SELECT id, name, email FROM users WHERE id = #{user_id}"
     return_type: "UserSummary"  # Generates the struct
   
   - name: get_user_info_by_email
-    sql: "SELECT id, name, email FROM users WHERE email = ${email}"
+    sql: "SELECT id, name, email FROM users WHERE email = #{email}"
     return_type: "UserSummary"  # Reuses the struct
   
   - name: get_all_user_summaries
@@ -845,12 +845,12 @@ You can reuse struct names across queries. AutoModel will:
 queries:
   # First use: generates UserInfo struct from return columns
   - name: get_user_info
-    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    sql: "SELECT id, name, email FROM users WHERE id = #{user_id}"
     return_type: "UserInfo"
   
   # Second use: reuses existing UserInfo struct for parameters
   - name: update_user_info
-    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id}"
+    sql: "UPDATE users SET name = #{name}, email = #{email} WHERE id = #{id}"
     parameters_type: "UserInfo"  # Reuses the return type struct
 ```
 
@@ -906,7 +906,7 @@ Structs can be generated from three sources:
 - Improving code organization and reducing function signature complexity
 
 **Use `conditions_type`:**
-- Conditional queries (`$[...]`) with state comparison logic
+- Conditional queries (`#[...]`) with state comparison logic
 - UPDATE queries that should only modify changed fields
 - SELECT queries with filters that should only apply when criteria changed
 - Implementing PATCH-style REST endpoints
@@ -924,22 +924,22 @@ Structs can be generated from three sources:
 queries:
   # Define a common return type
   - name: get_user_summary
-    sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+    sql: "SELECT id, name, email FROM users WHERE id = #{user_id}"
     return_type: "UserSummary"
   
   # Reuse it in other queries
   - name: search_users
-    sql: "SELECT id, name, email FROM users WHERE name ILIKE ${pattern}"
+    sql: "SELECT id, name, email FROM users WHERE name ILIKE #{pattern}"
     return_type: "UserSummary"
   
   # Use it as input parameters
   - name: update_user_contact
-    sql: "UPDATE users SET name = ${name}, email = ${email} WHERE id = ${id}"
+    sql: "UPDATE users SET name = #{name}, email = #{email} WHERE id = #{id}"
     parameters_type: "UserSummary"
   
   # Conditional update with custom struct
   - name: partial_update_user
-    sql: "UPDATE users SET updated_at = NOW() $[, name = ${name?}] $[, email = ${email?}] WHERE id = ${user_id}"
+    sql: "UPDATE users SET updated_at = NOW() #[, name = #{name?}] #[, email = #{email?}] WHERE id = #{user_id}"
     conditions_type: true  # Generates PartialUpdateUserParams
 ```
 
@@ -1005,12 +1005,12 @@ Define a batch insert query in a SQL file:
 -- @end
 
 INSERT INTO users (name, email, age)
-SELECT * FROM UNNEST(${name}::text[], ${email}::text[], ${age}::int4[])
+SELECT * FROM UNNEST(#{name}::text[], #{email}::text[], #{age}::int4[])
 RETURNING id, name, email, age, created_at
 ```
 
 **Key Points:**
-- Use array parameters: `${name}::text[]`, `${email}::text[]`, etc.
+- Use array parameters: `#{name}::text[]`, `#{email}::text[]`, etc.
 - Include explicit type casts for proper type inference
 - Set `expect: "multiple"` to return a vector of results
 - Set `multiunzip: true` to enable the special batch insert mode
@@ -1103,10 +1103,10 @@ let query = query.bind(age);
 
 INSERT INTO posts (title, content, author_id, published_at)
 SELECT * FROM UNNEST(
-  ${title}::text[],
-  ${content}::text[],
-  ${author_id}::int4[],
-  ${published_at}::timestamptz[]
+  #{title}::text[],
+  #{content}::text[],
+  #{author_id}::int4[],
+  #{published_at}::timestamptz[]
 )
 RETURNING id, title, author_id, created_at
 ```
@@ -1177,7 +1177,7 @@ Use `ON CONFLICT` to update existing rows when a conflict occurs:
 -- @end
 
 INSERT INTO users (email, name, age, profile)
-VALUES (${email}, ${name}, ${age}, ${profile})
+VALUES (#{email}, #{name}, #{age}, #{profile})
 ON CONFLICT (email) 
 DO UPDATE SET 
   name = EXCLUDED.name,
@@ -1228,9 +1228,9 @@ Combine `UNNEST` with `ON CONFLICT` for efficient batch upserts:
 
 INSERT INTO users (email, name, age)
 SELECT * FROM UNNEST(
-  ${email}::text[],
-  ${name}::text[],
-  ${age}::int4[]
+  #{email}::text[],
+  #{name}::text[],
+  #{age}::int4[]
 )
 ON CONFLICT (email)
 DO UPDATE SET
@@ -1343,7 +1343,7 @@ impl From<sqlx::Error> for ErrorReadOnly {
 **Example Usage:**
 ```yaml
 - name: get_user_by_id
-  sql: "SELECT id, name, email FROM users WHERE id = ${user_id}"
+  sql: "SELECT id, name, email FROM users WHERE id = #{user_id}"
   expect: "exactly_one"
 ```
 
@@ -1427,7 +1427,7 @@ By default, AutoModel generates error type names based on the query name (e.g., 
 **Basic Usage:**
 ```yaml
 - name: insert_user
-  sql: "INSERT INTO users (email, name, age) VALUES (${email}, ${name}, ${age}) RETURNING id"
+  sql: "INSERT INTO users (email, name, age) VALUES (#{email}, #{name}, #{age}) RETURNING id"
   error_type: "UserError"  # Custom name instead of InsertUserConstraints
 ```
 
@@ -1465,18 +1465,18 @@ Multiple queries that operate on the same table(s) can reuse the same error type
 queries:
   # First query generates the error type
   - name: insert_user
-    sql: "INSERT INTO users (email, name, age) VALUES (${email}, ${name}, ${age}) RETURNING id"
+    sql: "INSERT INTO users (email, name, age) VALUES (#{email}, #{name}, #{age}) RETURNING id"
     error_type: "UserError"
   
   # Second query reuses the same error type
   - name: update_user_email
-    sql: "UPDATE users SET email = ${email} WHERE id = ${user_id} RETURNING id"
+    sql: "UPDATE users SET email = #{email} WHERE id = #{user_id} RETURNING id"
     error_type: "UserError"  # Reuses UserError - constraints must match
   
   # Third query also reuses it
   - name: upsert_user
     sql: |
-      INSERT INTO users (email, name, age) VALUES (${email}, ${name}, ${age})
+      INSERT INTO users (email, name, age) VALUES (#{email}, #{name}, #{age})
       ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, age = EXCLUDED.age
       RETURNING id
     error_type: "UserError"  # Reuses UserError
