@@ -106,6 +106,7 @@ impl AutoModel {
         println!("cargo:rerun-if-changed={}", mod_file.display());
 
         let mut hasher = Sha256::new();
+        hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
 
         let queries_dir = Path::new(queries_dir);
         if queries_dir.exists() && queries_dir.is_dir() {

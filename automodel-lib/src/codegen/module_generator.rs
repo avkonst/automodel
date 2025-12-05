@@ -47,6 +47,7 @@ pub struct ErrorConstraintInfo {
     /// Name of the violated constraint
     pub constraint_name: String,
     pub table_name: String,
+    #[allow(unused)]
     pub kind: ErrorConstraintKind,
 }
 
