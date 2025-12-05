@@ -226,7 +226,7 @@ pub fn generate_multiunzip_input_struct(
                     &rust_type.rust_type
                 };
 
-            let field_type = if rust_type.is_nullable {
+            let field_type = if rust_type.is_nullable || rust_type.is_optional {
                 format!("Option<{}>", base_type)
             } else {
                 base_type.to_string()
