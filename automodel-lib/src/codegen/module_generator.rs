@@ -603,7 +603,7 @@ pub fn generate_function_code_without_enums(
     // Generate result struct if needed (but no enums)
     // Generate if: multiple columns OR single column with explicit return_type configured
     let should_generate_struct = type_info.output_types.len() > 1 || query.return_type.is_some();
-    
+
     if should_generate_struct {
         let result_struct_name = if let Some(ref custom_name) = query.return_type {
             custom_name.to_string()
@@ -1596,7 +1596,7 @@ pub fn generate_code_for_module(
 
         // Track return type struct (if multiple columns OR explicit return_type configured)
         let should_track_struct = type_info.output_types.len() > 1 || query.return_type.is_some();
-        
+
         if should_track_struct {
             let struct_name = if let Some(ref custom_name) = query.return_type {
                 custom_name.to_string()
