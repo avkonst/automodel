@@ -1174,8 +1174,8 @@ fn generate_query_execution(
         // For queries that don't return data (INSERT, UPDATE, DELETE)
         body.push_str("    query.execute(executor).await?;\n");
         body.push_str("    Ok(())\n");
-    } else if type_info.output_types.len() == 1 {
-        // For queries that return a single column
+    } else if type_info.output_types.len() == 1 && query.return_type.is_none() {
+        // For queries that return a single column as a raw type (no explicit return_type)
         match query.expect {
             ExpectedResult::ExactlyOne => {
                 body.push_str("    let row = query.fetch_one(executor).await?;\n");

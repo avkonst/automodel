@@ -1918,7 +1918,12 @@ pub async fn get_user_id_only(executor: impl sqlx::Executor<'_, Database = sqlx:
     );
     let query = query.bind(&email);
     let row = query.fetch_one(executor).await?;
-    Ok(row.try_get::<i32, _>("id")?)
+    let result: Result<_, sqlx::Error> = (|| {
+        Ok(UserId {
+        id: row.try_get::<i32, _>("id")?,
+    })
+    })();
+    result.map_err(Into::into)
 }
 
 /// Test single column without return_type - should return raw i32
