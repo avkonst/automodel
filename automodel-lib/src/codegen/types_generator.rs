@@ -197,7 +197,7 @@ pub fn generate_result_struct_with_name(
     output_types: &[OutputColumn],
     custom_derives: &[String],
 ) -> Option<String> {
-    if output_types.len() <= 1 {
+    if output_types.is_empty() {
         return None;
     }
 

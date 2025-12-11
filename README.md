@@ -342,6 +342,15 @@ If no metadata is provided, sensible defaults are used.
 --    parameters_type: false    # Group all parameters into one struct
 --    return_type: "UserInfo"   # Custom return type name
 --    error_type: "UserError"   # Custom error type name
+--    conditions_type_derives:  # Additional derives for conditions struct
+--      - serde::Serialize
+--    parameters_type_derives:  # Additional derives for parameters struct
+--      - serde::Deserialize
+--    return_type_derives:      # Additional derives for return struct
+--      - serde::Serialize
+--      - PartialEq
+--    error_type_derives:       # Additional derives for error enum
+--      - serde::Serialize
 -- @end
 
 SELECT id, name FROM users WHERE id = #{id}
@@ -867,6 +876,40 @@ let updated = UserInfo {
 };
 update_user_info(executor, &updated).await?;
 ```
+
+### Custom Derive Traits
+
+Add additional derive traits to generated structs and enums using `*_derives` options:
+
+```sql
+-- @automodel
+--    return_type: "UserId"
+--    return_type_derives:
+--      - serde::Serialize
+--      - serde::Deserialize
+--      - PartialEq
+--      - Eq
+-- @end
+
+SELECT id FROM users WHERE email = #{email}
+```
+
+**Generates:**
+
+```rust
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct UserId {
+    pub id: i32,
+}
+```
+
+**Available Options:**
+- `conditions_type_derives` - For conditions struct (used with `conditions_type`)
+- `parameters_type_derives` - For parameters struct (used with `parameters_type`)  
+- `return_type_derives` - For return type struct
+- `error_type_derives` - For constraint error enum
+
+Default derives (`Debug`, `Clone`, etc.) are always included. Empty list means no additional derives.
 
 ### Build-Time Validation
 

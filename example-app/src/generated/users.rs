@@ -1899,3 +1899,42 @@ pub async fn test_custom_derives(executor: impl sqlx::Executor<'_, Database = sq
     result.map_err(Into::into)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct UserId {
+    pub id: i32,
+}
+
+/// Test single column with explicit return_type - should generate UserId struct
+///
+/// Query Plan:
+/// Index Scan using users_email_key on users
+///   Index Cond: ((email)::text = 'dummy'::text)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id\nFROM public.users\nWHERE email = #{email}"))]
+pub async fn get_user_id_only(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<UserId, super::ErrorReadOnly> {
+    let query = sqlx::query(
+        r"SELECT id
+        FROM public.users
+        WHERE email = $1"
+    );
+    let query = query.bind(&email);
+    let row = query.fetch_one(executor).await?;
+    Ok(row.try_get::<i32, _>("id")?)
+}
+
+/// Test single column without return_type - should return raw i32
+///
+/// Query Plan:
+/// Index Scan using users_email_key on users
+///   Index Cond: ((email)::text = 'dummy'::text)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id\nFROM public.users\nWHERE email = #{email}"))]
+pub async fn get_user_id_raw(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, email: String) -> Result<i32, super::ErrorReadOnly> {
+    let query = sqlx::query(
+        r"SELECT id
+        FROM public.users
+        WHERE email = $1"
+    );
+    let query = query.bind(&email);
+    let row = query.fetch_one(executor).await?;
+    Ok(row.try_get::<i32, _>("id")?)
+}
+

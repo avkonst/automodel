@@ -601,7 +601,10 @@ pub fn generate_function_code_without_enums(
     }
 
     // Generate result struct if needed (but no enums)
-    if type_info.output_types.len() > 1 {
+    // Generate if: multiple columns OR single column with explicit return_type configured
+    let should_generate_struct = type_info.output_types.len() > 1 || query.return_type.is_some();
+    
+    if should_generate_struct {
         let result_struct_name = if let Some(ref custom_name) = query.return_type {
             custom_name.to_string()
         } else {
@@ -661,15 +664,15 @@ pub fn generate_function_code_without_enums(
         generate_input_params_with_names(&type_info.input_types, &clean_param_names)
     };
 
-    let base_return_type = if type_info.output_types.len() > 1 {
-        // Multi-column result - use struct name
+    let base_return_type = if query.return_type.is_some() || type_info.output_types.len() > 1 {
+        // Use struct name if: explicit return_type configured OR multi-column result
         if let Some(ref custom_name) = query.return_type {
             custom_name.to_string()
         } else {
             format!("{}Item", to_pascal_case(&query.name))
         }
     } else {
-        // Single column result - use direct type
+        // Single column result without explicit return_type - use direct type
         generate_return_type(type_info.output_types.first())
     };
 
@@ -1591,8 +1594,10 @@ pub fn generate_code_for_module(
             generated_structs.insert(struct_name, fields);
         }
 
-        // Track return type struct
-        if type_info.output_types.len() > 1 {
+        // Track return type struct (if multiple columns OR explicit return_type configured)
+        let should_track_struct = type_info.output_types.len() > 1 || query.return_type.is_some();
+        
+        if should_track_struct {
             let struct_name = if let Some(ref custom_name) = query.return_type {
                 custom_name.to_string()
             } else {
