@@ -279,15 +279,15 @@ pub fn generate_query_constraint_enum(
     code.push_str(&format!(
         "/// Constraint violations specific to this query\n"
     ));
-    
+
     // Build derive attribute with Debug as default plus custom derives
     let mut all_derives = vec!["Debug".to_string()];
     all_derives.extend(custom_derives.iter().cloned());
-    
+
     // Remove duplicates while preserving order
     let mut seen = HashSet::new();
     all_derives.retain(|d| seen.insert(d.clone()));
-    
+
     code.push_str(&format!("#[derive({})]\n", all_derives.join(", ")));
     code.push_str(&format!("pub enum {} {{\n", enum_name));
 
@@ -492,7 +492,11 @@ pub fn generate_function_code_without_enums(
 
         // Only generate the enum if it hasn't been emitted yet
         if !emitted_struct_names.contains(&enum_name) {
-            code.push_str(&generate_query_constraint_enum(&enum_name, constraints, &query.error_type_derives));
+            code.push_str(&generate_query_constraint_enum(
+                &enum_name,
+                constraints,
+                &query.error_type_derives,
+            ));
             code.push('\n');
             emitted_struct_names.insert(enum_name.clone());
         }
@@ -605,9 +609,11 @@ pub fn generate_function_code_without_enums(
         };
 
         if !emitted_struct_names.contains(&result_struct_name) {
-            if let Some(struct_def) =
-                generate_result_struct_with_name(&result_struct_name, &type_info.output_types, &query.return_type_derives)
-            {
+            if let Some(struct_def) = generate_result_struct_with_name(
+                &result_struct_name,
+                &type_info.output_types,
+                &query.return_type_derives,
+            ) {
                 code.push_str(&struct_def);
                 code.push('\n');
                 emitted_struct_names.insert(result_struct_name);

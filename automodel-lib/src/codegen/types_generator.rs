@@ -6,14 +6,17 @@ use crate::{
 /// Build derive attribute string from a list of custom derives and default derives
 /// Returns a string like "#[derive(Debug, Clone, Serialize, Deserialize)]"
 fn build_derive_attribute(default_derives: &[&str], custom_derives: &[String]) -> String {
-    let mut all_derives = default_derives.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    
+    let mut all_derives = default_derives
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+
     all_derives.extend(custom_derives.iter().cloned());
-    
+
     // Remove duplicates while preserving order
     let mut seen = std::collections::HashSet::new();
     all_derives.retain(|d| seen.insert(d.clone()));
-    
+
     format!("#[derive({})]", all_derives.join(", "))
 }
 
