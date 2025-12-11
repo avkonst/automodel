@@ -1861,3 +1861,41 @@ pub async fn get_user_simple(executor: impl sqlx::Executor<'_, Database = sqlx::
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TestCustomDerivesParams {
+    pub user_id: i32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct UserWithCustomDerives {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub age: Option<i32>,
+}
+
+/// Test custom derive traits
+///
+/// Query Plan:
+/// Index Scan using users_pkey on users
+///   Index Cond: (id = 0)
+#[tracing::instrument(level = "debug", skip_all, fields(sql = "SELECT id, name, email, age\nFROM public.users\nWHERE id = #{user_id}"))]
+pub async fn test_custom_derives(executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>, params: &TestCustomDerivesParams) -> Result<UserWithCustomDerives, super::ErrorReadOnly> {
+    let query = sqlx::query(
+        r"SELECT id, name, email, age
+        FROM public.users
+        WHERE id = $1"
+    );
+    let query = query.bind(params.user_id);
+    let row = query.fetch_one(executor).await?;
+    let result: Result<_, sqlx::Error> = (|| {
+        Ok(UserWithCustomDerives {
+        id: row.try_get::<i32, _>("id")?,
+        name: row.try_get::<String, _>("name")?,
+        email: row.try_get::<String, _>("email")?,
+        age: row.try_get::<Option<i32>, _>("age")?,
+    })
+    })();
+    result.map_err(Into::into)
+}
+

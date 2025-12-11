@@ -260,6 +260,7 @@ impl std::error::Error for ErrorReadOnly {
 pub fn generate_query_constraint_enum(
     enum_name: &str,
     constraints: &[crate::types_extractor::ConstraintInfo],
+    custom_derives: &[String],
 ) -> String {
     use std::collections::HashSet;
 
@@ -278,7 +279,16 @@ pub fn generate_query_constraint_enum(
     code.push_str(&format!(
         "/// Constraint violations specific to this query\n"
     ));
-    code.push_str("#[derive(Debug)]\n");
+    
+    // Build derive attribute with Debug as default plus custom derives
+    let mut all_derives = vec!["Debug".to_string()];
+    all_derives.extend(custom_derives.iter().cloned());
+    
+    // Remove duplicates while preserving order
+    let mut seen = HashSet::new();
+    all_derives.retain(|d| seen.insert(d.clone()));
+    
+    code.push_str(&format!("#[derive({})]\n", all_derives.join(", ")));
     code.push_str(&format!("pub enum {} {{\n", enum_name));
 
     // Generate a variant for each unique constraint
@@ -482,7 +492,7 @@ pub fn generate_function_code_without_enums(
 
         // Only generate the enum if it hasn't been emitted yet
         if !emitted_struct_names.contains(&enum_name) {
-            code.push_str(&generate_query_constraint_enum(&enum_name, constraints));
+            code.push_str(&generate_query_constraint_enum(&enum_name, constraints, &query.error_type_derives));
             code.push('\n');
             emitted_struct_names.insert(enum_name.clone());
         }
@@ -533,6 +543,7 @@ pub fn generate_function_code_without_enums(
                 &query.name,
                 &clean_param_names,
                 &type_info.input_types,
+                &query.parameters_type_derives,
             ) {
                 code.push_str(&input_struct);
                 code.push('\n');
@@ -554,6 +565,7 @@ pub fn generate_function_code_without_enums(
                 &struct_name,
                 &original_param_names,
                 &type_info.input_types,
+                &query.conditions_type_derives,
             ) {
                 code.push_str(&diff_struct);
                 code.push('\n');
@@ -575,6 +587,7 @@ pub fn generate_function_code_without_enums(
                 struct_name_override.unwrap_or(&query.name),
                 &clean_param_names,
                 &type_info.input_types,
+                &query.parameters_type_derives,
             ) {
                 code.push_str(&params_struct);
                 code.push('\n');
@@ -593,7 +606,7 @@ pub fn generate_function_code_without_enums(
 
         if !emitted_struct_names.contains(&result_struct_name) {
             if let Some(struct_def) =
-                generate_result_struct_with_name(&result_struct_name, &type_info.output_types)
+                generate_result_struct_with_name(&result_struct_name, &type_info.output_types, &query.return_type_derives)
             {
                 code.push_str(&struct_def);
                 code.push('\n');

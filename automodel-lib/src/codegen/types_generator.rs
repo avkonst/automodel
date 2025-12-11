@@ -3,6 +3,20 @@ use crate::{
     utils::{to_pascal_case, to_snake_case},
 };
 
+/// Build derive attribute string from a list of custom derives and default derives
+/// Returns a string like "#[derive(Debug, Clone, Serialize, Deserialize)]"
+fn build_derive_attribute(default_derives: &[&str], custom_derives: &[String]) -> String {
+    let mut all_derives = default_derives.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    
+    all_derives.extend(custom_derives.iter().cloned());
+    
+    // Remove duplicates while preserving order
+    let mut seen = std::collections::HashSet::new();
+    all_derives.retain(|d| seen.insert(d.clone()));
+    
+    format!("#[derive({})]", all_derives.join(", "))
+}
+
 /// Generate function parameter list with custom parameter names
 pub fn generate_input_params_with_names(
     input_types: &[RustType],
@@ -178,12 +192,14 @@ impl<'q> sqlx::Encode<'q, sqlx::Postgres> for {} {{
 pub fn generate_result_struct_with_name(
     struct_name: &str,
     output_types: &[OutputColumn],
+    custom_derives: &[String],
 ) -> Option<String> {
     if output_types.len() <= 1 {
         return None;
     }
 
-    let mut struct_def = format!("#[derive(Debug, Clone)]\npub struct {} {{\n", struct_name);
+    let derive_attr = build_derive_attribute(&["Debug", "Clone"], custom_derives);
+    let mut struct_def = format!("{}\npub struct {} {{\n", derive_attr, struct_name);
 
     for col in output_types {
         let field_type = if col.rust_type.is_nullable {
@@ -208,13 +224,15 @@ pub fn generate_multiunzip_input_struct(
     query_name: &str,
     param_names: &[String],
     input_types: &[RustType],
+    custom_derives: &[String],
 ) -> Option<String> {
     if input_types.is_empty() {
         return None;
     }
 
     let struct_name = format!("{}Record", to_pascal_case(query_name));
-    let mut struct_def = format!("#[derive(Debug, Clone)]\npub struct {} {{\n", struct_name);
+    let derive_attr = build_derive_attribute(&["Debug", "Clone"], custom_derives);
+    let mut struct_def = format!("{}\npub struct {} {{\n", derive_attr, struct_name);
 
     for (i, param_name) in param_names.iter().enumerate() {
         if let Some(rust_type) = input_types.get(i) {
@@ -251,6 +269,7 @@ pub fn generate_conditional_diff_struct(
     struct_name: &str,
     param_names: &[String],
     input_types: &[RustType],
+    custom_derives: &[String],
 ) -> Option<String> {
     if input_types.is_empty() {
         return None;
@@ -258,7 +277,9 @@ pub fn generate_conditional_diff_struct(
 
     let mut code = String::new();
 
-    code.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+    let derive_attr = build_derive_attribute(&["Debug", "Clone", "PartialEq"], custom_derives);
+    code.push_str(&derive_attr);
+    code.push('\n');
     code.push_str(&format!("pub struct {} {{\n", struct_name));
 
     // Build a map of unique parameter names to their types
@@ -354,6 +375,7 @@ pub fn generate_structured_params_struct(
     query_name: &str,
     param_names: &[String],
     input_types: &[RustType],
+    custom_derives: &[String],
 ) -> Option<String> {
     if input_types.is_empty() {
         return None;
@@ -362,7 +384,9 @@ pub fn generate_structured_params_struct(
     let struct_name = format!("{}Params", to_pascal_case(query_name));
     let mut code = String::new();
 
-    code.push_str("#[derive(Debug, Clone)]\n");
+    let derive_attr = build_derive_attribute(&["Debug", "Clone"], custom_derives);
+    code.push_str(&derive_attr);
+    code.push('\n');
     code.push_str(&format!("pub struct {} {{\n", struct_name));
 
     // Build a map of unique parameter names to their types

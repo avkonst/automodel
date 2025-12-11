@@ -228,7 +228,7 @@ impl AutoModel {
     ) -> anyhow::Result<()> {
         use std::fs;
         use std::path::Path;
-        use tokio_postgres::{connect, NoTls};
+        use std::time::Duration;
 
         let output_path = Path::new(output_dir);
         let modules = self.get_modules();
@@ -238,7 +238,14 @@ impl AutoModel {
 
         Self::cleanup_unused_files(output_path, &modules)?;
 
-        let (client, connection) = connect(database_url, NoTls).await?;
+        // Parse connection string and configure timeouts
+        let mut config: tokio_postgres::Config = database_url.parse()?;
+        config.connect_timeout(Duration::from_secs(10));
+        
+        // Connect with NoTls - users should add ?sslmode=disable to their connection string
+        // For TLS support, the dependency on postgres-native-tls or tokio-postgres-rustls would be needed
+        let (client, connection) = config.connect(tokio_postgres::NoTls).await?;
+        
         // Spawn the connection task
         tokio::spawn(async move {
             if let Err(e) = connection.await {

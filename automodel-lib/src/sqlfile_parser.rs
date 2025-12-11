@@ -295,6 +295,14 @@ async fn parse_sql_file(
         return_type: Option<String>,
         #[serde(default)]
         error_type: Option<String>,
+        #[serde(default)]
+        conditions_type_derives: Vec<String>,
+        #[serde(default)]
+        parameters_type_derives: Vec<String>,
+        #[serde(default)]
+        return_type_derives: Vec<String>,
+        #[serde(default)]
+        error_type_derives: Vec<String>,
     }
 
     let metadata: QueryMetadata = if yaml_str.trim().is_empty() {
@@ -349,6 +357,10 @@ async fn parse_sql_file(
         parameters_type: metadata.parameters_type.unwrap_or_default(),
         return_type: metadata.return_type,
         error_type: metadata.error_type,
+        conditions_type_derives: metadata.conditions_type_derives,
+        parameters_type_derives: metadata.parameters_type_derives,
+        return_type_derives: metadata.return_type_derives,
+        error_type_derives: metadata.error_type_derives,
     })
 }
 

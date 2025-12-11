@@ -158,6 +158,22 @@ pub(crate) struct QueryDefinition {
     /// When Some(name), uses or generates a constraint enum with the given name
     /// Only applies to mutation queries
     pub error_type: Option<String>,
+    /// Additional derive traits to add to the conditions struct (conditions_type)
+    /// e.g., ["serde::Serialize", "serde::Deserialize"]
+    /// Empty vec means no additional derives
+    pub conditions_type_derives: Vec<String>,
+    /// Additional derive traits to add to the parameters struct (parameters_type)
+    /// e.g., ["serde::Serialize", "serde::Deserialize"]
+    /// Empty vec means no additional derives
+    pub parameters_type_derives: Vec<String>,
+    /// Additional derive traits to add to the return type struct
+    /// e.g., ["serde::Serialize", "serde::Deserialize"]
+    /// Empty vec means no additional derives
+    pub return_type_derives: Vec<String>,
+    /// Additional derive traits to add to the error constraint enum
+    /// e.g., ["serde::Serialize", "serde::Deserialize"]
+    /// Empty vec means no additional derives
+    pub error_type_derives: Vec<String>,
 }
 
 /// Per-query telemetry configuration
